@@ -3,6 +3,8 @@ import os, sys,time
 sys.path.append(os.getcwd())
 idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
+
+force_big  = True
 from pathlib import Path
 import numpy as np
 import torch
@@ -32,7 +34,7 @@ from mltool.loggingsystem import LoggingSystem
 
 
 save_intervel=100
-from cephdataset import ERA5CephDataset,ERA5CephSmallDataset,SpeedTestDataset,load_small_dataset_in_memory
+from cephdataset import ERA5CephDataset,ERA5CephSmallDataset,SpeedTestDataset,load_test_dataset_in_memory,load_small_dataset_in_memory,ERA5CephInMemoryDataset
 #dataset_type = ERA5CephDataset
 # dataset_type  = SpeedTestDataset
 
@@ -159,6 +161,104 @@ def single_step_evaluate(data_loader, model, criterion,logsys):
         else:
             return loss.item() / total.item()
 
+def compute_accu(ltmsv_pred, ltmsv_true):
+    w = ltmsv_pred.shape[1]
+    latitude = torch.linspace(-np.pi/2,np.pi/2,w).to(ltmsv_pred.device)
+    cos_lat  = torch.cos(latitude)
+    latweight= cos_lat/cos_lat.mean()
+    latweight = latweight.reshape(1, w, 1,1)
+    # history_record <-- (B, w,h, property)
+    fenzi = (latweight*ltmsv_pred*ltmsv_true).sum(dim=(1, 2))
+    fenmu = torch.sqrt((latweight*ltmsv_pred**2).sum(dim=(1,2)) *
+                       (latweight*ltmsv_true**2).sum(dim=(1, 2))
+                       )
+    return fenzi/(fenmu+1e-10)
+
+def compute_rmse(pred, true):
+    # pred <-- (B,w,h,p)
+    # true <-- (B,w,h,p)
+    w         = pred.shape[1]
+    latitude  = torch.linspace(-np.pi/2, np.pi/2, w).to(pred.device)
+    cos_lat   = torch.cos(latitude)
+    latweight = cos_lat/cos_lat.mean()
+    latweight = latweight.reshape(1, w, 1,1)
+    return  torch.sqrt((latweight*(pred - true)**2).mean(dim=(1,2) ))
+
+def fourcast_step(data_loader, model,logsys,random_repeat = 0):
+    model.eval()
+    logsys.eval()
+    gpu     = dist.get_rank() if hasattr(model,'module') else 0
+    Fethcher   = DataSimfetcher
+    prefetcher = Fethcher(data_loader,next(model.parameters()).device)
+    batches = len(data_loader)
+    inter_b    = logsys.create_progress_bar(batches,unit=' img',unit_scale=data_loader.batch_size)
+    device = next(model.parameters()).device
+    data_cost = train_cost = rest_cost = 0
+    now = time.time()
+
+    fourcastresult={}
+    with torch.no_grad():
+        inter_b.lwrite("load everything, start_validating......", end="\r")
+        while inter_b.update_step():
+            data_cost += time.time() - now;now = time.time()
+            step = inter_b.now
+            idxes,batch = prefetcher.next()
+            batch = [x.half() if half_model else x.float() for x in batch] 
+            batch = [x.to(device) for x in batch] 
+            if batch[0].shape[1]!=20:
+                batch = [x.permute(0,3,1,2) for x in batch]
+        #for idxes,batch in tqdm(data_loader):
+            
+            history_sum_true = history_sum_pred = batch[0].permute(0,2,3,1) if batch[0].shape[1]==20 else batch[0]
+
+            accu_series=[]
+            rmse_series=[]
+            
+            out = batch[0]
+            for i in range(1,len(batch)):
+                out   = model(out)
+                ltmv_pred = out.permute(0,2,3,1)
+                ltmv_true = batch[i].permute(0,2,3,1)
+                history_sum_pred+=ltmv_pred
+                history_sum_true+=ltmv_true
+                history_mean_pred=history_sum_pred/(i+1)
+                history_mean_true=history_sum_true/(i+1)
+                ltmsv_pred = ltmv_pred - history_mean_pred
+                ltmsv_true = ltmv_true - history_mean_true
+                accu_series.append(compute_accu(ltmsv_pred, ltmsv_true).detach().cpu())
+                rmse_series.append(compute_rmse(ltmv_pred , ltmv_true ).detach().cpu())
+            accu_series = torch.stack(accu_series,1) # (B,fourcast_num,20)
+            rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,20)
+            for idx, accu,rmse in zip(idxes,accu_series,rmse_series):
+                #if idx in fourcastresult:print(f"repeat at idx={idx}")
+                fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse}
+            
+             
+            for _ in range(random_repeat):
+                out = batch[0]*(1 + torch.randn_like(batch[0])*0.05)
+                for i in range(1,len(batch)):
+                    out   = model(out)
+                    ltmv_pred = out.permute(0,2,3,1)
+                    ltmv_true = batch[i].permute(0,2,3,1)
+                    history_sum_pred+=ltmv_pred
+                    history_sum_true+=ltmv_true
+                    history_mean_pred=history_sum_pred/(i+1)
+                    history_mean_true=history_sum_true/(i+1)
+                    ltmsv_pred = ltmv_pred - history_mean_pred
+                    ltmsv_true = ltmv_true - history_mean_true
+                    accu_series.append(compute_accu(ltmsv_pred, ltmsv_true).detach().cpu())
+                    rmse_series.append(compute_rmse(ltmv_pred , ltmv_true ).detach().cpu())
+                accu_series = torch.stack(accu_series,1) # (B,fourcast_num,20)
+                rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,20)
+                for idx, accu,rmse in zip(idxes,accu_series,rmse_series):
+                    if 'random' in fourcastresult[idx.item()]:fourcastresult[idx.item()]['random']={'accu':[],"rmse":[]}
+                    fourcastresult[idx.item()]['random']['accu'].append(accu)
+                    fourcastresult[idx.item()]['random']['rmse'].append(rmse)
+
+
+    save_path = os.path.join(logsys.ckpt_root,f"fourcastresult.gpu_{gpu}")
+    torch.save(fourcastresult,save_path)
+    print(f"save fourcastresult at {save_path}")
 lr_for_mode={
     'pretrain':5e-4,
     'finetune':1e-4
@@ -181,7 +281,7 @@ train_set={
     'test_large': (720, 1440, 8, lambda **kargs:SpeedTestDataset(720,1440,**kargs)),
     'test_small': ( 32,   64, 8, lambda **kargs:SpeedTestDataset( 32,  64,**kargs))
 }
-force_big  = False
+
 half_model = False
 
 last_best_path=None
@@ -189,19 +289,20 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
     TIME_NOW  = time.strftime("%m_%d_%H_%M")
     if not hasattr(args,'train_set'):args.train_set='large'
     #TIME_NOW = "07_23_19_35_04"
-    SAVE_PATH = Path(f'./checkpoints/fourcastnet/{args.mode}-{args.train_set}/{TIME_NOW}')
+    name = args.mode if not args.fourcast else 'fourcast'
+    SAVE_PATH = Path(f'./checkpoints/fourcastnet/{name}-{args.train_set}/{TIME_NOW}')
     SAVE_PATH.mkdir(parents=True, exist_ok=True)
     args.gpu = gpu = local_rank
     args.half_model = half_model
-    args.batch_size = bs_for_mode[args.mode] if not force_big else 1
+    args.batch_size = bs_for_mode[args.mode] if args.batch_size == -1 else args.batch_size
+    #args.batch_size = 1 if force_big else 1
     ngpus = torch.cuda.device_count()
-    args.epochs = ep_for_mode[args.mode]
-    args.lr     = lr_for_mode[args.mode]
-    
+    args.epochs = ep_for_mode[args.mode] if args.epochs == -1 else args.epochs
+    args.lr     = lr_for_mode[args.mode] if args.lr == -1 else args.lr
     # input size
     h, w, patch_size,dataset_type = train_set[args.train_set] 
     x_c, y_c = 20, 20
-    logsys   = LoggingSystem(local_rank==0,SAVE_PATH,seed=1)
+    logsys   = LoggingSystem(local_rank==0,SAVE_PATH,seed=args.seed)
     _        = logsys.create_recorder(hparam_dict={},metric_dict={})
     # fix the seed for reproducibility
     torch.manual_seed(args.seed)
@@ -219,22 +320,36 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
 
 
 
+    
+    if args.fourcast:
+        if 'small' in args.train_set:
+            dataset_type  =ERA5CephInMemoryDataset
+            test_dataset  = dataset_type(split="test" , mode=args.mode,years=[2018],root="/nvme/zhangtianning/datasets/ERA5", 
+                                            check_data=True,
+                                            dataset_tensor=train_dataset_tensor, 
+                                            with_idx=True,
+                                            time_step=9*24//6)
+        else:
+            test_dataset = dataset_type(split="test", mode=args.mode, check_data=True,dataset_tensor=train_dataset_tensor,time_step=9*24//6)
+    else:
+        train_dataset = dataset_type(split="train", mode=args.mode, check_data=True,dataset_tensor=train_dataset_tensor)
+        val_dataset   = dataset_type(split="valid", mode=args.mode, check_data=True,dataset_tensor=valid_dataset_tensor)
     print(f"use dataset ==> {dataset_type.__name__}")
-    train_dataset = dataset_type(split="train", mode=args.mode, check_data=True,dataset_tensor=train_dataset_tensor)
-    val_dataset   = dataset_type(split="valid", mode=args.mode, check_data=True,dataset_tensor=valid_dataset_tensor)
 
     #train_dataset.file_list=train_dataset.file_list[:20]
     #val_dataset.file_list=val_dataset.file_list[:20]
 
-
-    if args.distributed:
-        train_datasampler = DistributedSampler(train_dataset, shuffle=True)
-        val_datasampler   = DistributedSampler(val_dataset, shuffle=False)
+    if args.fourcast:
+        test_datasampler  = DistributedSampler(test_dataset,  shuffle=False) if args.distributed else None
     else:
-        train_datasampler = None
-        val_datasampler   = None
-    train_dataloader  = DataLoader(train_dataset, args.batch_size, sampler=train_datasampler, num_workers=8, pin_memory=True, drop_last=True)
-    val_dataloader    = DataLoader(val_dataset, args.batch_size*8, sampler=val_datasampler, num_workers=8, pin_memory=True, drop_last=False)
+        train_datasampler = DistributedSampler(train_dataset, shuffle=True) if args.distributed else None
+        val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
+
+    if args.fourcast:
+        test_dataloader    = DataLoader(test_dataset, 1, sampler=test_datasampler, num_workers=8, pin_memory=False,drop_last=False)
+    else:
+        train_dataloader  = DataLoader(train_dataset, args.batch_size, sampler=train_datasampler, num_workers=8, pin_memory=True, drop_last=True)
+        val_dataloader    = DataLoader(val_dataset, args.batch_size*8, sampler=val_datasampler, num_workers=8, pin_memory=True, drop_last=False)
     if args.distributed or force_big:
         model = AFNONet(img_size=[h, w], patch_size=patch_size, in_chans=x_c, out_chans=y_c, norm_layer=partial(nn.LayerNorm, eps=1e-6),
                         fno_blocks=args.fno_blocks,
@@ -276,41 +391,53 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
                                         SAVE_PATH/'pretrain_latest.pt',loc = 'cuda:{}'.format(args.gpu))
     else:
         if (SAVE_PATH / 'finetune_latest.pt').exists():
-            start_epoch, start_step, min_loss = load_model(model.module, optimizer, lr_scheduler, loss_scaler, SAVE_PATH / 'finetune_latest.pt')
+            start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, SAVE_PATH / 'finetune_latest.pt')
         else:
             assert args.pretrain_weight != ""
-            start_epoch, start_step, min_loss = load_model(model.module, path=args.pretrain_weight, only_model=True)
+            assert os.path.exists(args.pretrain_weight)
+            logsys.info(f"loading weight from {args.pretrain_weight}")
+            start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=args.pretrain_weight, only_model=True)
+            logsys.info("done!")
     #start_step = 0
-    if local_rank == 0:
-        print(f"Start training for {args.epochs} epochs")
+    if args.fourcast:
+        print("starting fourcast~!")
+        
+        with open(os.path.join(logsys.ckpt_root,'weight_path'),'w') as f:
+            f.write(args.pretrain_weight)
+        fourcast_step(test_dataloader, model,logsys,random_repeat = args.fourcast_randn_initial)
+        return 1
+    else:
+        if local_rank == 0:
+            print(f"Start training for {args.epochs} epochs")
 
-    master_bar        = logsys.create_master_bar(args.epochs)
-    last_best_path = None
-    for epoch in master_bar:
-        if epoch < start_epoch:continue
-        train_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,lr_scheduler, min_loss,logsys)
-        lr_scheduler.step(epoch)
-        #torch.cuda.empty_cache()
-        #train_loss = single_step_evaluate(train_dataloader, model, criterion,logsys)
-        train_loss = -1
-        val_loss   = single_step_evaluate(val_dataloader, model, criterion,logsys)
+        master_bar        = logsys.create_master_bar(args.epochs)
+        last_best_path = None
+        for epoch in master_bar:
+            if epoch < start_epoch:continue
+            train_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,lr_scheduler, min_loss,logsys)
+            lr_scheduler.step(epoch)
+            #torch.cuda.empty_cache()
+            #train_loss = single_step_evaluate(train_dataloader, model, criterion,logsys)
+            train_loss = -1
+            val_loss   = single_step_evaluate(val_dataloader, model, criterion,logsys)
 
-        if rank == 0 and local_rank == 0:
-            print(f"Epoch {epoch} | Train loss: {train_loss:.6f}, Val loss: {val_loss:.6f}")
-            logsys.record('train', train_loss, epoch)
-            logsys.record('valid', val_loss, epoch)
-            if val_loss < min_loss:
-                min_loss = val_loss
-                print(f"saving best model ....")
-                now_best_path = SAVE_PATH / f'backbone.best.pt'
-                save_model(model, path=now_best_path, only_model=True)
-                #if last_best_path is not None:os.system(f"rm {last_best_path}")
-                #last_best_path= now_best_path
-                print(f"done; the best accu is {val_loss}")
-            print(f"saving latest model ....")
-            start_step=0
-            save_model(model, epoch+1, start_step, optimizer, lr_scheduler, loss_scaler, min_loss, SAVE_PATH / 'pretrain_latest.pt')
-            print(f"done ....")
+            if rank == 0 and local_rank == 0:
+                print(f"Epoch {epoch} | Train loss: {train_loss:.6f}, Val loss: {val_loss:.6f}")
+                logsys.record('train', train_loss, epoch)
+                logsys.record('valid', val_loss, epoch)
+                if val_loss < min_loss:
+                    min_loss = val_loss
+                    print(f"saving best model ....")
+                    now_best_path = SAVE_PATH / f'backbone.best.pt'
+                    save_model(model, path=now_best_path, only_model=True)
+                    #if last_best_path is not None:os.system(f"rm {last_best_path}")
+                    #last_best_path= now_best_path
+                    print(f"done; the best accu is {val_loss}")
+                print(f"saving latest model ....")
+                start_step=0
+                save_model(model, epoch+1, start_step, optimizer, lr_scheduler, loss_scaler, min_loss, SAVE_PATH / 'pretrain_latest.pt')
+                print(f"done ....")
+        return 1
 
 if __name__ == '__main__':
     args = get_args()
@@ -352,13 +479,24 @@ if __name__ == '__main__':
     else:
         args.world_size = 1
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
-    if args.multiprocessing_distributed:
-        args.world_size = ngpus_per_node * args.world_size
-        if 'small' in args.train_set:
+    train_dataset_tensor=valid_dataset_tensor=None
+    
+    print("======== loading data ==========")
+    if 'small' in args.train_set:
+        if not args.fourcast:
             train_dataset_tensor = load_small_dataset_in_memory('train').share_memory_()
             valid_dataset_tensor = load_small_dataset_in_memory('valid').share_memory_()
         else:
-            train_dataset_tensor=valid_dataset_tensor=None
+            train_dataset_tensor = load_small_dataset_in_memory('test').share_memory_()
+            valid_dataset_tensor = None
+    else:
+        if args.fourcast:
+            train_dataset_tensor = load_test_dataset_in_memory(years=[2018],root="/nvme/zhangtianning/datasets/ERA5").share_memory_()
+            valid_dataset_tensor = None
+    print("=======done==========")
+    print(train_dataset_tensor.shape)
+    if args.multiprocessing_distributed:
+        args.world_size = ngpus_per_node * args.world_size
         torch.multiprocessing.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args,train_dataset_tensor,valid_dataset_tensor))
     else:
-        main_worker(0, ngpus_per_node, args)
+        main_worker(0, ngpus_per_node, args,train_dataset_tensor,valid_dataset_tensor)

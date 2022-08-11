@@ -38,6 +38,8 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
             start_step = ckpt["step"]
             min_loss = ckpt["min_loss"]
         print("loading model success...........")
+    else:
+        print("dont find path, please check, we pass........")
     return start_epoch, start_step, min_loss
 
 

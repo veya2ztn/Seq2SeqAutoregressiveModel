@@ -3,10 +3,10 @@ import argparse
 
 def get_args_parser():
     parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
-    parser.add_argument('--batch-size', default=4, type=int)
-    parser.add_argument('--epochs', default=100, type=int)
-    parser.add_argument('--seed', default=42, type=int)
-
+    parser.add_argument('--batch-size', default=-1, type=int)
+    parser.add_argument('--epochs', default=-1, type=int)
+    parser.add_argument('--seed', default=1, type=int)
+    parser.add_argument('--fourcast_randn_initial', default=0, type=int)
     # Model parameters
     parser.add_argument('--arch', default='deit_small', type=str, help='Name of model to train')
 
@@ -24,7 +24,7 @@ def get_args_parser():
     parser.add_argument('--weight-decay', type=float, default=0.05, help='weight decay (default: 0.05)')
     # Learning rate schedule parameters
     parser.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER', help='LR scheduler (default: "cosine"')
-    parser.add_argument('--lr', type=float, default=5e-4, metavar='LR', help='learning rate (default: 5e-4)')
+    parser.add_argument('--lr', type=float, default=-1, metavar='LR', help='learning rate (default: 5e-4)')
     parser.add_argument('--lr-noise', type=float, nargs='+', default=None, metavar='pct, pct', help='learning rate noise on/off epoch percentages')
     parser.add_argument('--lr-noise-pct', type=float, default=0.67, metavar='PERCENT', help='learning rate noise limit percent (default: 0.67)')
     parser.add_argument('--lr-noise-std', type=float, default=1.0, metavar='STDDEV', help='learning rate noise std-dev (default: 1.0)')
@@ -45,7 +45,8 @@ def get_args_parser():
 
     parser.add_argument('--repeated-aug', action='store_true')
     parser.set_defaults(repeated_aug=False)
-
+    parser.add_argument('--fourcast', action='store_true')
+    parser.set_defaults(fourcast=False)
     # * Random Erase params
     parser.add_argument('--reprob', type=float, default=0, metavar='PCT', help='Random erase prob (default: 0.25)')
     parser.add_argument('--remode', type=str, default='pixel', help='Random erase mode (default: "pixel")')

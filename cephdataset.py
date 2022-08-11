@@ -10,6 +10,7 @@ except:
     pass
 from functools import lru_cache
 import traceback
+from tqdm import tqdm
 vnames = [
     '10m_u_component_of_wind', '10m_v_component_of_wind', '2m_temperature', 'surface_pressure', 'mean_sea_level_pressure',
     '1000h_u_component_of_wind', '1000h_v_component_of_wind', '1000h_geopotential',
@@ -44,6 +45,7 @@ Years = {
 
 Shape = (720, 1440)
 import os
+
 class ERA5CephDataset(datasets.ImageFolder):
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,years=None,
                 class_name='ERA5Dataset', root='cluster3:s3://era5npy', ispretrain=True, crop_coord=None,time_step=None,with_idx=False,**kargs):
@@ -59,10 +61,11 @@ class ERA5CephDataset(datasets.ImageFolder):
         if self.mode == 'pretrain':
             self.time_step = 2
         elif self.mode == 'finetune':
-            self.time_step = 3 
+            self.time_step = 3
         elif self.mode == 'free5':
             self.time_step = 5
         if time_step is not None:self.time_step=time_step
+        self.random_time_step=False
     def __len__(self):
         return len(self.file_list) - self.time_step + 1
 
@@ -124,7 +127,7 @@ class ERA5CephDataset(datasets.ImageFolder):
 
     def __getitem__(self,idx):
 
-        
+        time_step = self.time_step if not self.random_time_step else np.random.randint(2,5)
         try:
             batch = [self.get_item(idx+i) for i in range(self.time_step)]
             self.error_path = []
@@ -143,23 +146,61 @@ class ERA5CephDataset(datasets.ImageFolder):
 
 
 smalldataset_path={
-    'train': "./datasets/era5G32x64/train_data.npy",
-    'valid': "./datasets/era5G32x64/valid_data.npy",
-    'test':  "./datasets/era5G32x64/test_data.npy"
+    'train': "./datasets/era5G32x64_set/train_data.npy",
+    'valid': "./datasets/era5G32x64_set/valid_data.npy",
+    'test':  "./datasets/era5G32x64_set/test_data.npy"
 }
 def load_small_dataset_in_memory(split):
     return torch.Tensor(np.load(smalldataset_path[split]))
+def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_coord=None,channel_last=True):
+    client = None
+    file_list = []
+    for year in years:
+        if year % 4 == 0:
+            max_item = 1464
+        else:
+            max_item = 1460
+        for hour in range(max_item):
+            file_list.append([year, hour])
+    print("loading data!!!")
+    #file_list = file_list[:40]
+    data = torch.empty(len(file_list),720,1440,20)
+    #print(data.shape)
+    for idx,(year, hour) in tqdm(enumerate(file_list)):
+        arrays = []
+        for name in vnames:
+            url = f"{root}/{name}/{year}/{name}-{year}-{hour:04d}.npy"
+            if "s3://" in url:
+                if client is None:client = Client(conf_path="~/petreloss.conf")
+                array = ERA5CephDataset.read_npy_from_ceph(client, url)
+            else:
+                array = ERA5CephDataset.read_npy_from_buffer(url)
+           # array = array[np.newaxis, :, :]
+            arrays.append(array)
+        arrays = np.stack(arrays, axis=0)
+        if crop_coord is not None:
+            l, r, u, b = crop_coord
+            arrays = arrays[:, u:b, l:r]
+        #arrays = torch.from_numpy(arrays)
+        if channel_last:arrays = arrays.transpose(1,2,0)
+        data[idx]= torch.from_numpy(arrays)
+    #data= torch.from_numpy(np.stack(data))
+
+    return data
+
 class ERA5CephSmallDataset(ERA5CephDataset):
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,
-                class_name='ERA5CephSmallDataset', ispretrain=True, crop_coord=None,dataset_tensor=None,time_step=None,with_idx=False):
+                class_name='ERA5CephSmallDataset', ispretrain=True,
+                crop_coord=None,dataset_tensor=None,time_step=None,with_idx=False,random_time_step=False):
         self.crop_coord   = crop_coord
         self.mode         = mode
         self.data         = load_small_dataset_in_memory(split) if dataset_tensor is None else dataset_tensor
         self.channel_last = channel_last
         self.with_idx     = with_idx
         self.error_path   = []
+        self.random_time_step = random_time_step
         if self.mode   == 'pretrain':self.time_step = 2
-        elif self.mode == 'finetune':self.time_step = 3 
+        elif self.mode == 'finetune':self.time_step = 3
         elif self.mode == 'free5':self.time_step = 5
         if time_step is not None:
             self.time_step = time_step
@@ -180,13 +221,41 @@ class ERA5CephSmallDataset(ERA5CephDataset):
         return arrays
 
 
+class ERA5CephInMemoryDataset(ERA5CephDataset):
+    def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,years=[2018],dataset_tensor=None,
+                class_name='ERA5Dataset', root='cluster3:s3://era5npy', ispretrain=True, crop_coord=None,time_step=None,with_idx=False,**kargs):
+        # if dataset_tensor is None:
+        #     self.data=load_test_dataset_in_memory(years=years,root=root,crop_coord=crop_coord,channel_last=channel_last)
+        # else:
+        self.data= dataset_tensor
+        self.mode = mode
+        self.channel_last = channel_last
+        self.with_idx = with_idx
+        self.error_path = []
+        if self.mode == 'pretrain':
+            self.time_step = 2
+        elif self.mode == 'finetune':
+            self.time_step = 3
+        elif self.mode == 'free5':
+            self.time_step = 5
+        if time_step is not None:self.time_step=time_step
+
+
+    def __len__(self):
+        return len(self.data) - self.time_step + 1
+
+    def __getitem__(self,idx):
+        batch = [self.data[idx+i] for i in range(self.time_step)]
+        return batch if not self.with_idx else (idx,batch)
+
+
 class SpeedTestDataset(torch.utils.data.Dataset):
     def __init__(self, h, w , split="train", mode='pretrain', check_data=True,**kargs):
         self.mode = mode
         self.input_h = h
         self.input_w = w
         if self.mode   == 'pretrain':self.time_step = 2
-        elif self.mode == 'finetune':self.time_step = 3 
+        elif self.mode == 'finetune':self.time_step = 3
         elif self.mode == 'free5':self.time_step = 5
         pass
 

@@ -264,6 +264,7 @@ class AFNONet(nn.Module):
         trunc_normal_(self.pos_embed, std=.02)
         self.apply(self._init_weights)
         self.debug_mode=debug_mode
+    
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=.02)
