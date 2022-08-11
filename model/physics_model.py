@@ -63,6 +63,7 @@ class EulerEquationModel(nn.Module):
         self.thermal_factor = nn.Parameter(torch.randn(1))
         self.p_list         = nn.Parameter(torch.Tensor([10,8.5,5]).reshape(1,3,1,1),requires_grad=False)
         self.backbone =  backbone
+        self.monitor = True
     def forward(self, Field):
         #Delta_u = Fx - u*u_dx - v*u_dy - o*u_dz - p_dx 
         #Delta_v = Fy - u*v_dx - v*v_dy - o*v_dz - p_dy 
@@ -85,9 +86,16 @@ class EulerEquationModel(nn.Module):
         Field_dx = self.Dx(Field.flatten(0,1)).reshape(Field.shape)#(Batch, 4, z, y ,x)
         Field_dy = self.Dy(Field.flatten(0,1)).reshape(Field.shape)#(Batch, 4, z, y ,x)
         Field_dz = self.Dz(Field.flatten(0,1)).reshape(Field.shape)#(Batch, 4, z, y ,x)
-        ResPart  = torch.stack([-Field_dx[:,3], -Field_dy[:,3], self.thermal_factor*T[:,0]/self.p_list*o[:,0]],1)#(Batch,3,z, y ,x)
-        ResPart  = F.pad(ResPart,(0,0,0,0,0,0,0,1)) #(Batch,4,z, y ,x)
-        Delta_Fd = ExternalForce -  u*Field_dx - v*Field_dy - o*Field_dz + ResPart
+        PhysicsPart  = torch.stack([-Field_dx[:,3], -Field_dy[:,3], self.thermal_factor*T[:,0]/self.p_list*o[:,0]],1)#(Batch,3,z, y ,x)
+        PhysicsPart  = F.pad(PhysicsPart,(0,0,0,0,0,0,0,1)) #(Batch,4,z, y ,x)
+        xydirection  = - u*Field_dx - v*Field_dy
+        PhysicsPart  = xydirection - o*Field_dz + PhysicsPart
+        Delta_Fd = ExternalForce + PhysicsPart
         Field    = Field+ Delta_Fd
         constrain= Field_dx[:,0] + Field_dy[:,1] + self.Dz(o[:,0])
-        return Field.flatten(1,2),constrain.mean()
+        if not self.monitor:
+            return Field.flatten(1,2),(constrain**2).mean()
+        else:
+            return Field.flatten(1,2),(constrain**2).mean(),{"ExternalForceFactor":(ExternalForce**2).mean().item(), 
+                                                             "PhysicsDrivenFactor":(PhysicsPart**2).mean().item(),
+                                                             "xypannelDrivenFactor":(xydirection**2).mean().item()}

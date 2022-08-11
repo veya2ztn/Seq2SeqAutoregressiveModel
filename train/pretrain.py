@@ -79,13 +79,18 @@ def train_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer,
                 out   = model(out)
                 extra_loss = 0
                 if isinstance(out,(list,tuple)):
-                    out, extra_loss = out
+                    extra_loss=out[1]
+                    logsys.record(f'train_extra_loss_gpu{gpu}_timestep{i}', extra_loss.item(), epoch*batches + step)
+                    for extra_info_from_model in out[2:]:
+                        for name, value in extra_info_from_model.items():
+                            logsys.record(f'train_{name}_timestep{i}', value, epoch*batches + step)
+                    out = out[0]
                 loss += criterion(out, batch[i]) + extra_loss
             loss /= accumulation_steps
         loss_scaler.scale(loss).backward()
         
         train_cost += time.time() - now;now = time.time()
-        logsys.record(f'training_loss_gpu{gpu}', loss.item(), epoch*batches + step)
+        logsys.record(f'train_training_loss_gpu{gpu}', loss.item(), epoch*batches + step)
         # 梯度累积
         if (step+1) % accumulation_steps == 0:
            #if half_model:
@@ -113,7 +118,7 @@ def train_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer,
             data_cost = train_cost = rest_cost = 0
             inter_b.lwrite(outstring, end="\r")
         
-def single_step_evaluate(data_loader, model, criterion,logsys):
+def single_step_evaluate(data_loader, model, criterion,epoch,logsys):
     loss, total = torch.zeros(2).cuda()
     gpu     = dist.get_rank() if hasattr(model,'module') else 0
     # switch to evaluation mode
@@ -143,7 +148,12 @@ def single_step_evaluate(data_loader, model, criterion,logsys):
                     out   = model(out)
                     extra_loss = 0
                     if isinstance(out,(list,tuple)):
-                        out, extra_loss = out
+                        extra_loss=out[1]
+                        logsys.record(f'valid_extra_loss_gpu{gpu}_timestep{i}', extra_loss.item(), epoch*batches + step)
+                        for extra_info_from_model in out[2:]:
+                            for name, value in extra_info_from_model.items():
+                                logsys.record(f'valid_{name}_timestep{i}', value, epoch*batches + step)
+                        out = out[0]
                     loss += criterion(out, batch[i]) + extra_loss
             train_cost += time.time() - now;now = time.time()
             #total += 1
@@ -167,6 +177,7 @@ def single_step_evaluate(data_loader, model, criterion,logsys):
             return loss_val
         else:
             return loss.item() / total.item()
+        
 
 def compute_accu(ltmsv_pred, ltmsv_true):
     w = ltmsv_pred.shape[1]
@@ -225,7 +236,8 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
                 out   = model(out)
                 extra_loss = 0
                 if isinstance(out,(list,tuple)):
-                    out, extra_loss = out
+                    extra_loss=out[1]
+                    out = out[0]
                 ltmv_pred = out.permute(0,2,3,1)
                 ltmv_true = batch[i].permute(0,2,3,1)
                 history_sum_pred+=ltmv_pred
@@ -436,7 +448,7 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
             #torch.cuda.empty_cache()
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,logsys)
             train_loss = -1
-            val_loss   = single_step_evaluate(val_dataloader, model, criterion,logsys)
+            val_loss   = single_step_evaluate(val_dataloader, model, criterion,epoch,logsys)
 
             if rank == 0 and local_rank == 0:
                 print(f"Epoch {epoch} | Train loss: {train_loss:.6f}, Val loss: {val_loss:.6f}")
