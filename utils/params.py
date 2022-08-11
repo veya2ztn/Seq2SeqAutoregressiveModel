@@ -65,7 +65,10 @@ def get_args_parser():
     parser.add_argument('--num-layers', type=int, default=12)
     parser.add_argument('--checkpoint-activations', action='store_true')
     parser.add_argument('--autoresume', action='store_true')
-    
+    parser.add_argument('--activate_physics_dataset', action='store_true')
+    parser.set_defaults(activate_physics_dataset=False)
+    parser.add_argument('--activate_physics_model', action='store_true')
+    parser.set_defaults(activate_physics_model=False)
     # attention parameters
     parser.add_argument('--num-attention-heads', type=int, default=1)
 

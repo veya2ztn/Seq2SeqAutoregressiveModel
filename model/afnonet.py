@@ -244,16 +244,30 @@ class AFNONet(nn.Module):
         #     ('fc', nn.Linear(embed_dim, self.representation_size)),
         #     ('act', nn.Tanh())
         # ]))
+        if patch_size == 8:
+            conf_list = [{'kernel_size':(2,2),'stride':(2,2)},
+                         {'kernel_size':(2,2),'stride':(2,2)},
+                         {'kernel_size':(2,2),'stride':(2,2)}]
+        elif patch_size == 4:
+            conf_list = [{'kernel_size':(2,2),'stride':(2,2)},
+                         {'kernel_size':(3,3),'stride':(1,1),'padding':(1,1)},
+                         {'kernel_size':(2,2),'stride':(2,2)}]
+        elif patch_size == 2:
+            conf_list = [{'kernel_size':(3,3),'stride':(1,1),'padding':(1,1)},
+                         {'kernel_size':(3,3),'stride':(1,1),'padding':(1,1)},
+                         {'kernel_size':(2,2),'stride':(2,2)}]
+        else:
+            raise NotImplementedError(f"the patch size only support 2,4,8 to ensure size consistancy")
         self.pre_logits = nn.Sequential(OrderedDict([
-            ('conv1', nn.ConvTranspose2d(embed_dim, out_chans*16, kernel_size=(2, 2), stride=(2, 2))),
+            ('conv1', nn.ConvTranspose2d(embed_dim, out_chans*16, **conf_list[0])),
             ('act1', nn.Tanh()),
-            ('conv2', nn.ConvTranspose2d(out_chans*16, out_chans*4, kernel_size=(2, 2), stride=(2, 2))),
+            ('conv2', nn.ConvTranspose2d(out_chans*16, out_chans*4, **conf_list[1])),
             ('act2', nn.Tanh())
         ]))
 
         # Generator head
         # self.head = nn.Linear(self.representation_size, self.num_features)
-        self.head = nn.ConvTranspose2d(out_chans*4, out_chans, kernel_size=(2, 2), stride=(2, 2))
+        self.head = nn.ConvTranspose2d(out_chans*4, out_chans, **conf_list[2])
 
         if dropcls > 0:
             print('dropout %.2f before classifier' % dropcls)

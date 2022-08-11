@@ -24,6 +24,7 @@ import torch.distributed as dist
 #import hfai.nn as hfnn
 #from hfai.datasets import ERA5
 from model.afnonet import AFNONet
+from model.physics_model import EulerEquationModel
 from utils.params import get_args
 from utils.tools import getModelSize, load_model, save_model
 from utils.eval import single_step_evaluate
@@ -72,11 +73,14 @@ def train_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer,
         batch = [x.to(device).transpose(3, 2).transpose(2, 1) for x in batch]
         loss = 0
         
-        with torch.cuda.amp.autocast(dtype=torch.float16):
+        with torch.cuda.amp.autocast():
             out = batch[0]
             for i in range(1,len(batch)):
                 out   = model(out)
-                loss += criterion(out, batch[i])
+                extra_loss = 0
+                if isinstance(out,(list,tuple)):
+                    out, extra_loss = out
+                loss += criterion(out, batch[i]) + extra_loss
             loss /= accumulation_steps
         loss_scaler.scale(loss).backward()
         
@@ -133,11 +137,14 @@ def single_step_evaluate(data_loader, model, criterion,logsys):
             batch = prefetcher.next()
             batch = [x.half() if half_model else x.float() for x in batch] 
             batch = [x.to(device).transpose(3, 2).transpose(2, 1) for x in batch]
-            with torch.cuda.amp.autocast(dtype=torch.float16):
+            with torch.cuda.amp.autocast():
                 out = batch[0]
                 for i in range(1,len(batch)):
                     out   = model(out)
-                    loss += criterion(out, batch[i])
+                    extra_loss = 0
+                    if isinstance(out,(list,tuple)):
+                        out, extra_loss = out
+                    loss += criterion(out, batch[i]) + extra_loss
             train_cost += time.time() - now;now = time.time()
             #total += 1
             total += len(batch) - 1
@@ -205,8 +212,7 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
             idxes,batch = prefetcher.next()
             batch = [x.half() if half_model else x.float() for x in batch] 
             batch = [x.to(device) for x in batch] 
-            if batch[0].shape[1]!=20:
-                batch = [x.permute(0,3,1,2) for x in batch]
+            if batch[0].shape[1]!=20:batch = [x.permute(0,3,1,2) for x in batch]
         #for idxes,batch in tqdm(data_loader):
             
             history_sum_true = history_sum_pred = batch[0].permute(0,2,3,1) if batch[0].shape[1]==20 else batch[0]
@@ -217,6 +223,9 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
             out = batch[0]
             for i in range(1,len(batch)):
                 out   = model(out)
+                extra_loss = 0
+                if isinstance(out,(list,tuple)):
+                    out, extra_loss = out
                 ltmv_pred = out.permute(0,2,3,1)
                 ltmv_true = batch[i].permute(0,2,3,1)
                 history_sum_pred+=ltmv_pred
@@ -277,7 +286,7 @@ as_for_mode={
 }
 train_set={
     'large': (720, 1440, 8, ERA5CephDataset),
-    'small': ( 32,   64, 8, ERA5CephSmallDataset),
+    'small': ( 32,   64, 2, ERA5CephSmallDataset),
     'test_large': (720, 1440, 8, lambda **kargs:SpeedTestDataset(720,1440,**kargs)),
     'test_small': ( 32,   64, 8, lambda **kargs:SpeedTestDataset( 32,  64,**kargs))
 }
@@ -286,6 +295,8 @@ half_model = False
 
 last_best_path=None
 def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,valid_dataset_tensor=None):
+    args.activate_physics_dataset = True
+    args.activate_physics_model = True
     TIME_NOW  = time.strftime("%m_%d_%H_%M")
     if not hasattr(args,'train_set'):args.train_set='large'
     #TIME_NOW = "07_23_19_35_04"
@@ -302,6 +313,10 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
     # input size
     h, w, patch_size,dataset_type = train_set[args.train_set] 
     x_c, y_c = 20, 20
+    if args.activate_physics_dataset:
+        x_c, y_c = 12, 12
+    if args.activate_physics_model:
+        y_c  = 15
     logsys   = LoggingSystem(local_rank==0,SAVE_PATH,seed=args.seed)
     _        = logsys.create_recorder(hparam_dict={},metric_dict={})
     # fix the seed for reproducibility
@@ -318,22 +333,22 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
         print(f"start init_process_group,backend={args.dist_backend}, init_method={args.dist_url},world_size={args.world_size}, rank={args.rank}")
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,world_size=args.world_size, rank=args.rank)
 
-
-
-    
     if args.fourcast:
         if 'small' in args.train_set:
-            dataset_type  =ERA5CephInMemoryDataset
+            dataset_type  = ERA5CephInMemoryDataset
             test_dataset  = dataset_type(split="test" , mode=args.mode,years=[2018],root="/nvme/zhangtianning/datasets/ERA5", 
                                             check_data=True,
                                             dataset_tensor=train_dataset_tensor, 
                                             with_idx=True,
-                                            time_step=9*24//6)
+                                            time_step=9*24//6,enable_physics_dataset=args.activate_physics_dataset)
         else:
-            test_dataset = dataset_type(split="test", mode=args.mode, check_data=True,dataset_tensor=train_dataset_tensor,time_step=9*24//6)
+            test_dataset = dataset_type(split="test", mode=args.mode, check_data=True,dataset_tensor=train_dataset_tensor,
+            time_step=9*24//6,enable_physics_dataset=args.activate_physics_dataset)
     else:
-        train_dataset = dataset_type(split="train", mode=args.mode, check_data=True,dataset_tensor=train_dataset_tensor)
-        val_dataset   = dataset_type(split="valid", mode=args.mode, check_data=True,dataset_tensor=valid_dataset_tensor)
+        train_dataset = dataset_type(split="train", mode=args.mode, check_data=True,dataset_tensor=train_dataset_tensor,
+                                    enable_physics_dataset=args.activate_physics_dataset)
+        val_dataset   = dataset_type(split="valid", mode=args.mode, check_data=True,dataset_tensor=valid_dataset_tensor,
+                                    enable_physics_dataset=args.activate_physics_dataset)
     print(f"use dataset ==> {dataset_type.__name__}")
 
     #train_dataset.file_list=train_dataset.file_list[:20]
@@ -361,6 +376,8 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
                         double_skip=args.double_skip, fno_bias=args.fno_bias, fno_softshrink=args.fno_softshrink,
                         embed_dim=16, depth=1,debug_mode=1
                         )
+    if args.activate_physics_model:
+        model = EulerEquationModel(args,model)
     #model = hfnn.to_hfai(model)
 
     rank = args.rank

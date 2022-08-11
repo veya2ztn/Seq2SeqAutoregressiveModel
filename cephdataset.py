@@ -18,8 +18,8 @@ vnames = [
     '500h_temperature', '500h_u_component_of_wind', '500h_v_component_of_wind', '500h_geopotential', '500h_relative_humidity',
     '50h_geopotential',
     'total_column_water_vapour',
-
 ]
+physice_vnames=[vnames[t] for t in [5, 9,14 , 6,10,15 ,7,11,16 ,2, 8,13]]
 vnames_short = [
     'u10', 'v10', 't2m', 'sp', 'msl',
     'u', 'v', 'z',
@@ -48,7 +48,7 @@ import os
 
 class ERA5CephDataset(datasets.ImageFolder):
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,years=None,
-                class_name='ERA5Dataset', root='cluster3:s3://era5npy', ispretrain=True, crop_coord=None,time_step=None,with_idx=False,**kargs):
+                class_name='ERA5Dataset', root='cluster3:s3://era5npy',enable_physics_dataset=False, ispretrain=True, crop_coord=None,time_step=None,with_idx=False,**kargs):
         self.client = Client(conf_path="~/petreloss.conf")
         self.root = root
         self.years = Years[split] if years is None else years
@@ -66,6 +66,7 @@ class ERA5CephDataset(datasets.ImageFolder):
             self.time_step = 5
         if time_step is not None:self.time_step=time_step
         self.random_time_step=False
+        self.vname= physice_vnames if enable_physics_dataset else vnames
     def __len__(self):
         return len(self.file_list) - self.time_step + 1
 
@@ -101,7 +102,7 @@ class ERA5CephDataset(datasets.ImageFolder):
     def get_item(self, idx):
         year, hour = self.file_list[idx]
         arrays = []
-        for name in vnames:
+        for name in self,vnames:
             url = f"{self.root}/{name}/{year}/{name}-{year}-{hour:04d}.npy"
             if "s3://" in url:
                 array = self.read_npy_from_ceph(self.client, url)
@@ -121,7 +122,7 @@ class ERA5CephDataset(datasets.ImageFolder):
 
     def get_url(self,idx):
         year, hour = self.file_list[idx]
-        for name in vnames:
+        for name in self.vnames:
             url = f"{self.root}/{name}/{year}/{name}-{year}-{hour:04d}.npy"
             print(url)
 
@@ -152,7 +153,7 @@ smalldataset_path={
 }
 def load_small_dataset_in_memory(split):
     return torch.Tensor(np.load(smalldataset_path[split]))
-def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_coord=None,channel_last=True):
+def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_coord=None,channel_last=True,vnames=vnames):
     client = None
     file_list = []
     for year in years:
@@ -191,10 +192,14 @@ def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_
 class ERA5CephSmallDataset(ERA5CephDataset):
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,
                 class_name='ERA5CephSmallDataset', ispretrain=True,
-                crop_coord=None,dataset_tensor=None,time_step=None,with_idx=False,random_time_step=False):
+                crop_coord=None,
+                dataset_tensor=None,
+                time_step=None,with_idx=False,random_time_step=False,enable_physics_dataset=False):
         self.crop_coord   = crop_coord
         self.mode         = mode
         self.data         = load_small_dataset_in_memory(split) if dataset_tensor is None else dataset_tensor
+        if enable_physics_dataset:
+            self.data = self.data[:,[5, 9,14 , 6,10,15 ,7,11,16 ,2, 8,13]]
         self.channel_last = channel_last
         self.with_idx     = with_idx
         self.error_path   = []
