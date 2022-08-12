@@ -5,6 +5,7 @@ idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
 
 force_big  = True
+accumulation_steps_global=8
 from pathlib import Path
 import numpy as np
 import torch
@@ -49,7 +50,7 @@ def train_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer,
     model.train()
     logsys.train()
 
-    accumulation_steps = 1 #8 # should be 16 for finetune. but I think its ok.
+    accumulation_steps = accumulation_steps_global # should be 16 for finetune. but I think its ok.
     half_model = next(model.parameters()).dtype == torch.float16
     now = time.time()
     data_cost = train_cost = rest_cost = 0
@@ -69,10 +70,10 @@ def train_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer,
 
         data_cost += time.time() - now;now = time.time()
 
-        batch = [x.half() if half_model else x.float() for x in batch] 
+        batch = [x.half() if half_model else x.float() for x in batch]
         batch = [x.to(device).transpose(3, 2).transpose(2, 1) for x in batch]
         loss = 0
-        
+
         with torch.cuda.amp.autocast():
             out = batch[0]
             for i in range(1,len(batch)):
@@ -88,7 +89,7 @@ def train_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer,
                 loss += criterion(out, batch[i]) + extra_loss
             loss /= accumulation_steps
         loss_scaler.scale(loss).backward()
-        
+
         train_cost += time.time() - now;now = time.time()
         logsys.record(f'train_training_loss_gpu{gpu}', loss.item(), epoch*batches + step)
         # 梯度累积
@@ -117,7 +118,7 @@ def train_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer,
             outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] GPU:[{gpu}] loss:{loss.item():.2f} cost:[Date]:{data_cost/intervel:.1e} [Train]:{train_cost/intervel:.1e} [Rest]:{rest_cost/intervel:.1e}")
             data_cost = train_cost = rest_cost = 0
             inter_b.lwrite(outstring, end="\r")
-        
+
 def single_step_evaluate(data_loader, model, criterion,epoch,logsys):
     loss, total = torch.zeros(2).cuda()
     gpu     = dist.get_rank() if hasattr(model,'module') else 0
@@ -140,7 +141,7 @@ def single_step_evaluate(data_loader, model, criterion,epoch,logsys):
             data_cost += time.time() - now;now = time.time()
             step = inter_b.now
             batch = prefetcher.next()
-            batch = [x.half() if half_model else x.float() for x in batch] 
+            batch = [x.half() if half_model else x.float() for x in batch]
             batch = [x.to(device).transpose(3, 2).transpose(2, 1) for x in batch]
             with torch.cuda.amp.autocast():
                 out = batch[0]
@@ -177,7 +178,7 @@ def single_step_evaluate(data_loader, model, criterion,epoch,logsys):
             return loss_val
         else:
             return loss.item() / total.item()
-        
+
 
 def compute_accu(ltmsv_pred, ltmsv_true):
     w = ltmsv_pred.shape[1]
@@ -221,16 +222,16 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
             data_cost += time.time() - now;now = time.time()
             step = inter_b.now
             idxes,batch = prefetcher.next()
-            batch = [x.half() if half_model else x.float() for x in batch] 
-            batch = [x.to(device) for x in batch] 
+            batch = [x.half() if half_model else x.float() for x in batch]
+            batch = [x.to(device) for x in batch]
             if batch[0].shape[1]!=20:batch = [x.permute(0,3,1,2) for x in batch]
         #for idxes,batch in tqdm(data_loader):
-            
+
             history_sum_true = history_sum_pred = batch[0].permute(0,2,3,1) if batch[0].shape[1]==20 else batch[0]
 
             accu_series=[]
             rmse_series=[]
-            
+
             out = batch[0]
             for i in range(1,len(batch)):
                 out   = model(out)
@@ -253,8 +254,8 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
             for idx, accu,rmse in zip(idxes,accu_series,rmse_series):
                 #if idx in fourcastresult:print(f"repeat at idx={idx}")
                 fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse}
-            
-             
+
+
             for _ in range(random_repeat):
                 out = batch[0]*(1 + torch.randn_like(batch[0])*0.05)
                 for i in range(1,len(batch)):
@@ -298,22 +299,23 @@ as_for_mode={
 }
 train_set={
     'large': (720, 1440, 8, ERA5CephDataset),
-    'small': ( 32,   64, 2, ERA5CephSmallDataset),
+    'small': ( 32,   64, 8, ERA5CephSmallDataset),
     'test_large': (720, 1440, 8, lambda **kargs:SpeedTestDataset(720,1440,**kargs)),
-    'test_small': ( 32,   64, 8, lambda **kargs:SpeedTestDataset( 32,  64,**kargs))
+    'test_small': ( 32,   64, 8, lambda **kargs:SpeedTestDataset( 32,  64,**kargs)),
+    'physics_small': ( 32,   64, 2, ERA5CephSmallDataset),
+    'physics': (720, 1440, 8, ERA5CephDataset),
 }
 
 half_model = False
 
 last_best_path=None
 def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,valid_dataset_tensor=None):
-    args.activate_physics_dataset = True
-    args.activate_physics_model = True
-    TIME_NOW  = time.strftime("%m_%d_%H_%M")
+    TIME_NOW  = time.strftime("%m_%d_%H_%M") if args.distributed else time.strftime("%m_%d_%H_%M_%S")
     if not hasattr(args,'train_set'):args.train_set='large'
     #TIME_NOW = "07_23_19_35_04"
     name = args.mode if not args.fourcast else 'fourcast'
-    SAVE_PATH = Path(f'./checkpoints/fourcastnet/{name}-{args.train_set}/{TIME_NOW}')
+    modelsname= "fourcastnet" if not args.activate_physics_model else "physicsnet"
+    SAVE_PATH = Path(f'./checkpoints/{modelsname}/{name}-{args.train_set}/{TIME_NOW}')
     SAVE_PATH.mkdir(parents=True, exist_ok=True)
     args.gpu = gpu = local_rank
     args.half_model = half_model
@@ -323,14 +325,19 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
     args.epochs = ep_for_mode[args.mode] if args.epochs == -1 else args.epochs
     args.lr     = lr_for_mode[args.mode] if args.lr == -1 else args.lr
     # input size
-    h, w, patch_size,dataset_type = train_set[args.train_set] 
+    h, w, patch_size,dataset_type = train_set[args.train_set]
+    patch_size = patch_size if args.patch_size == -1 else args.patch_size
     x_c, y_c = 20, 20
+    args.activate_physics_dataset = 'physics' in args.train_set
     if args.activate_physics_dataset:
         x_c, y_c = 12, 12
     if args.activate_physics_model:
         y_c  = 15
+
     logsys   = LoggingSystem(local_rank==0,SAVE_PATH,seed=args.seed)
-    _        = logsys.create_recorder(hparam_dict={},metric_dict={})
+    _        = logsys.create_recorder(hparam_dict={'patch_size':patch_size, 'lr':args.lr, 'batch_size':args.batch_size,
+                                                   'physics_model':args.activate_physics_model},
+                                      metric_dict={'best_loss':None})
     # fix the seed for reproducibility
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -348,9 +355,9 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
     if args.fourcast:
         if 'small' in args.train_set:
             dataset_type  = ERA5CephInMemoryDataset
-            test_dataset  = dataset_type(split="test" , mode=args.mode,years=[2018],root="/nvme/zhangtianning/datasets/ERA5", 
+            test_dataset  = dataset_type(split="test" , mode=args.mode,years=[2018],root="/nvme/zhangtianning/datasets/ERA5",
                                             check_data=True,
-                                            dataset_tensor=train_dataset_tensor, 
+                                            dataset_tensor=train_dataset_tensor,
                                             with_idx=True,
                                             time_step=9*24//6,enable_physics_dataset=args.activate_physics_dataset)
         else:
@@ -391,6 +398,7 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
     if args.activate_physics_model:
         model = EulerEquationModel(args,model)
     #model = hfnn.to_hfai(model)
+    print(f"use model ==> {model.__class__.__name__}")
 
     rank = args.rank
     if local_rank == 0:
@@ -430,7 +438,7 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
     #start_step = 0
     if args.fourcast:
         print("starting fourcast~!")
-        
+
         with open(os.path.join(logsys.ckpt_root,'weight_path'),'w') as f:
             f.write(args.pretrain_weight)
         fourcast_step(test_dataloader, model,logsys,random_repeat = args.fourcast_randn_initial)
@@ -446,8 +454,8 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
             train_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,lr_scheduler, min_loss,logsys)
             lr_scheduler.step(epoch)
             #torch.cuda.empty_cache()
-            #train_loss = single_step_evaluate(train_dataloader, model, criterion,logsys)
-            train_loss = -1
+            train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys)
+            #train_loss = -1
             val_loss   = single_step_evaluate(val_dataloader, model, criterion,epoch,logsys)
 
             if rank == 0 and local_rank == 0:
@@ -455,18 +463,19 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
                 logsys.record('train', train_loss, epoch)
                 logsys.record('valid', val_loss, epoch)
                 if val_loss < min_loss:
+
                     min_loss = val_loss
                     print(f"saving best model ....")
                     now_best_path = SAVE_PATH / f'backbone.best.pt'
-                    save_model(model, path=now_best_path, only_model=True)
+                    if epoch>args.save_warm_up:save_model(model, path=now_best_path, only_model=True)
                     #if last_best_path is not None:os.system(f"rm {last_best_path}")
                     #last_best_path= now_best_path
                     print(f"done; the best accu is {val_loss}")
+                logsys.record('best_loss', min_loss, epoch)
                 print(f"saving latest model ....")
-                start_step=0
-                save_model(model, epoch+1, start_step, optimizer, lr_scheduler, loss_scaler, min_loss, SAVE_PATH / 'pretrain_latest.pt')
+                if epoch>args.save_warm_up:save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, SAVE_PATH / 'pretrain_latest.pt')
                 print(f"done ....")
-        return 1
+        return {'valid_loss':min_loss}
 
 if __name__ == '__main__':
     args = get_args()
@@ -509,21 +518,25 @@ if __name__ == '__main__':
         args.world_size = 1
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
     train_dataset_tensor=valid_dataset_tensor=None
-    
+
     print("======== loading data ==========")
     if 'small' in args.train_set:
         if not args.fourcast:
             train_dataset_tensor = load_small_dataset_in_memory('train').share_memory_()
+            print(f"train->{train_dataset_tensor.shape}")
             valid_dataset_tensor = load_small_dataset_in_memory('valid').share_memory_()
+            print(f"valid->{train_dataset_tensor.shape}")
         else:
             train_dataset_tensor = load_small_dataset_in_memory('test').share_memory_()
+            print(f"test->{train_dataset_tensor.shape}")
             valid_dataset_tensor = None
     else:
         if args.fourcast:
             train_dataset_tensor = load_test_dataset_in_memory(years=[2018],root="/nvme/zhangtianning/datasets/ERA5").share_memory_()
+            print(f"test->{train_dataset_tensor.shape}")
             valid_dataset_tensor = None
     print("=======done==========")
-    print(train_dataset_tensor.shape)
+    
     if args.multiprocessing_distributed:
         args.world_size = ngpus_per_node * args.world_size
         torch.multiprocessing.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args,train_dataset_tensor,valid_dataset_tensor))

@@ -5,7 +5,10 @@ def get_args_parser():
     parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
     parser.add_argument('--batch-size', default=-1, type=int)
     parser.add_argument('--epochs', default=-1, type=int)
+    parser.add_argument('--save_warm_up', default=5, type=int)
+    
     parser.add_argument('--seed', default=1, type=int)
+    parser.add_argument('--patch_size', default=-1, type=int)
     parser.add_argument('--fourcast_randn_initial', default=0, type=int)
     # Model parameters
     parser.add_argument('--arch', default='deit_small', type=str, help='Name of model to train')

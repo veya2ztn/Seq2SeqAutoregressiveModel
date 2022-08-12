@@ -66,7 +66,7 @@ class ERA5CephDataset(datasets.ImageFolder):
             self.time_step = 5
         if time_step is not None:self.time_step=time_step
         self.random_time_step=False
-        self.vname= physice_vnames if enable_physics_dataset else vnames
+        self.vnames= physice_vnames if enable_physics_dataset else vnames
     def __len__(self):
         return len(self.file_list) - self.time_step + 1
 
@@ -102,7 +102,7 @@ class ERA5CephDataset(datasets.ImageFolder):
     def get_item(self, idx):
         year, hour = self.file_list[idx]
         arrays = []
-        for name in self,vnames:
+        for name in self.vnames:
             url = f"{self.root}/{name}/{year}/{name}-{year}-{hour:04d}.npy"
             if "s3://" in url:
                 array = self.read_npy_from_ceph(self.client, url)
