@@ -24,7 +24,7 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
     start_epoch, start_step = 0, 0
     min_loss = np.inf
     if os.path.exists(path):
-        print("loading model ...........")
+        print(f"loading model from {path}...........")
         ckpt = torch.load(path, map_location='cpu')
 
         if only_model:
