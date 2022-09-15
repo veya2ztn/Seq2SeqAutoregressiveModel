@@ -124,51 +124,64 @@ def compute_rmse(pred, true):
     latweight = latweight.reshape(1, w, 1,1)
     return  torch.clamp(torch.sqrt((latweight*(pred - true)**2).mean(dim=(1,2) )),0,1000)
 
+def once_forward(model,i,start,end,dataset,time_step_1_mode):
+    Field = Advection = None
+    if isinstance(start[0],(list,tuple)):# now is [Field, Field_Dt, physics_part]
+        Field  = start[-1][0] # the now Field is the newest timestamp
+        Advection= start[-1][-1]
+        normlized_Field_list =  dataset.do_normlize_data([[F[0] for F in start]])
+        normlized_Field=normlized_Field_list[0] if len(normlized_Field_list)==1 else torch.stack(normlized_Field_list,1)
+        #(B,P,y,x) for no history case (B,P,H,y,x) for history version
+        target = dataset.do_normlize_data([end[0]])[0] # in standand unit
+    elif time_step_1_mode:
+        normlized_Field, target = dataset.do_normlize_data([[start,target]])[0]
+    else:
+        normlized_Field_list = dataset.do_normlize_data([start])[0]  #always use normlized input
+        normlized_Field      = normlized_Field_list[0] if len(normlized_Field_list)==1 else torch.stack(normlized_Field_list,2)
+        target               = dataset.do_normlize_data([end])[0] #always use normlized target
+    if model.training and model.input_noise_std and i==1:
+        normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
+
+    out   = model(normlized_Field)
+    extra_loss = 0
+    extra_info_from_model_list = []
+    if isinstance(out,(list,tuple)):
+        extra_loss                 = out[1]
+        extra_info_from_model_list = out[2:]
+        out = out[0]
+
+    if isinstance(start[0],(list,tuple)):
+        normlized_Deltat_F  = out
+        _, Deltat_F = dataset.inv_normlize_data([[0,normlized_Deltat_F]])[0]
+        ltmv_pred   = Field + Deltat_F - Advection
+        start = start[1:]+[[ltmv_pred, 0 , end[-1]]]
+    else:
+        ltmv_pred = dataset.inv_normlize_data([out])[0]
+        start     = start[1:] + [ltmv_pred]
+    return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
+
 def run_one_iter(model, batch, criterion, status, gpu, dataset):
     iter_info_pool={}
     loss = 0
     diff = 0
-    time_step_1_mode=False
     random_run_step = np.random.randint(1,len(batch)) if len(batch)>1 else 0
+    time_step_1_mode=False
     if len(batch) == 1 and isinstance(batch[0],(list,tuple)) and len(batch[0])>1:
         batch = batch[0] # (Field, FieldDt)
         time_step_1_mode=True
+    if model.history_length > len(batch):
+        print(f"you want to use history={model.history_length}")
+        print(f"but your input batch(timesteps) only has len(batch)={len(batch)}")
+        raise
     with torch.cuda.amp.autocast():
-        start = batch[0]
-        
-        for i in range(1,len(batch)):
-            if isinstance(start,(list,tuple)):# now is [Field, Field_Dt, physics_part]
-                Field  = start[0]
-
-                normlized_Field, _ , Advection    = dataset.do_normlize_data([start])[0]
-                target = dataset.do_normlize_data([batch[i][0]])[0] # in standand unit
-            elif time_step_1_mode:
-                normlized_Field, target = dataset.do_normlize_data([[start,batch[1]]])[0]
-            else:
-                normlized_Field = dataset.do_normlize_data([start])[0]  #always use normlized input
-                target          = dataset.do_normlize_data([batch[i]])[0] #always use normlized target
-
-            if model.training and model.input_noise_std and i==1:
-                normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
-  
-            out   = model(normlized_Field)
-
-            extra_loss = 0
-            if isinstance(out,(list,tuple)):
-                extra_loss=out[1]
+        start = batch[0:model.history_length] # start must be a list
+        for i in range(model.history_length,len(batch)):# i now is the target index
+            ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
+            if extra_loss !=0:
                 iter_info_pool[f'{status}_extra_loss_gpu{gpu}_timestep{i}'] = extra_loss.item()
-                for extra_info_from_model in out[2:]:
-                    for name, value in extra_info_from_model.items():
-                        iter_info_pool[f'valid_on_{status}_{name}_timestep{i}'] = value
-                out = out[0]
-
-            if isinstance(batch[0],(list,tuple)):
-                normlized_Deltat_F  = out
-                _, Deltat_F = dataset.inv_normlize_data([[0,normlized_Deltat_F]])[0]
-                ltmv_pred   = Field + Deltat_F - Advection
-                start = [ltmv_pred, 0 , batch[i][-1]]
-            else:
-                ltmv_pred = start = dataset.inv_normlize_data([out])[0] 
+            for extra_info_from_model in extra_info_from_model_list:
+                for name, value in extra_info_from_model.items():
+                    iter_info_pool[f'valid_on_{status}_{name}_timestep{i}'] = value
 
             abs_loss = criterion(dataset.do_normlize_data([ltmv_pred])[0],target)
             iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
@@ -177,6 +190,37 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
             if model.random_time_step_train and i >= random_run_step:
                 break
     return loss, diff, iter_info_pool
+
+def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset):
+    accu_series=[]
+    rmse_series=[]
+    extra_info = {}
+    time_step_1_mode=False
+    clim = model.clim.detach().cpu()
+    start = batch[0:model.history_length] # start must be a list
+    for i in range(model.history_length,len(batch)):# i now is the target index
+        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
+        for extra_info_from_model in extra_info_from_model_list:
+            for key, val in extra_info_from_model.items():
+                if i not in extra_info:extra_info[i] = {}
+                if key not in extra_info[i]:extra_info[i][key] = []
+                extra_info[i][key].append(val)
+
+        ltmv_true = dataset.inv_normlize_data([target])[0].detach().cpu()
+        ltmv_pred = ltmv_pred.detach().cpu()
+        accu_series.append(compute_accu(ltmv_pred - clim, ltmv_true - clim))
+        #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
+        rmse_series.append(compute_rmse(ltmv_pred , ltmv_true ))
+
+
+    accu_series = torch.stack(accu_series,1) # (B,fourcast_num,20)
+    rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,20)
+
+    for idx, accu,rmse in zip(idxes,accu_series,rmse_series):
+        #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
+        fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse}
+    return fourcastresult,extra_info
+
 
 def run_one_fourcast_iter_with_history(model, start, batch, idxes, fourcastresult):
     accu_series=[]
@@ -212,66 +256,18 @@ def run_one_fourcast_iter_with_history(model, start, batch, idxes, fourcastresul
         fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse}
     return fourcastresult,extra_info
 
-def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset):
-    accu_series=[]
-    rmse_series=[]
-    start = batch[0]
-    extra_info = {}
-    clim = model.clim
-    for i in range(1,len(batch)):
-        if isinstance(start,(list,tuple)):# now is [Field, Field_Dt, physics_part]
-            Field  = start[0]
-            normlized_Field, _ , Advection = dataset.do_normlize_data([start])[0]
-            target = batch[i][0] # in standand unit
-        else:
-            normlized_Field = dataset.do_normlize_data([start])[0]
-            target = batch[i]
-        out   = model(normlized_Field)
-        extra_loss = 0
-        if isinstance(out,(list,tuple)):
-            extra_loss=out[1]
-            for extra_info_from_model in out[2:]:
-                for key, val in extra_info_from_model.items():
-                    if i not in extra_info:extra_info[i] = {}
-                    if key not in extra_info[i]:extra_info[i][key] = []
-                    extra_info[i][key].append(val)
-            out = out[0]
-        
-
-        if isinstance(batch[0],(list,tuple)):
-            normlized_Deltat_F  = out
-            _, Deltat_F = dataset.inv_normlize_data([[0,normlized_Deltat_F]])[0]
-            ltmv_pred = Field + Deltat_F - Advection
-            start = [ltmv_pred, 0 , batch[i][-1]]
-        else:
-            out = dataset.inv_normlize_data([out])[0] 
-            ltmv_pred = start = out
-        ltmv_true = target# (B, P, W, H )
-        
-        accu_series.append(compute_accu(ltmv_pred - clim, ltmv_true - clim).detach().cpu())
-        #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
-        rmse_series.append(compute_rmse(ltmv_pred , ltmv_true ).detach().cpu())
-
-    
-    accu_series = torch.stack(accu_series,1) # (B,fourcast_num,20)
-    rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,20)
-
-    for idx, accu,rmse in zip(idxes,accu_series,rmse_series):
-        #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
-        fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse}
-    return fourcastresult,extra_info
 
 def make_data_regular(batch,half_model=False):
-    # the input can be         
-    # [ 
-    #   timestamp_1:[Field,Field_Dt,(physics_part) ], 
+    # the input can be
+    # [
+    #   timestamp_1:[Field,Field_Dt,(physics_part) ],
     #   timestamp_2:[Field,Field_Dt,(physics_part) ],
     #     ...............................................
     #   timestamp_n:[Field,Field_Dt,(physics_part) ]
     # ]
-    # or 
-    # [ 
-    #   timestamp_1:Field, 
+    # or
+    # [
+    #   timestamp_1:Field,
     #   timestamp_2:Field,
     #     ...............................................
     #   timestamp_n:Field
@@ -279,7 +275,8 @@ def make_data_regular(batch,half_model=False):
     if not isinstance(batch,list):
         batch = batch.half() if half_model else batch.float()
         channel_last = batch.shape[1] in [32,720] # (B, P, W, H )
-        if channel_last:batch = batch.permute(0,3,1,2) 
+        if channel_last:
+            batch = batch.permute(0,3,1,2)
         return batch
     else:
         return [make_data_regular(x,half_model=half_model) for x in batch]
@@ -370,10 +367,10 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         if status == 'train':
             if model.train_mode =='pretrain':
                 time_truncate = max(min(epoch//3,data_loader.dataset.time_step),2)
-                batch=batch[:time_truncate]
+                batch=batch[:model.history_length -1 + time_truncate]
             # the normal initial method will cause numerial explore by using timestep > 4 senenrio.
             loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
-            
+
             if torch.isnan(loss):raise
             loss /= accumulation_steps
             iter_info_pool[f'train_loss_gpu{gpu}'] =  loss.item()
@@ -468,7 +465,7 @@ def run_fourcast(args, model,logsys):
         logsys.info(rmse_table);
         rmse_table.to_csv(os.path.join(logsys.ckpt_root,'rmse_table'))
 
-        if args.dataset_type in ["",'ERA5CephDataset','ERA5CephSmallDataset']:
+        if args.dataset_type_string in ["",'ERA5CephDataset','ERA5CephSmallDataset']:
             unit_list = torch.Tensor([mean_std_ERA5_20[name]['std'] for name in test_dataset.vnames]).to(rmse_list.device)
             unit_list = unit_list.reshape(1,len(test_dataset.vnames))# (1,property_num)
             rmse_unit_list= (rmse_list*unit_list)
@@ -511,9 +508,11 @@ def get_projectname(args):
     model_name   = get_model_name(args)
     datasetname  = get_datasetname(args)
 
-    project_name =f"{args.mode}-{args.train_set}"
+    project_name = f"{args.mode}-{args.train_set}"
     project_name = 'random_step_'+project_name if args.random_time_step else project_name
     project_name = f"time_step_{args.time_step}_"+project_name if args.time_step else project_name
+    if hasattr(args,'history_length') and args.history_length !=1:
+        project_name = f"history_{args.history_length}_"+project_name
     return model_name, datasetname, project_name
 def deal_with_tuple_string(patch_size,defult=None):
     if isinstance(patch_size,str):
@@ -614,6 +613,7 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
             json.dump(vars(args),f)
 
     args.dataset_type = dataset_type if not args.dataset_type else eval(args.dataset_type)
+    args.dataset_type_string = args.dataset_type.__name__
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
             args.rank = int(os.environ["RANK"])
@@ -631,12 +631,13 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
         model = eval(args.model_type)(img_size=img_size, patch_size=patch_size, in_chans=x_c, out_chans=y_c, norm_layer=partial(nn.LayerNorm, eps=1e-6),
                         fno_blocks=args.fno_blocks,
                         double_skip=args.double_skip, fno_bias=args.fno_bias, fno_softshrink=args.fno_softshrink,
+                        history_length=args.history_length,
                         )
     else:
         model = eval(args.model_type)(img_size=img_size, patch_size=patch_size, in_chans=x_c, out_chans=y_c, norm_layer=partial(nn.LayerNorm, eps=1e-6),
                         fno_blocks=args.fno_blocks,
                         double_skip=args.double_skip, fno_bias=args.fno_bias, fno_softshrink=args.fno_softshrink,
-                        embed_dim=16, depth=1,debug_mode=1
+                        embed_dim=16, depth=1,debug_mode=1,history_length=args.history_length,
                         )
     if args.wrapper_model:
         model = eval(args.wrapper_model)(args,model)

@@ -6,6 +6,7 @@ def get_args_parser():
     parser.add_argument('--batch_size', default=-1, type=int)
     parser.add_argument('--epochs', default=-1, type=int)
     parser.add_argument('--save_warm_up', default=5, type=int)
+    parser.add_argument('--history_length', default=1, type=int)
 
     parser.add_argument('--seed', default=-1, type=int)
     parser.add_argument('--patch_size', default="", type=str)

@@ -100,7 +100,7 @@ class AdaptiveFourierNeuralOperator(nn.Module):
         return torch.einsum('...bd,bdk->...bk', input, weights)
 
     def forward(self, x):
-        B, N, C = x.shape    
+        B, N, C = x.shape
         bias = self.bias(x.permute(0, 2, 1)).permute(0, 2, 1) if self.bias else 0
         #timer.restart(2)
         x = x.reshape(B, *self.img_size, C)
@@ -121,9 +121,9 @@ class AdaptiveFourierNeuralOperator(nn.Module):
 
         x = torch.stack([x_real, x_imag], dim=-1)
         x = F.softshrink(x, lambd=self.softshrink) if self.softshrink else x
-        
+
         #with torch.cuda.amp.autocast(enabled=False):
-        #x = x.float()   
+        #x = x.float()
         x = torch.view_as_complex(x)
         #timer.record('reset','filter',2)
         x = x.flatten(-2,-1)
@@ -156,13 +156,13 @@ class AdaptiveFourierNeuralOperatorComplex(nn.Module):
         assert self.hidden_size % self.num_blocks == 0
 
         self.scale = 0.02
-        self.w1 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size, 
+        self.w1 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size,
                                                               self.block_size, dtype=torch.cfloat))
-        self.b1 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size, 
+        self.b1 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size,
                                                               dtype=torch.cfloat))
-        self.w2 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size, 
+        self.w2 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size,
                                                               self.block_size, dtype=torch.cfloat))
-        self.b2 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size, 
+        self.b2 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size,
                                                               dtype=torch.cfloat))
         self.relu = nonlinear_activate
 
@@ -177,7 +177,7 @@ class AdaptiveFourierNeuralOperatorComplex(nn.Module):
         return torch.einsum('...bd,bdk->...bk', input, weights)
 
     def forward(self, x):
-        B, N, C = x.shape    
+        B, N, C = x.shape
         bias = self.bias(x.permute(0, 2, 1)).permute(0, 2, 1) if self.bias else 0
         #timer.restart(2)
         x = x.reshape(B, *self.img_size, C)
@@ -192,7 +192,7 @@ class AdaptiveFourierNeuralOperatorComplex(nn.Module):
         x = self.multiply(x,self.w2)+self.b2
         #x = F.softshrink(x, lambd=self.softshrink) if self.softshrink else x #<-- should be applied in complex value
         #with torch.cuda.amp.autocast(enabled=False):
-        #x = x.float()   
+        #x = x.float()
         #x = torch.view_as_complex(x)
         #timer.record('reset','filter',2)
         x = x.flatten(-2,-1)
@@ -242,10 +242,8 @@ class PatchEmbed(nn.Module):
         super().__init__()
 
         if img_size is None:raise KeyError('img is None')
-        print(img_size)
-        print(patch_size)
         patch_size   = [patch_size]*len(img_size) if isinstance(patch_size,int) else patch_size
-        
+
         num_patches=1
         out_size=[]
         for i_size,p_size in zip(img_size,patch_size):
@@ -270,15 +268,26 @@ class PatchEmbed(nn.Module):
 
 class AFNONet(nn.Module):
     """
-    
+
     """
     def __init__(self, img_size, patch_size=8, in_chans=20, out_chans=20, embed_dim=768, depth=12, mlp_ratio=4.,
                  uniform_drop=False, drop_rate=0., drop_path_rate=0., norm_layer=None,
                  dropcls=0, checkpoint_activations=False, fno_blocks=3,double_skip=False,
-                 fno_bias=False, fno_softshrink=False,debug_mode=False):
+                 fno_bias=False, fno_softshrink=False,debug_mode=False,history_length=1):
         super().__init__()
 
         assert img_size is not None
+        patch_size   = [patch_size]*len(img_size) if isinstance(patch_size,int) else patch_size
+        if history_length > 1:
+            img_size = (history_length,*img_size)
+            patch_size = (1,*patch_size)
+        # print("============model:AFNONet================")
+        # print(f"img_size:{img_size}")
+        # print(f"patch_size:{patch_size}")
+        # print(f"in_chans:{in_chans}")
+        # print(f"out_chans:{out_chans}")
+        # print("========================================")
+        self.history_length = history_length
         self.checkpoint_activations=checkpoint_activations
         self.embed_dim   = embed_dim
         norm_layer       = norm_layer or partial(nn.LayerNorm, eps=1e-6)
@@ -297,7 +306,7 @@ class AFNONet(nn.Module):
             dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
 
         self.blocks = nn.ModuleList([Block(dim=embed_dim, mlp_ratio=mlp_ratio, drop=drop_rate,
-                                           drop_path=dpr[i], 
+                                           drop_path=dpr[i],
                                            norm_layer=norm_layer,
                                            region_shape=self.final_shape,
                                            double_skip=double_skip,
@@ -349,7 +358,8 @@ class AFNONet(nn.Module):
         trunc_normal_(self.pos_embed, std=.02)
         self.apply(self._init_weights)
         self.debug_mode=debug_mode
-    
+        if self.history_length >1:
+            self.last_Linear_layer = nn.Linear(out_chans*self.history_length,out_chans)
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=.02)
@@ -392,7 +402,7 @@ class AFNONet(nn.Module):
         ### we assume always feed the tensor (B, p*z, h, w)
         shape = x.shape
         #print(x.shape)
-        # argue the w resolution. 
+        # argue the w resolution.
         pad = self.get_w_resolution_pad(shape)
         if pad is not None:
             x = F.pad(x.flatten(0,1),(0,0,pad,pad),mode='replicate').reshape(*shape[:-2],-1,shape[-1])
@@ -408,6 +418,11 @@ class AFNONet(nn.Module):
         x = self.pre_logits(x)
         #timer.record('pre_logits',level=0)
         x = self.head(x)
+        if self.history_length >1:
+            x = x.flatten(1,2).transpose(1,-1)
+            x = self.last_Linear_layer(x)
+            x = x.transpose(1,-1)
+            ot_shape=ot_shape[1:]
         #timer.record('head',level=0)
         x = x.reshape(B,-1,*ot_shape)
         if pad is not None:
