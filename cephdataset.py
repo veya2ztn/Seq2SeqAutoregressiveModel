@@ -113,13 +113,31 @@ def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_
     return data
 
 class BaseDataset:
+    time_intervel=1
     def do_normlize_data(self, batch):
         return batch
     def inv_normlize_data(self,batch):
         return batch
+    def set_time_reverse(self,time_reverse_flag):
+        if   time_reverse_flag == 'only_forward':
+            self.do_time_reverse = lambda x:False
+            print("we only using forward sequence, i.e. from t1, t2, ..., to tn")
+        elif time_reverse_flag == 'only_backward':
+            self.do_time_reverse = lambda x:self.volicity_idx
+            print("we only using backward sequence, i.e. from tn, tn-1, ..., to t1")
+        elif time_reverse_flag == 'random_forward_backward':
+            self.do_time_reverse = lambda x:self.volicity_idx if np.random.random() > 0 else False
+            print("we randomly(50%/50%) use forward/backward sequence")
+        else:
+            raise NotImplementedError
+    def do_time_reverse(self,idx):
+        return False
     def __getitem__(self,idx):
         try:
-            batch = [self.get_item(idx+i) for i in range(self.time_step)]
+            reversed_part = self.do_time_reverse(idx)
+            time_step_list= [idx+i*self.time_intervel for i in range(self.time_step)]
+            if reversed_part:time_step_list = time_step_list[::-1]
+            batch = [self.get_item(i,reversed_part) for i in time_step_list]
             self.error_path = []
             return batch if not self.with_idx else (idx,batch)
         except:
@@ -134,7 +152,7 @@ class BaseDataset:
 
 class ERA5CephDataset(BaseDataset):
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,years=None,
-                class_name='ERA5Dataset', root='cluster3:s3://era5npy',random_time_step=False,enable_physics_dataset=False, ispretrain=True, crop_coord=None,time_step=None,with_idx=False,**kargs):
+                class_name='ERA5Dataset', root='cluster3:s3://era5npy',random_time_step=False,dataset_flag=False, ispretrain=True, crop_coord=None,time_step=None,with_idx=False,**kargs):
         self.client = Client(conf_path="~/petreloss.conf")
         self.root = root
         self.years = Years[split] if years is None else years
@@ -153,7 +171,7 @@ class ERA5CephDataset(BaseDataset):
         if time_step is not None:self.time_step=time_step
         self.name  = f"{self.time_step}-step-task"
         self.random_time_step=random_time_step
-        self.vnames= physice_vnames if enable_physics_dataset else vnames
+        self.vnames= physice_vnames if dataset_flag else vnames
     def __len__(self):
         return len(self.file_list) - self.time_step + 1
 
@@ -187,7 +205,7 @@ class ERA5CephDataset(BaseDataset):
 
 
     @lru_cache(maxsize=32)
-    def get_item(self, idx):
+    def get_item(self, idx,reversed_part=False):
         year, hour = self.file_list[idx]
         arrays = []
         for name in self.vnames:
@@ -220,33 +238,45 @@ class ERA5CephSmallDataset(ERA5CephDataset):
                 class_name='ERA5CephSmallDataset', ispretrain=True,
                 crop_coord=None,
                 dataset_tensor=None,
-                time_step=None,with_idx=False,random_time_step=False,enable_physics_dataset=False):
+                time_step=None,with_idx=False,random_time_step=False,dataset_flag=False,time_reverse_flag='only_forward'):
         self.crop_coord   = crop_coord
         self.mode         = mode
         self.data         = load_small_dataset_in_memory(split) if dataset_tensor is None else dataset_tensor
-        self.vnames= vnames
         smalldataset_clim_path = "datasets/era5G32x64_set/time_means.npy"
         self.clim_tensor = np.load(smalldataset_clim_path)
-        if enable_physics_dataset:
-            self.data = self.data[:,[5, 9,14 , 6,10,15 ,7,11,16 ,2, 8,13]]
-            self.vnames= physice_vnames
-            self.clim_tensor= self.clim_tensor[:,[5, 9,14 , 6,10,15 ,7,11,16 ,2, 8,13]]
+        self.volicity_idx = [0, 5, 9, 14 , 1, 6, 10, 15]
+        self.channel_pick = list(range(20))
+        if dataset_flag=='physics':
+            self.channel_pick = [5, 9,14 , 6,10,15 ,7,11,16 ,2, 8,13]
+        self.vnames       = [vnames[t] for t in self.channel_pick]
+        self.unit_list    = [mean_std_ERA5_20[name]['std'] for name in self.vnames]
+        self.clim_tensor  = self.clim_tensor[:,self.channel_pick]
         self.channel_last = channel_last
         self.with_idx     = with_idx
         self.error_path   = []
         self.random_time_step = random_time_step
         if self.random_time_step:
             print("we are going use random step mode. in this mode, data sequence will randomly set 2-6 ")
+
         if self.mode   == 'pretrain':self.time_step = 2
         elif self.mode == 'finetune':self.time_step = 3
         elif self.mode == 'free5':self.time_step = 5
         if time_step is not None:
             self.time_step = time_step
+
+        self.time_reverse_flag = time_reverse_flag
+        self.set_time_reverse(time_reverse_flag)
+
+
     def __len__(self):
         return len(self.data) - self.time_step + 1
 
-    def get_item(self, idx):
+    def get_item(self, idx,reversed_part=False):
         arrays = self.data[idx]
+        if reversed_part:
+            arrays = arrays.clone()#it is a torch.tensor
+            arrays[reversed_part] = -arrays[reversed_part]
+        arrays = arrays[self.channel_pick]
         if self.crop_coord is not None:
             l, r, u, b = self.crop_coord
             arrays = arrays[:, u:b, l:r]
@@ -262,13 +292,13 @@ class ERA5CephSmallDataset(ERA5CephDataset):
 class ERA5CephInMemoryDataset(ERA5CephDataset):
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,years=[2018],dataset_tensor=None,
                 class_name='ERA5Dataset', root='cluster3:s3://era5npy', ispretrain=True, crop_coord=None,time_step=None,
-                with_idx=False,enable_physics_dataset=False,**kargs):
+                with_idx=False,dataset_flag=False,**kargs):
         if dataset_tensor is None:
             self.data=load_test_dataset_in_memory(years=years,root=root,crop_coord=crop_coord,channel_last=channel_last)
         else:
             self.data= dataset_tensor
         self.vnames= vnames
-        if enable_physics_dataset:
+        if dataset_flag=='physics':
             self.data = self.data[:,[5, 9,14 , 6,10,15 ,7,11,16 ,2, 8,13]]
             self.vnames= physice_vnames
         self.mode = mode
@@ -314,7 +344,7 @@ class SpeedTestDataset(BaseDataset):
 class ERA5Tiny12_47_96(BaseDataset):
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,years=[2018],dataset_tensor=None,
                 class_name='ERA5Dataset', root='datasets/ERA5/h5_set', ispretrain=True, crop_coord=None,time_step=2,
-                with_idx=False,enable_physics_dataset='normal',**kargs):
+                with_idx=False,dataset_flag='normal',time_reverse_flag='only_forward',**kargs):
         if dataset_tensor is None:
             self.Field_dx= h5py.File(os.path.join(root,f"Field_dx_{split}.h5"), 'r')['data']
             self.Field_dy= h5py.File(os.path.join(root,f"Field_dy_{split}.h5"), 'r')['data']
@@ -322,36 +352,48 @@ class ERA5Tiny12_47_96(BaseDataset):
             self.Dt      = 6*3600
         else:
             raise NotImplementedError
-        self.enable_physics_dataset = enable_physics_dataset
+        self.dataset_flag = dataset_flag
         self.vnames= [vnames[t] for t in [5, 9,14 , 6,10,15  ,2, 8,13,7,11,16]]
         self.mode  = mode
         self.channel_last = channel_last
         self.with_idx = with_idx
         self.error_path = []
         self.clim_tensor= np.load(os.path.join(root,f"time_means.npy"))[...,1:-1,:].reshape(4,3,47,96)
-
-        # if mode != 'fourcast':
-        #     self.time_step = 1
-        #     print(f"in mode=[{mode}], we will force time_step={self.time_step}")
-        # else:
-        #     self.time_step = time_step
         self.time_step = time_step
+
 
         self.Field_channel_mean    = np.array([2.7122362e+00,9.4288319e-02,2.6919699e+02,2.2904861e+04]).reshape(4,1,1,1)
         self.Field_channel_std     = np.array([9.5676870e+00,7.1177821e+00,2.0126169e+01,2.2861252e+04]).reshape(4,1,1,1)
         self.Field_Dt_channel_mean =    np.array([  -0.02293313,-0.04692488  ,0.02711264   ,7.51324121]).reshape(4,1,1,1)
         self.Field_Dt_channel_std  =  np.array([  8.82677214 , 8.78834556  ,3.96441518   ,526.15269219]).reshape(4,1,1,1)
+        self.unit_list = [1,1,1,1]
 
-        if enable_physics_dataset == 'reduce':
+        if dataset_flag=='normalized_data':
+            self.coef =coef= np.array([1,1,1e1,1e4]).reshape(4,1,1,1)
+            self.Field_channel_mean    = self.Field_channel_mean    / coef
+            self.Field_channel_std     = self.Field_channel_std     / coef
+            self.Field_Dt_channel_mean = self.Field_Dt_channel_mean / coef
+            self.Field_Dt_channel_std  = self.Field_Dt_channel_std  / coef
+            self.clim_tensor = self.clim_tensor/coef
+            self.unit_list = coef
+
+        if dataset_flag == 'reduce':
             self.reduce_Field_coef    = np.array([-0.008569032217562018, -0.09391911216803356, -0.05143135231455811, -0.10192078794347732]).reshape(4,1,1,1)
             self.reduce_Field_Dt_channel_mean = np.array([2.16268301e-04 ,4.40459576e-03,-1.36775636e-03,-7.66760608e-01]).reshape(4,1,1,1)
             self.reduce_Field_Dt_channel_std  =  np.array([  3.26819142  ,4.04325207 , 1.99422196 ,235.31884021]).reshape(4,1,1,1)
         else:
-            self.reduce_Field_coef = 1
+            self.reduce_Field_coef = np.array([1])
+
         self.Field_mean     = None
         self.Field_std      = None
         self.Field_Dt_mean  = None
         self.Field_Dt_std   = None
+
+        self.volicity_idx   = ([0, 0, 0, 1, 1, 1],
+                               [0, 1, 2, 0, 1, 2])# we always assume the first two channel is volecity
+        self.time_reverse_flag = time_reverse_flag
+        self.set_time_reverse(time_reverse_flag)
+
     def __len__(self):
         return len(self.Field) - self.time_step + 1
 
@@ -365,8 +407,8 @@ class ERA5Tiny12_47_96(BaseDataset):
         if self.Field_mean is None:
             self.Field_mean    = self.Field_channel_mean
             self.Field_std     = self.Field_channel_std
-            self.Field_Dt_mean = self.reduce_Field_Dt_channel_mean if self.enable_physics_dataset == 'reduce' else self.Field_Dt_channel_mean
-            self.Field_Dt_std  = self.reduce_Field_Dt_channel_std if self.enable_physics_dataset == 'reduce' else self.Field_Dt_channel_std
+            self.Field_Dt_mean = self.reduce_Field_Dt_channel_mean if self.dataset_flag == 'reduce' else self.Field_Dt_channel_mean
+            self.Field_Dt_std  = self.reduce_Field_Dt_channel_std if self.dataset_flag == 'reduce' else self.Field_Dt_channel_std
             device = batch[0][0].device
             self.Field_mean    = torch.Tensor( self.Field_mean    )[None].to(device)#(1,4,1,1,1)
             self.Field_std     = torch.Tensor( self.Field_std     )[None].to(device)#(1,4,1,1,1)
@@ -394,24 +436,291 @@ class ERA5Tiny12_47_96(BaseDataset):
         else:
             return [data*self.Field_std + self.Field_mean for data in batch]
 
-    def get_item(self,idx):
-        Field        = self.Field[idx][...,1:-1,:]#(P,3,47,96)
-        NextField    = self.Field[idx+1][...,1:-1,:]#(P,3,47,96)
-        u            = Field[0:1]
-        v            = Field[1:2]
-        T            = Field[2:3]
-        p            = Field[3:4]
-        Field_dt     = NextField - Field #(P,3,47,96)
-        Field_dx     = self.Field_dx[idx]#(P,3,47,96)
-        Field_dy     = self.Field_dy[idx]#(P,3,47,96)
-        pysics_part  = (u*Field_dx + v*Field_dy)*self.Dt
-        Field_Dt     = Field_dt + pysics_part*self.reduce_Field_coef
-        return [Field, Field_Dt, pysics_part] #(B,12,z,y,x)
+    def get_item(self,idx,reversed_part=False):
+        now_Field = self.Field[idx]
+        next_Field= self.Field[idx+1]
+        if reversed_part:
+            now_Field = now_Field.copy()
+            next_Field= next_Field.copy()
+            now_Field[reversed_part] = -now_Field[reversed_part]
+            next_Field[reversed_part]= -next_Field[reversed_part]
 
-class ERA5Tiny12_47_96_Normal(ERA5Tiny12_47_96):
-    def get_item(self,idx):
-        Field        = self.Field[idx][...,1:-1,:]#(P,3,47,96)
-        return Field
+        if self.dataset_flag == 'only_Field':
+            Field        = now_Field[...,1:-1,:]#(P,3,47,96)
+            return Field
+        elif self.dataset_flag == 'normalized_data':
+            Field        = now_Field[...,1:-1,:]/self.coef
+            return Field
+        else:
+            Field        = now_Field[...,1:-1,:]#(P,3,47,96)
+            NextField    = next_Field[...,1:-1,:]#(P,3,47,96)
+            u            = Field[0:1]
+            v            = Field[1:2]
+            T            = Field[2:3]
+            p            = Field[3:4]
+            Field_dt     = NextField - Field #(P,3,47,96)
+            Field_dx     = self.Field_dx[idx]#(P,3,47,96)
+            Field_dy     = self.Field_dy[idx]#(P,3,47,96)
+            if reversed_part:
+                Field_dx=Field_dx.copy()
+                Field_dy=Field_dy.copy()
+                Field_dx[reversed_part] = -Field_dx[reversed_part]
+                Field_dy[reversed_part] = -Field_dy[reversed_part]
+
+            pysics_part  = (u*Field_dx + v*Field_dy)*self.Dt
+            Field_Dt     = Field_dt + pysics_part*self.reduce_Field_coef
+            return [Field, Field_Dt, pysics_part] #(B,12,z,y,x)
+
+class WeathBench(BaseDataset):
+    years_split={'train':range(1979, 2016),
+                'valid':range(2016, 2018),
+                 #'test':range(2018,2022),
+                 'test':range(2018,2019),
+                'all': range(1979, 2022),
+                'debug':range(1979,1980)}
+    single_vnames = ["2m_temperature",
+                      "10m_u_component_of_wind",
+                      "10m_v_component_of_wind",
+                      "total_cloud_cover",
+                      "total_precipitation",
+                      "toa_incident_solar_radiation"]
+    level_vnames= []
+    for physics_name in ["geopotential", "temperature",
+                         "specific_humidity","relative_humidity",
+                         "u_component_of_wind","v_component_of_wind",
+                         "vorticity","potential_vorticity"]:
+        for pressure_level in [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]:
+            level_vnames.append(f"{pressure_level}hPa_{physics_name}")
+    all_vnames = single_vnames + level_vnames
+    cons_vnames= ["lsm", "slt", "orography"]
+    default_root='datasets/weatherbench'
+    constant_channel_pick = []
+    
+    def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,
+                 root=None, time_step=2,
+                 with_idx=False,
+                 years=None,
+                 dataset_flag='normal',time_reverse_flag='only_forward',time_intervel=1,
+                 **kargs):
+        if years is None:
+            years = self.years_split[split]
+        else:
+            print(f"you are using flag={split}, the default range is {list(self.years_split[split])}")
+            print(f"noice you assign your own year list {list(years)}")
+
+        self.root             = self.default_root if root is None else root
+        self.split            = split
+        self.single_data_path_list = self.init_file_list(years) # [[year,idx],[year,idx],.....]
+        self.dataset_flag     = dataset_flag
+        self.clim_tensor      = [0]
+        self.mean_std         = np.load(os.path.join(self.root,"mean_std.npy"))
+        self.constants        = np.load(os.path.join(self.root,"constants.npy"))
+        self.mode             = mode
+        self.channel_last     = channel_last
+        self.with_idx         = with_idx
+        self.error_path       = []
+        self.time_step        = time_step
+        self.dataset_flag     = dataset_flag
+        self.time_intervel    = time_intervel
+        config_pool = self.config_pool
+
+        if dataset_flag in config_pool:
+            self.channel_choice, self.normalize_type, mean_std, self.do_normlize_data , self.inv_normlize_data = config_pool[dataset_flag]
+            self.mean,self.std = mean_std
+            self.unit_list = self.std
+            
+        else:
+            raise NotImplementedError
+        
+        self.volicity_idx   = ([1,2]+
+                               list(range(6+13*4,6+13*5))+
+                               list(range(6+13*5,6+13*6)))# we always assume the raw data is (P,y,x)
+        self.time_reverse_flag = time_reverse_flag
+        self.set_time_reverse(time_reverse_flag)
+        self.vnames= [self.all_vnames[i] for i in self.channel_choice]
+        self.vnames= self.vnames + [self.cons_vnames[i] for i in self.constant_channel_pick]
+    
+    def init_file_list(self,years):
+        file_list = []
+        for year in years:
+            if year == 1979: # 1979年数据只有8753个，缺少第一天前7小时数据，所以这里我们从第二天开始算起
+                for hour in range(17, 8753, 1):
+                    file_list.append([year, hour])
+            else:
+                if year % 4 == 0:
+                    max_item = 8784
+                else:
+                    max_item = 8760
+                for hour in range(0, max_item, 1):
+                    file_list.append([year, hour])
+        return file_list
+
+    @property
+    def config_pool(self):
+        config_pool={
+
+            '2D110N': (list(range(110))  ,'gauss_norm'   , self.mean_std.reshape(2,110,1,1)      , lambda x:x, lambda x:x ),
+            '2D110U': (list(range(110))  ,'unit_norm'    , self.mean_std.reshape(2,110,1,1)      , lambda x:x, lambda x:x ),
+            '2D104N': (list(range(6,110)),'gauss_norm'   , self.mean_std[:,6:].reshape(2,104,1,1), lambda x:x, lambda x:x ),
+            '2D104U': (list(range(6,110)),'unit_norm'    , self.mean_std[:,6:].reshape(2,104,1,1), lambda x:x, lambda x:x ),
+            '3D104N': (list(range(6,110)),'gauss_norm_3D', self.mean_std[:,6:].reshape(2,8,13,1,1,1).mean(2), lambda x:x, lambda x:x ),
+            '3D104U': (list(range(6,110)),'unit_norm_3D' , self.mean_std[:,6:].reshape(2,8,13,1,1,1).mean(2), lambda x:x, lambda x:x ),
+        }
+        def do_batch_normlize(batch,mean,std):
+            if isinstance(batch,list):
+                return [(x-mean/std) for x in batch]
+            else:
+                return batch-mean/std
+
+        def inv_batch_normlize(batch,mean,std):
+            if isinstance(batch,list):
+                return [(x*std+mean) for x in batch]
+            else:
+                return batch*std+mean
+
+        mean, std = self.mean_std.reshape(2,110,1,1)
+        config_pool['2D110O'] =(list(range(110))  ,'none', (0,1) , lambda x:do_batch_normlize(x,mean,std),
+                                                                   lambda x:inv_batch_normlize(x,mean,std))
+
+        mean, std = self.mean_std[:,6:].reshape(2,104,1,1)
+        config_pool['2D104O'] =(list(range(6,110)),'none', (0,1) , lambda x:do_batch_normlize(x,mean,std),
+                                                                   lambda x:inv_batch_normlize(x,mean,std))
+
+        mean, std = self.mean_std[:,6:].reshape(2,8,13,1,1,1).mean(2)
+        config_pool['3D104O'] =(list(range(6,110))  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),
+                                                                   lambda x:inv_batch_normlize(x,mean,std))
+        return config_pool
+
+    def __len__(self):
+        return len(self.single_data_path_list) - self.time_step*self.time_intervel + 1
+
+
+    def get_item(self,idx,reversed_part=False):
+        year, hour = self.single_data_path_list[idx]
+        url = f"{self.root}/{year}/{year}-{hour:04d}.npy"
+        odata= np.load(url)
+        if reversed_part:odata[reversed_part] = -odata[reversed_part]
+        data = odata[self.channel_choice]
+        if '3D' in self.normalize_type:
+            shape= data.shape
+            data = data.reshape(8,13,*shape[-2:])
+        if 'gauss_norm' in self.normalize_type:
+            return (data - self.mean)/self.std
+        elif 'unit_norm' in self.normalize_type:
+            return data/self.std
+        else:
+            return data
+
+class WeathBench71(WeathBench):
+
+    @property
+    def config_pool(self):
+
+        _list = ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
+                 [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+ # v component of wind and the 10m v wind
+                 [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,  0]+ # Temperature and the 2m_temperature
+                 [ 6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 18]+ # Geopotential and the last one is ground Geopotential, should be replace later
+                 [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 57] # Realitve humidity and the Realitve humidity at groud, should be modified by total precipitaiton later
+                 )
+        config_pool={
+            '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), lambda x:x, lambda x:x ),
+            '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), lambda x:x, lambda x:x ),
+            '3D70N': (_list ,'gauss_norm_3D', self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), lambda x:x, lambda x:x ),
+            '3D70U': (_list ,'unit_norm_3D' , self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), lambda x:x, lambda x:x ),
+        }
+        def do_batch_normlize(batch,mean,std):
+            if isinstance(batch,list):
+                return [(x-mean/std) for x in batch]
+            else:
+                return batch-mean/std
+
+        def inv_batch_normlize(batch,mean,std):
+            if isinstance(batch,list):
+                return [(x*std+mean) for x in batch]
+            else:
+                return batch*std+mean
+
+        mean, std = self.mean_std[:,_list].reshape(2,70,1,1)
+        config_pool['2D70O'] =(_list,'none', (0,1) , lambda x:do_batch_normlize(x,mean,std), lambda x:inv_batch_normlize(x,mean,std))
+        mean, std = self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2)
+        config_pool['3D70O'] =(_list  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
+        return config_pool
+
+    def get_item(self,idx,reversed_part=False):
+        year, hour = self.single_data_path_list[idx]
+        url = f"{self.root}/{year}/{year}-{hour:04d}.npy"
+        odata= np.load(url)
+        if reversed_part:odata[reversed_part] = -odata[reversed_part]
+        data = odata[self.channel_choice]
+
+        if '3D' in self.normalize_type:
+            # 3D should modify carefully
+            data[14*4-1] = np.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
+            total_precipitaiton = odata[4]
+            newdata = data[14*5-1].copy()
+            newdata[total_precipitaiton>0] = 100
+            newdata[data[14*5-1]>100]=data[14*5-1][data[14*5-1]>100]
+            data[14*5-1] = newdata
+            shape= data.shape
+            data = data.reshape(5,14,*shape[-2:])
+        else:
+            data[14*4-1] = np.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
+            total_precipitaiton = odata[4]
+            data[14*5-1] = total_precipitaiton
+        if 'gauss_norm' in self.normalize_type:
+            return (data - self.mean)/self.std
+        elif 'unit_norm' in self.normalize_type:
+            return data/self.std
+        else:
+            return data
+
+class WeathBench706(WeathBench71):
+
+    def __init__(self,**kargs):
+        super().__init__(**kargs)
+        self.single_data_path_list = self.single_data_path_list[::6]
+
+class WeathBench716(WeathBench71):
+    default_root='datasets/weatherbench_6hour'
+
+    def init_file_list(self,years):
+        return np.load(os.path.join(self.root,f"{self.split}.npy"))
+
+    @property
+    def config_pool(self):
+
+        _list = ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
+                 [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+ # v component of wind and the 10m v wind
+                 [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,  0]+ # Temperature and the 2m_temperature
+                 [ 6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 18]+ # Geopotential and the last one is ground Geopotential, should be replace later
+                 [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 57] # Realitve humidity and the Realitve humidity at groud, should be modified by total precipitaiton later
+                 )
+        self.constant_channel_pick = [0]
+        mean_std = self.mean_std[:,_list].reshape(2,70,1,1)
+        mean, std= mean_std #(70,1,1)
+        mean = np.concatenate([mean,np.zeros(1).reshape(1,1,1)])
+        std  = np.concatenate([ std, np.ones(1).reshape(1,1,1)])
+        mean_std = np.stack([mean,std])
+        config_pool={
+            '2D70N': (_list ,'gauss_norm'   , mean_std, lambda x:x, lambda x:x ),
+            '2D70U': (_list ,'unit_norm'    , mean_std, lambda x:x, lambda x:x ),
+        }
+        return config_pool
+
+    def get_item(self, idx,reversed_part=False):
+        arrays = self.single_data_path_list[idx]
+        if reversed_part:
+            arrays = arrays.copy()#it is a torch.tensor
+            arrays[reversed_part] = -arrays[reversed_part]
+        constant= self.constants[self.constant_channel_pick]
+        arrays  = np.concatenate([arrays[self.channel_choice],constant])
+        
+        if self.channel_last:
+            if isinstance(arrays,np.ndarray):
+                arrays = arrays.transpose(1,2,0)
+            else:
+                arrays = arrays.permute(1,2,0)
+        return arrays
 
 if __name__ == "__main__":
     import sys

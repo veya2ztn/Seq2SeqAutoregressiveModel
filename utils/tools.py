@@ -28,7 +28,7 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
         ckpt = torch.load(path, map_location='cpu')
 
         if only_model:
-            model.load_state_dict(ckpt['model'])
+            model.load_state_dict(ckpt['model'],strict=False)
         else:
             model.load_state_dict(ckpt['model'])
             optimizer.load_state_dict(ckpt['optimizer'])

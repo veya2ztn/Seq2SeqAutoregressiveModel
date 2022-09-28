@@ -3,73 +3,31 @@ import argparse
 
 def get_args_parser():
     parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
+    parser.add_argument('--mode', type=str, default='pretrain')
+    parser.add_argument('--train_set', type=str, default='physics_small')
+
     parser.add_argument('--batch_size', default=-1, type=int)
     parser.add_argument('--epochs', default=-1, type=int)
     parser.add_argument('--save_warm_up', default=5, type=int)
     parser.add_argument('--history_length', default=1, type=int)
-
     parser.add_argument('--seed', default=-1, type=int)
-    parser.add_argument('--patch_size', default="", type=str)
-    parser.add_argument('--img_size', default="", type=str)
-    parser.add_argument('--fourcast_randn_initial', default=0, type=int)
+    parser.add_argument('--input_noise_std', type=float, default=0.0, help='input_noise_std')
+    parser.add_argument('--do_final_fourcast', type=bool, default=True, help='do fourcast step after finish training')
+    
+
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',choices=['AFNONet'])
-    parser.add_argument('--wrapper_model', default='', type=str, help='Name of model to train',choices=["",'DeltaModel','EulerEquationModel',
-    'EulerEquationModel3','EulerEquationModel2','EulerEquationModel4','OnlineNormModel'])
-    parser.add_argument('--dataset_type', default='', type=str, help='Name of dataset to train',choices=["",'ERA5Tiny12_47_96_Normal','ERA5CephDataset',
-    'ERA5CephSmallDataset','ERA5Tiny12_47_96'])
-    parser.add_argument('--drop', type=float, default=0.0, metavar='PCT', help='Dropout rate (default: 0.)')
-    parser.add_argument('--input_noise_std', type=float, default=0.0, help='input_noise_std')
-    parser.add_argument('--drop-path', type=float, default=0.1, metavar='PCT', help='Drop path rate (default: 0.1)')
-    parser.add_argument('--mode', type=str, default='pretrain')
-    parser.add_argument('--train_set', type=str, default='physics_small')
-
-
-    # Optimizer parameters
-    parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER', help='Optimizer (default: "adamw"')
-    parser.add_argument('--opt-eps', default=1e-8, type=float, metavar='EPSILON', help='Optimizer Epsilon (default: 1e-8)')
-    parser.add_argument('--opt-betas', default=None, type=float, nargs='+', metavar='BETA', help='Optimizer Betas (default: None, use opt default)')
-    parser.add_argument('--clip-grad', type=float, default=1, metavar='NORM', help='Clip gradient norm (default: None, no clipping)')
-    parser.add_argument('--momentum', type=float, default=0.9, metavar='M', help='SGD momentum (default: 0.9)')
-    parser.add_argument('--weight-decay', type=float, default=0.05, help='weight decay (default: 0.05)')
-    # Learning rate schedule parameters
-    parser.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER', help='LR scheduler (default: "cosine"')
-    parser.add_argument('--lr', type=float, default=-1, metavar='LR', help='learning rate (default: 5e-4)')
-    parser.add_argument('--lr-noise', type=float, nargs='+', default=None, metavar='pct, pct', help='learning rate noise on/off epoch percentages')
-    parser.add_argument('--lr-noise-pct', type=float, default=0.67, metavar='PERCENT', help='learning rate noise limit percent (default: 0.67)')
-    parser.add_argument('--lr-noise-std', type=float, default=1.0, metavar='STDDEV', help='learning rate noise std-dev (default: 1.0)')
-    parser.add_argument('--warmup-lr', type=float, default=1e-6, metavar='LR', help='warmup learning rate (default: 1e-6)')
-    parser.add_argument('--min-lr', type=float, default=1e-5, metavar='LR', help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
-
-    parser.add_argument('--decay-epochs', type=float, default=30, metavar='N', help='epoch interval to decay LR')
-    parser.add_argument('--warmup-epochs', type=int, default=5, metavar='N', help='epochs to warmup LR, if scheduler supports')
-    parser.add_argument('--cooldown-epochs', type=int, default=10, metavar='N', help='epochs to cooldown LR at min_lr, after cyclic schedule ends')
-    parser.add_argument('--patience-epochs', type=int, default=10, metavar='N', help='patience epochs for Plateau LR scheduler (default: 10')
-    parser.add_argument('--decay-rate', '--dr', type=float, default=0.1, metavar='RATE', help='LR decay rate (default: 0.1)')
-
+    parser.add_argument('--patch_size', default="", type=str)
+    parser.add_argument('--img_size'  , default="", type=str)
     parser.add_argument('--input_channel' , type=int, default=0)
     parser.add_argument('--output_channel', type=int, default=0)
-
-    # Augmentation parameters
-    parser.add_argument('--color-jitter', type=float, default=0.4, metavar='PCT', help='Color jitter factor (default: 0.4)')
-    parser.add_argument('--aa', type=str, default='rand-m9-mstd0.5-inc1', metavar='NAME', help='Use AutoAugment policy. "v0" or "original". "(default: rand-m9-mstd0.5-inc1)'),
-    parser.add_argument('--activate_physics_dataset', type=str)
-    parser.add_argument('--smoothing', type=float, default=0.1, help='Label smoothing (default: 0.1)')
-    parser.add_argument('--train-interpolation', type=str, default='bicubic',  help='Training interpolation (random, bilinear, bicubic default: "bicubic")')
-
-    parser.add_argument('--repeated-aug', action='store_true')
-    parser.set_defaults(repeated_aug=False)
-    parser.add_argument('--fourcast', action='store_true')
-    parser.set_defaults(fourcast=False)
-    # * Random Erase params
-    parser.add_argument('--reprob', type=float, default=0, metavar='PCT', help='Random erase prob (default: 0.25)')
-    parser.add_argument('--remode', type=str, default='pixel', help='Random erase mode (default: "pixel")')
-    parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
-
-    parser.add_argument('--recount', type=int, default=1, help='Random erase count (default: 1)')
-    parser.add_argument('--resplit', action='store_true', default=False, help='Do not random erase first (clean) augmentation split')
-    parser.add_argument('--do_final_fourcast', type=bool, default=True, help='do fourcast step after finish training')
-    # fno parameters
+    parser.add_argument('--embed_dim', type=int, default=768)
+    parser.add_argument('--model_depth', type=int, default=12)
+    parser.add_argument('--random_time_step', action='store_true')
+    parser.set_defaults(random_time_step=False)
+    parser.add_argument('--use_scalar_advection', action='store_true')
+    parser.set_defaults(use_scalar_advection=False)
+    #### fno parameters
     parser.add_argument('--fno-bias', action='store_true')
     parser.add_argument('--fno-blocks', type=int, default=4)
     parser.add_argument('--fno-softshrink', type=float, default=0.00)
@@ -80,18 +38,61 @@ def get_args_parser():
     parser.add_argument('--checkpoint-activations', action='store_true')
     parser.add_argument('--autoresume', action='store_true')
 
+    parser.add_argument('--wrapper_model', default='', type=str, help='Name of model to train',choices=["",'DeltaModel','EulerEquationModel','ConVectionModel',
+                'EulerEquationModel3','EulerEquationModel2','EulerEquationModel4','OnlineNormModel'])
 
-    parser.add_argument('--activate_physics_model', action='store_true')
-    parser.set_defaults(activate_physics_model=False)
-    parser.add_argument('--random_time_step', action='store_true')
-    parser.set_defaults(activate_physics_model=False)
-    # attention parameters
-    parser.add_argument('--num-attention-heads', type=int, default=1)
+    # Dataset parameters
+    parser.add_argument('--dataset_type', default='', type=str, help='Name of dataset to train',choices=["",'WeathBench71','ERA5Tiny12_47_96_Normal','ERA5CephDataset',
+                'ERA5CephSmallDataset','ERA5Tiny12_47_96'])
+    parser.add_argument('--dataset_flag', default="", type=str)
+    parser.add_argument('--time_reverse_flag', default='only_forward', type=str)
+    parser.add_argument('--time_intervel', type=int, default=1)
+    parser.add_argument('--time_step', type=int, default=0)
+    
+    # Fourcast Parameter
+    parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
+    parser.add_argument('--fourcast_randn_initial', default=0, type=int)
+
+    # Optimizer parameters # feed into timm
+    parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER', help='Optimizer (default: "adamw"')
+    parser.add_argument('--opt-eps', default=1e-8, type=float, metavar='EPSILON', help='Optimizer Epsilon (default: 1e-8)')
+    parser.add_argument('--opt-betas', default=None, type=float, nargs='+', metavar='BETA', help='Optimizer Betas (default: None, use opt default)')
+    parser.add_argument('--clip-grad', type=float, default=1, metavar='NORM', help='Clip gradient norm (default: None, no clipping)')
+    parser.add_argument('--momentum', type=float, default=0.9, metavar='M', help='SGD momentum (default: 0.9)')
+    parser.add_argument('--weight-decay', type=float, default=0.05, help='weight decay (default: 0.05)')
+    parser.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER', help='LR scheduler (default: "cosine"')
+    parser.add_argument('--lr', type=float, default=-1, metavar='LR', help='learning rate (default: 5e-4)')
+    parser.add_argument('--lr-noise', type=float, nargs='+', default=None, metavar='pct, pct', help='learning rate noise on/off epoch percentages')
+    parser.add_argument('--lr-noise-pct', type=float, default=0.67, metavar='PERCENT', help='learning rate noise limit percent (default: 0.67)')
+    parser.add_argument('--lr-noise-std', type=float, default=1.0, metavar='STDDEV', help='learning rate noise std-dev (default: 1.0)')
+    parser.add_argument('--warmup-lr', type=float, default=1e-6, metavar='LR', help='warmup learning rate (default: 1e-6)')
+    parser.add_argument('--min-lr', type=float, default=1e-5, metavar='LR', help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
+    parser.add_argument('--decay-epochs', type=float, default=30, metavar='N', help='epoch interval to decay LR')
+    parser.add_argument('--warmup-epochs', type=int, default=5, metavar='N', help='epochs to warmup LR, if scheduler supports')
+    parser.add_argument('--cooldown-epochs', type=int, default=10, metavar='N', help='epochs to cooldown LR at min_lr, after cyclic schedule ends')
+    parser.add_argument('--patience-epochs', type=int, default=10, metavar='N', help='patience epochs for Plateau LR scheduler (default: 10')
+    parser.add_argument('--decay-rate', '--dr', type=float, default=0.1, metavar='RATE', help='LR decay rate (default: 0.1)')
+
+
+
+    # Augmentation parameters
+    # parser.add_argument('--color-jitter', type=float, default=0.4, metavar='PCT', help='Color jitter factor (default: 0.4)')
+    # parser.add_argument('--aa', type=str, default='rand-m9-mstd0.5-inc1', metavar='NAME', help='Use AutoAugment policy. "v0" or "original". "(default: rand-m9-mstd0.5-inc1)'),
+    # parser.add_argument('--smoothing', type=float, default=0.1, help='Label smoothing (default: 0.1)')
+    # parser.add_argument('--train-interpolation', type=str, default='bicubic',  help='Training interpolation (random, bilinear, bicubic default: "bicubic")')
+    # parser.add_argument('--repeated-aug', action='store_true')
+    # parser.set_defaults(repeated_aug=False)
+
+    # * Random Erase params
+    # parser.add_argument('--reprob', type=float, default=0, metavar='PCT', help='Random erase prob (default: 0.25)')
+    # parser.add_argument('--remode', type=str, default='pixel', help='Random erase mode (default: "pixel")')
+    # parser.add_argument('--recount', type=int, default=1, help='Random erase count (default: 1)')
+    # parser.add_argument('--resplit', action='store_true', default=False, help='Do not random erase first (clean) augmentation split')
+
 
     # long short parameters
-    parser.add_argument('--ls-w', type=int, default=4)
-    parser.add_argument('--time_step', type=int, default=0)
-    parser.add_argument('--ls-dp-rank', type=int, default=16)
+    # parser.add_argument('--ls-w', type=int, default=4)
+    # parser.add_argument('--ls-dp-rank', type=int, default=16)
 
     return parser
 

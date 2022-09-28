@@ -8,7 +8,7 @@ import torch
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import torch.fft
 from torch.utils.checkpoint import checkpoint_sequential
-
+from .convNd import convNd
 import numpy as np
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -73,7 +73,10 @@ timer = Timer(False)
 
 from  torch.cuda.amp import custom_fwd,custom_bwd
 
+class BaseModel(nn.Module):
 
+    def freeze_stratagy(self,step):
+        pass
 
 class AdaptiveFourierNeuralOperator(nn.Module):
     def __init__(self, dim, img_size, fno_blocks=4,fno_bias=True, fno_softshrink=False):
@@ -237,6 +240,12 @@ class Block(nn.Module):
         #timer.record('residual','forward_features',1)
         return x
 
+def transposeconv_engines(dim):
+    return lambda *args,**kargs:convNd(*args,**kargs,num_dims=dim,is_transposed=True,use_bias=False)
+
+def conv_engines(dim):
+    return lambda *args,**kargs:convNd(*args,**kargs,num_dims=dim,is_transposed=False,use_bias=False)
+
 class PatchEmbed(nn.Module):
     def __init__(self, img_size=None, patch_size=8, in_chans=13, embed_dim=768):
         super().__init__()
@@ -256,8 +265,9 @@ class PatchEmbed(nn.Module):
         self.patch_size  = tuple(patch_size)
         self.num_patches = num_patches
         self.out_size    = tuple(out_size)
-        conv_engine = [nn.Conv1d,nn.Conv2d,nn.Conv3d]
-        self.proj   = conv_engine[len(img_size)-1](in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
+        #conv_engine = [nn.Conv1d,nn.Conv2d,nn.Conv3d]
+        conv_engine = conv_engines(len(img_size))
+        self.proj   = conv_engine(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
 
     def forward(self, x):
         B, C, = x.shape[:2]
@@ -266,14 +276,11 @@ class PatchEmbed(nn.Module):
         x = self.proj(x).flatten(2).transpose(1, 2)
         return x
 
-class AFNONet(nn.Module):
-    """
-
-    """
+class AFNONet(BaseModel):
     def __init__(self, img_size, patch_size=8, in_chans=20, out_chans=20, embed_dim=768, depth=12, mlp_ratio=4.,
                  uniform_drop=False, drop_rate=0., drop_path_rate=0., norm_layer=None,
                  dropcls=0, checkpoint_activations=False, fno_blocks=3,double_skip=False,
-                 fno_bias=False, fno_softshrink=False,debug_mode=False,history_length=1):
+                 fno_bias=False, fno_softshrink=False,debug_mode=False,history_length=1,reduce_Field_coef=False):
         super().__init__()
 
         assert img_size is not None
@@ -337,7 +344,8 @@ class AFNONet(nn.Module):
                 conf_list[slot]['stride'].append(conv_set[patch][slot][1])
                 conf_list[slot]['padding'].append(conv_set[patch][slot][2])
 
-        transposeconv_engine = [nn.ConvTranspose1d,nn.ConvTranspose2d,nn.ConvTranspose3d][len(img_size)-1]
+        #transposeconv_engine = [nn.ConvTranspose1d,nn.ConvTranspose2d,nn.ConvTranspose3d][len(img_size)-1]
+        transposeconv_engine = transposeconv_engines(len(img_size))
         self.pre_logits = nn.Sequential(OrderedDict([
             ('conv1', transposeconv_engine(embed_dim, out_chans*16, **conf_list[0])),
             ('act1', nn.Tanh()),
@@ -358,8 +366,12 @@ class AFNONet(nn.Module):
         trunc_normal_(self.pos_embed, std=.02)
         self.apply(self._init_weights)
         self.debug_mode=debug_mode
+        self.reduce_Field_coef = torch.nn.Parameter(torch.Tensor([0]),requires_grad=False)
+        if reduce_Field_coef:
+            self.reduce_Field_coef = torch.nn.Parameter(torch.randn(4,1,1,1)/10)
         if self.history_length >1:
             self.last_Linear_layer = nn.Linear(out_chans*self.history_length,out_chans)
+
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=.02)
@@ -378,10 +390,10 @@ class AFNONet(nn.Module):
         x = self.patch_embed(x)
         x += self.pos_embed
         x = self.pos_drop(x)
-
+        #print(torch.std_mean(x))
         if not self.checkpoint_activations:
             for blk in self.blocks:
-                x = blk(x)
+                x = blk(x);#print(torch.std_mean(x))
         else:
             x = checkpoint_sequential(self.blocks, 4, x)
 
@@ -398,6 +410,18 @@ class AFNONet(nn.Module):
         if w_now < w_should and not ((w_should - w_now)%2):
             # we only allow symmetry pad
             return (w_should - w_now)//2
+
+    def freeze_stratagy(self,step):
+        if len(self.reduce_Field_coef)>1:
+            if step%2 or step==0:
+                for p in self.parameters():p.requires_grad=True
+                self.reduce_Field_coef.requires_grad=False
+            else:
+                for p in self.parameters():p.requires_grad=False
+                self.reduce_Field_coef.requires_grad=True
+        else:
+            pass
+
     def forward(self, x):
         ### we assume always feed the tensor (B, p*z, h, w)
         shape = x.shape
@@ -411,13 +435,14 @@ class AFNONet(nn.Module):
         ot_shape = x.shape[2:]
         x = x.reshape(B,-1,*self.img_size)# (B, p, z, h, w) or (B, p, h, w)
         #timer.restart(level=0)
-        x = self.forward_features(x)
+        #print(torch.std_mean(x))
+        x = self.forward_features(x);#print(torch.std_mean(x))
         #timer.record('forward_features',level=0)
         x = self.final_dropout(x)
         #timer.record('final_dropout',level=0)
-        x = self.pre_logits(x)
+        x = self.pre_logits(x);#print(torch.std_mean(x))
         #timer.record('pre_logits',level=0)
-        x = self.head(x)
+        x = self.head(x);#print(torch.std_mean(x))
         if self.history_length >1:
             x = x.flatten(1,2).transpose(1,-1)
             x = self.last_Linear_layer(x)
