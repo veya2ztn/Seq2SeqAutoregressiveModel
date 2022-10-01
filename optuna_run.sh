@@ -7,7 +7,7 @@
 #                      --img_size 3,51,96 --dataset_type ERA5Tiny12_47_96 --input_channel 4 --output_channel 4 \
 #                      --save_warm_up 1000 --use_scalar_advection
 #python optuna_run.py --train_set 3D70N --epoch 60 --mode pretrain --time_step 8 --save_warm_up 1000 --history_length 6 --model_depth 6 --embed_dim 256 --patch_size 2
-python optuna_run.py --train_set 2D706N --epoch 300 --mode pretrain --time_step 8 --save_warm_up 1000 --history_length 6
+#python optuna_run.py --train_set 2D706N --epoch 300 --mode pretrain --time_step 8 --save_warm_up 1000 --history_length 6
 
 #--img_size 3,32,64 --patch_size 1,2,2
 #--activate_physics_model

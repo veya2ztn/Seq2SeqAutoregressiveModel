@@ -138,8 +138,8 @@ def run_fourcast(ckpt_path):
     else:
         print("no backbone.best.pt or pretrain_latest.pt, pass!")
         return
-    # if 'rmse_table_unit' in os.listdir(ckpt_path):
-    #     return
+    if 'rmse_unit_table' in os.listdir(ckpt_path):
+        return
     #args.train_set = "small"
     args.fourcast  = True
     args.mode      = 'fourcast'
@@ -156,7 +156,7 @@ def run_fourcast(ckpt_path):
     else:
         if "Euler" in ckpt_path:
             args.wrapper_model   = [p for p in ckpt_path.split("/") if 'Euler' in p][0].split('-')[0]
-    args.train_set = 'small'
+    #args.train_set = 'small'
     args.mode      = 'fourcast'
     args.fourcast  = True
     args.batch_size= 128    

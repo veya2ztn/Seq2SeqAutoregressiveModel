@@ -44,7 +44,7 @@ from mltool.dataaccelerate import DataLoaderX,DataLoader,DataPrefetcher,DataSimf
 from mltool.loggingsystem import LoggingSystem
 
 
-from cephdataset import (ERA5CephDataset,ERA5CephSmallDataset,WeathBench706,SpeedTestDataset,load_test_dataset_in_memory,
+from cephdataset import (ERA5CephDataset,WeathBench71_H5,ERA5CephSmallDataset,WeathBench706,SpeedTestDataset,load_test_dataset_in_memory,
               load_small_dataset_in_memory,ERA5Tiny12_47_96,WeathBench71,WeathBench716)
 #dataset_type = ERA5CephDataset
 # dataset_type  = SpeedTestDataset
@@ -55,7 +55,7 @@ def find_free_port():
     s.bind(('', 0))            # Bind to a free port provided by the host.
     return s.getsockname()[1]  # Return the port number assigned.
 import random
-
+import traceback
 
 lr_for_mode={'pretrain':5e-4,'finetune':1e-4,'fourcast':1e-4}
 ep_for_mode={'pretrain':80,'finetune':50,'fourcast':50}
@@ -76,6 +76,7 @@ train_set={
     '4796Field' : ((3,51,96), (1,3,3), 4, 4, ERA5Tiny12_47_96,{'dataset_flag':'only_Field','use_scalar_advection':False}),
     '4796FieldNormlized' : ((3,51,96), (1,3,3), 4, 4, ERA5Tiny12_47_96,{'dataset_flag':'normalized_data','use_scalar_advection':False}),
     '2D70N':((32,64), (2,2), 70, 70, WeathBench71,{'dataset_flag':'2D70N'}),
+    '2D70NH5':((32,64), (2,2), 70, 70, WeathBench71_H5,{'dataset_flag':'2D70N'}),
     '2D706N':((32,64), (2,2), 70, 70, WeathBench706,{'dataset_flag':'2D70N'}),
     '2D716N':((32,64), (2,2), 71, 71, WeathBench716,{'dataset_flag':'2D70N'}),
     '3D70N':((14,32,64), (2,2,2), 5, 5, WeathBench71,{'dataset_flag':'3D70N'}),
@@ -311,7 +312,6 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
             data_cost += time.time() - now;now = time.time()
             step        = inter_b.now
             idxes,batch = prefetcher.next()
-
             batch       = make_data_regular(batch,half_model)
             # first sum should be (B, P, W, H )
             fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset)
@@ -360,7 +360,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     inter_b.lwrite(f"load everything, start_{status}ing......", end="\r")
 
     now = time.time()
-    total_diff,total_num  = 0,0
+    total_diff,total_num  = torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
 
     while inter_b.update_step():
         #if inter_b.now>10:break
@@ -372,7 +372,8 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         #if len(batch)==1:batch = batch[0] # for Field -> Field_Dt dataset
         data_cost += time.time() - now;now = time.time()
         if status == 'train':
-            model.freeze_stratagy(step)
+            if hasattr(model,'freeze_stratagy'):model.freeze_stratagy(step)
+            if hasattr(model,'module') and hasattr(model.module,'freeze_stratagy'):model.module.freeze_stratagy(step)
             if model.train_mode =='pretrain':
                 time_truncate = max(min(epoch//3,data_loader.dataset.time_step),2)
                 batch=batch[:model.history_length -1 + time_truncate]
@@ -392,7 +393,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         else:
             with torch.no_grad():
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
-        total_diff += abs_loss.item()
+        total_diff  += abs_loss.item()
         total_num  += len(batch) - 1
 
         train_cost += time.time() - now;now = time.time()
@@ -412,6 +413,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             dist.reduce(x, 0)
 
     loss_val = total_diff/ total_num
+    loss_val = loss_val.item()
     return loss_val
 
 
@@ -441,23 +443,28 @@ def run_fourcast(args, model,logsys):
     import warnings
     warnings.filterwarnings("ignore")
     logsys.info_log_path = os.path.join(logsys.ckpt_root, 'fourcast.info')
+    
     test_dataset,  test_dataloader = get_test_dataset(args)
-
     prefix_pool={
         'only_backward':"time_reverse_",
         'only_forward':""
     }
     prefix = prefix_pool[test_dataset.time_reverse_flag]
 
-    logsys.info(f"use dataset ==> {test_dataset.__class__.__name__}")
-    logsys.info("starting fourcast~!")
-    with open(os.path.join(logsys.ckpt_root,'weight_path'),'w') as f:f.write(args.pretrain_weight)
-    fourcastresult = fourcast_step(test_dataloader, model,logsys,random_repeat = args.fourcast_randn_initial)
+    
     gpu       = dist.get_rank() if hasattr(model,'module') else 0
     save_path = os.path.join(logsys.ckpt_root,f"fourcastresult.gpu_{gpu}")
-    torch.save(fourcastresult,save_path)
-    logsys.info(f"save fourcastresult at {save_path}")
-    
+    if not os.path.exists(save_path) or  args.force_fourcast:
+        logsys.info(f"use dataset ==> {test_dataset.__class__.__name__}")
+        logsys.info("starting fourcast~!")
+        with open(os.path.join(logsys.ckpt_root,'weight_path'),'w') as f:f.write(args.pretrain_weight)
+        fourcastresult = fourcast_step(test_dataloader, model,logsys,random_repeat = args.fourcast_randn_initial)
+        torch.save(fourcastresult,save_path)
+        logsys.info(f"save fourcastresult at {save_path}")
+    else:
+        logsys.info(f"load fourcastresult at {save_path}")
+        fourcastresult = torch.load(save_path)
+
     if not args.distributed:
 
         accu_list = torch.stack([p['accu'] for p in fourcastresult.values()]).mean(0)# (fourcast_num,property_num)
@@ -473,12 +480,27 @@ def run_fourcast(args, model,logsys):
         rmse_table.to_csv(os.path.join(logsys.ckpt_root,prefix+'rmse_table'))
 
         #if args.dataset_type_string in ["",'ERA5CephDataset','ERA5CephSmallDataset']:
-        unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
-        unit_list = unit_list.reshape(1,len(test_dataset.vnames))# (1,property_num)
-        rmse_unit_list= (rmse_list*unit_list)
-        rmse_table_unit = pd.DataFrame(rmse_unit_list.transpose(1,0),index=test_dataset.vnames)
-        logsys.info("===>rmse_unit_table<===")
-        logsys.info(rmse_table_unit);rmse_table_unit.to_csv(os.path.join(logsys.ckpt_root,prefix+'rmse_table_unit'))
+        try:
+            if not isinstance(test_dataset.unit_list,int):
+                unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
+                print(unit_list)
+                unit_num  = max(unit_list.shape)
+                unit_list = unit_list.reshape(1,unit_num)
+                property_num = len(test_dataset.vnames)
+                if property_num > unit_num:
+                    assert property_num%unit_num == 0
+                    unit_list = torch.repeat_interleave(unit_list,int(property_num//unit_num),dim=1)
+            else:
+                logsys.info(f"unit list is int, ")
+                unit_list= test_dataset.unit_list
+            
+            rmse_unit_list= (rmse_list*unit_list)
+            rmse_table_unit = pd.DataFrame(rmse_unit_list.transpose(1,0),index=test_dataset.vnames)
+            logsys.info("===>rmse_unit_table<===")
+            logsys.info(rmse_table_unit);rmse_table_unit.to_csv(os.path.join(logsys.ckpt_root,prefix+'rmse_table_unit'))
+        except:
+            logsys.info(f"get wrong when use unit list, we will fource let [rmse_unit_list] = [rmse_list]")
+            traceback.print_exc()
 
         for predict_time in range(len(accu_list)):
             info_pool={}
@@ -550,9 +572,10 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
     if not hasattr(args,'train_set'):args.train_set='large'
     args.time_step  = ts_for_mode[args.mode] if not args.time_step else args.time_step
     model_name, datasetname, project_name = get_projectname(args)
-    if args.pretrain_weight and args.mode=='fourcast':
+    if args.pretrain_weight and args.mode!='finetune':
         #args.mode = "finetune"
         SAVE_PATH = Path(os.path.dirname(args.pretrain_weight))
+
     else:
         SAVE_PATH = Path(f'./checkpoints/{datasetname}/{model_name}/{project_name}/{TIME_NOW}')
         SAVE_PATH.mkdir(parents=True, exist_ok=True)
@@ -664,9 +687,9 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
                         )
     if args.wrapper_model:
         model = eval(args.wrapper_model)(args,model)
-        model.history_length=args.history_length
+        
     #model = hfnn.to_hfai(model)
-    model.train_mode=args.mode
+    
     logsys.info(f"use model ==> {model.__class__.__name__}")
     rank = args.rank
     if local_rank == 0:
@@ -682,8 +705,10 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
     else:
         model = model.cuda()
     if args.half_model:model = model.half()
+    model.train_mode=args.mode
     model.random_time_step_train = args.random_time_step
     model.input_noise_std = args.input_noise_std
+    model.history_length=args.history_length
     # args.lr = args.lr * args.batch_size * dist.get_world_size() / 512.0
     param_groups    = timm.optim.optim_factory.add_weight_decay(model, args.weight_decay)
     optimizer       = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
@@ -708,7 +733,7 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
 
     # =======================> start training <==========================
     print(f"entering {args.mode} training")
-
+    now_best_path = SAVE_PATH / f'backbone.best.pt'
     if args.mode=='fourcast':
         run_fourcast(args, model,logsys)
     else:
@@ -802,7 +827,7 @@ def main(args=None):
     train_dataset_tensor=valid_dataset_tensor=None
 
 
-    if args.dataset_type in ['ERA5CephDataset','ERA5CephSmallDataset']:
+    if args.dataset_type in ['ERA5CephDataset','ERA5CephSmallDataset'] and args.multiprocessing_distributed:
         print("======== loading data as shared memory==========")
         if args.dataset_type == 'ERA5CephSmallDataset':
             if not args.mode=='fourcast':
@@ -823,6 +848,18 @@ def main(args=None):
                 valid_dataset_tensor = None
         print("=======done==========")
 
+    # if args.dataset_type in ['WeathBench71'] and args.multiprocessing_distributed:
+    #     print("======== loading data as shared memory==========")
+    #     if not args.mode=='fourcast':
+    #         train_dataset_tensor = torch.Tensor(np.load('datasets/weatherbench/valid_set.npy')).share_memory_()
+    #         print(f"train->{train_dataset_tensor.shape}")
+    #         valid_dataset_tensor = torch.Tensor(np.load('datasets/weatherbench/valid_set.npy')).share_memory_()
+    #         print(f"valid->{train_dataset_tensor.shape}")
+    #     else:
+    #         train_dataset_tensor = torch.Tensor(np.load('datasets/weatherbench/test_set.npy')).share_memory_()
+    #         print(f"test->{train_dataset_tensor.shape}")
+    #         valid_dataset_tensor = None
+        
     if args.multiprocessing_distributed:
         print("======== entering  multiprocessing train ==========")
         args.world_size = ngpus_per_node * args.world_size

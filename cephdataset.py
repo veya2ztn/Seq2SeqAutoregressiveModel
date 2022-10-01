@@ -112,6 +112,22 @@ def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_
 
     return data
 
+def getFalse(x):return False
+def identity(x):
+    return x
+
+def do_batch_normlize(batch,mean,std):
+    if isinstance(batch,list):
+        return [(x-mean/std) for x in batch]
+    else:
+        return batch-mean/std
+
+def inv_batch_normlize(batch,mean,std):
+    if isinstance(batch,list):
+        return [(x*std+mean) for x in batch]
+    else:
+        return batch*std+mean
+
 class BaseDataset:
     time_intervel=1
     def do_normlize_data(self, batch):
@@ -119,17 +135,19 @@ class BaseDataset:
     def inv_normlize_data(self,batch):
         return batch
     def set_time_reverse(self,time_reverse_flag):
-        if   time_reverse_flag == 'only_forward':
-            self.do_time_reverse = lambda x:False
-            print("we only using forward sequence, i.e. from t1, t2, ..., to tn")
-        elif time_reverse_flag == 'only_backward':
-            self.do_time_reverse = lambda x:self.volicity_idx
-            print("we only using backward sequence, i.e. from tn, tn-1, ..., to t1")
-        elif time_reverse_flag == 'random_forward_backward':
-            self.do_time_reverse = lambda x:self.volicity_idx if np.random.random() > 0 else False
-            print("we randomly(50%/50%) use forward/backward sequence")
-        else:
-            raise NotImplementedError
+        #if   time_reverse_flag == 'only_forward':
+        #    self.do_time_reverse = lambda x:False
+        #    print("we only using forward sequence, i.e. from t1, t2, ..., to tn")
+        #elif time_reverse_flag == 'only_backward':
+        #    self.do_time_reverse = lambda x:self.volicity_idx
+        #    print("we only using backward sequence, i.e. from tn, tn-1, ..., to t1")
+        #elif time_reverse_flag == 'random_forward_backward':
+        #    self.do_time_reverse = lambda x:self.volicity_idx if np.random.random() > 0 else False
+        #    print("we randomly(50%/50%) use forward/backward sequence")
+        #else:
+        #    raise NotImplementedError
+        assert time_reverse_flag == 'only_forward'
+        self.do_time_reverse = getFalse
     def do_time_reverse(self,idx):
         return False
     def __getitem__(self,idx):
@@ -238,7 +256,7 @@ class ERA5CephSmallDataset(ERA5CephDataset):
                 class_name='ERA5CephSmallDataset', ispretrain=True,
                 crop_coord=None,
                 dataset_tensor=None,
-                time_step=None,with_idx=False,random_time_step=False,dataset_flag=False,time_reverse_flag='only_forward'):
+                time_step=None,with_idx=False,random_time_step=False,dataset_flag=False,time_reverse_flag='only_forward',time_intervel=1):
         self.crop_coord   = crop_coord
         self.mode         = mode
         self.data         = load_small_dataset_in_memory(split) if dataset_tensor is None else dataset_tensor
@@ -253,6 +271,7 @@ class ERA5CephSmallDataset(ERA5CephDataset):
         self.clim_tensor  = self.clim_tensor[:,self.channel_pick]
         self.channel_last = channel_last
         self.with_idx     = with_idx
+        self.time_intervel= time_intervel
         self.error_path   = []
         self.random_time_step = random_time_step
         if self.random_time_step:
@@ -495,11 +514,11 @@ class WeathBench(BaseDataset):
     cons_vnames= ["lsm", "slt", "orography"]
     default_root='datasets/weatherbench'
     constant_channel_pick = []
-    
+
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,
                  root=None, time_step=2,
                  with_idx=False,
-                 years=None,
+                 years=None,dataset_tensor=None,
                  dataset_flag='normal',time_reverse_flag='only_forward',time_intervel=1,
                  **kargs):
         if years is None:
@@ -511,6 +530,8 @@ class WeathBench(BaseDataset):
         self.root             = self.default_root if root is None else root
         self.split            = split
         self.single_data_path_list = self.init_file_list(years) # [[year,idx],[year,idx],.....]
+        self.dataset_tensor = None
+        self.dataset_tensor = dataset_tensor
         self.dataset_flag     = dataset_flag
         self.clim_tensor      = [0]
         self.mean_std         = np.load(os.path.join(self.root,"mean_std.npy"))
@@ -522,7 +543,7 @@ class WeathBench(BaseDataset):
         self.time_step        = time_step
         self.dataset_flag     = dataset_flag
         self.time_intervel    = time_intervel
-        config_pool = self.config_pool
+        self.config_pool= config_pool= self.config_pool_initial()
 
         if dataset_flag in config_pool:
             self.channel_choice, self.normalize_type, mean_std, self.do_normlize_data , self.inv_normlize_data = config_pool[dataset_flag]
@@ -555,40 +576,26 @@ class WeathBench(BaseDataset):
                     file_list.append([year, hour])
         return file_list
 
-    @property
-    def config_pool(self):
+    def config_pool_initial(self):
         config_pool={
 
-            '2D110N': (list(range(110))  ,'gauss_norm'   , self.mean_std.reshape(2,110,1,1)      , lambda x:x, lambda x:x ),
-            '2D110U': (list(range(110))  ,'unit_norm'    , self.mean_std.reshape(2,110,1,1)      , lambda x:x, lambda x:x ),
-            '2D104N': (list(range(6,110)),'gauss_norm'   , self.mean_std[:,6:].reshape(2,104,1,1), lambda x:x, lambda x:x ),
-            '2D104U': (list(range(6,110)),'unit_norm'    , self.mean_std[:,6:].reshape(2,104,1,1), lambda x:x, lambda x:x ),
-            '3D104N': (list(range(6,110)),'gauss_norm_3D', self.mean_std[:,6:].reshape(2,8,13,1,1,1).mean(2), lambda x:x, lambda x:x ),
-            '3D104U': (list(range(6,110)),'unit_norm_3D' , self.mean_std[:,6:].reshape(2,8,13,1,1,1).mean(2), lambda x:x, lambda x:x ),
+            '2D110N': (list(range(110))  ,'gauss_norm'   , self.mean_std.reshape(2,110,1,1)      , identity, identity ),
+            '2D110U': (list(range(110))  ,'unit_norm'    , self.mean_std.reshape(2,110,1,1)      , identity, identity ),
+            '2D104N': (list(range(6,110)),'gauss_norm'   , self.mean_std[:,6:].reshape(2,104,1,1), identity, identity ),
+            '2D104U': (list(range(6,110)),'unit_norm'    , self.mean_std[:,6:].reshape(2,104,1,1), identity, identity ),
+            '3D104N': (list(range(6,110)),'gauss_norm_3D', self.mean_std[:,6:].reshape(2,8,13,1,1,1).mean(2), identity, identity ),
+            '3D104U': (list(range(6,110)),'unit_norm_3D' , self.mean_std[:,6:].reshape(2,8,13,1,1,1).mean(2), identity, identity ),
         }
-        def do_batch_normlize(batch,mean,std):
-            if isinstance(batch,list):
-                return [(x-mean/std) for x in batch]
-            else:
-                return batch-mean/std
 
-        def inv_batch_normlize(batch,mean,std):
-            if isinstance(batch,list):
-                return [(x*std+mean) for x in batch]
-            else:
-                return batch*std+mean
+        # mean, std = self.mean_std.reshape(2,110,1,1)
+        # config_pool['2D110O'] =(list(range(110))  ,'none', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
 
-        mean, std = self.mean_std.reshape(2,110,1,1)
-        config_pool['2D110O'] =(list(range(110))  ,'none', (0,1) , lambda x:do_batch_normlize(x,mean,std),
-                                                                   lambda x:inv_batch_normlize(x,mean,std))
+        # mean, std = self.mean_std[:,6:].reshape(2,104,1,1)
+        # config_pool['2D104O'] =(list(range(6,110)),'none', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
 
-        mean, std = self.mean_std[:,6:].reshape(2,104,1,1)
-        config_pool['2D104O'] =(list(range(6,110)),'none', (0,1) , lambda x:do_batch_normlize(x,mean,std),
-                                                                   lambda x:inv_batch_normlize(x,mean,std))
-
-        mean, std = self.mean_std[:,6:].reshape(2,8,13,1,1,1).mean(2)
-        config_pool['3D104O'] =(list(range(6,110))  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),
-                                                                   lambda x:inv_batch_normlize(x,mean,std))
+        # mean, std = self.mean_std[:,6:].reshape(2,8,13,1,1,1).mean(2)
+        # config_pool['3D104O'] =(list(range(6,110))  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
+        
         return config_pool
 
     def __len__(self):
@@ -611,10 +618,10 @@ class WeathBench(BaseDataset):
         else:
             return data
 
+
 class WeathBench71(WeathBench):
 
-    @property
-    def config_pool(self):
+    def config_pool_initial(self):
 
         _list = ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
                  [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+ # v component of wind and the 10m v wind
@@ -623,56 +630,68 @@ class WeathBench71(WeathBench):
                  [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 57] # Realitve humidity and the Realitve humidity at groud, should be modified by total precipitaiton later
                  )
         config_pool={
-            '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), lambda x:x, lambda x:x ),
-            '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), lambda x:x, lambda x:x ),
-            '3D70N': (_list ,'gauss_norm_3D', self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), lambda x:x, lambda x:x ),
-            '3D70U': (_list ,'unit_norm_3D' , self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), lambda x:x, lambda x:x ),
+            '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
+            '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
+            '3D70N': (_list ,'gauss_norm_3D', self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), identity, identity ),
+            '3D70U': (_list ,'unit_norm_3D' , self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), identity, identity ),
         }
-        def do_batch_normlize(batch,mean,std):
-            if isinstance(batch,list):
-                return [(x-mean/std) for x in batch]
-            else:
-                return batch-mean/std
 
-        def inv_batch_normlize(batch,mean,std):
-            if isinstance(batch,list):
-                return [(x*std+mean) for x in batch]
-            else:
-                return batch*std+mean
 
-        mean, std = self.mean_std[:,_list].reshape(2,70,1,1)
-        config_pool['2D70O'] =(_list,'none', (0,1) , lambda x:do_batch_normlize(x,mean,std), lambda x:inv_batch_normlize(x,mean,std))
-        mean, std = self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2)
-        config_pool['3D70O'] =(_list  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
+        # mean, std = self.mean_std[:,_list].reshape(2,70,1,1)
+        # config_pool['2D70O'] =(_list,'none', (0,1) , lambda x:do_batch_normlize(x,mean,std), lambda x:inv_batch_normlize(x,mean,std))
+        # mean, std = self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2)
+        # config_pool['3D70O'] =(_list  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
         return config_pool
 
+    def load_otensor(self,idx):
+        if self.dataset_tensor is None:
+            year, hour = self.single_data_path_list[idx]
+            url = f"{self.root}/{year}/{year}-{hour:04d}.npy"
+            odata= np.load(url)
+            return odata
+        else:
+            return self.dataset_tensor[idx]
+    
     def get_item(self,idx,reversed_part=False):
-        year, hour = self.single_data_path_list[idx]
-        url = f"{self.root}/{year}/{year}-{hour:04d}.npy"
-        odata= np.load(url)
+        odata=self.load_otensor(idx)
         if reversed_part:odata[reversed_part] = -odata[reversed_part]
         data = odata[self.channel_choice]
-
+        eg = torch if isinstance(data,torch.Tensor) else np
         if '3D' in self.normalize_type:
             # 3D should modify carefully
-            data[14*4-1] = np.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
+            data[14*4-1] = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
             total_precipitaiton = odata[4]
-            newdata = data[14*5-1].copy()
+            newdata = data[14*5-1].clone() if isinstance(data,torch.Tensor) else data[14*5-1].copy()
             newdata[total_precipitaiton>0] = 100
             newdata[data[14*5-1]>100]=data[14*5-1][data[14*5-1]>100]
             data[14*5-1] = newdata
             shape= data.shape
             data = data.reshape(5,14,*shape[-2:])
         else:
-            data[14*4-1] = np.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
+            data[14*4-1]    = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
             total_precipitaiton = odata[4]
-            data[14*5-1] = total_precipitaiton
+            data[14*5-1]    = total_precipitaiton
         if 'gauss_norm' in self.normalize_type:
             return (data - self.mean)/self.std
         elif 'unit_norm' in self.normalize_type:
             return data/self.std
         else:
             return data
+
+class WeathBench71_H5(WeathBench71):
+
+    def load_otensor(self,idx):
+        if not hasattr(self, 'h5pool'): 
+            self.h5pool= {}
+            self.hour_map={}
+            for i,(year,hour) in enumerate(self.single_data_path_list):
+                if year not in self.hour_map:self.hour_map[year]={}
+                self.hour_map[year][hour]=len(self.hour_map[year])
+        year, hour = self.single_data_path_list[idx]
+        if year not in self.h5pool:
+            self.h5pool[year] = h5py.File(f"datasets/weatherbench_h5/{year}.hdf5", 'r')['data']
+        odata = self.h5pool[year][self.hour_map[year][hour]]
+        return odata
 
 class WeathBench706(WeathBench71):
 
@@ -686,8 +705,7 @@ class WeathBench716(WeathBench71):
     def init_file_list(self,years):
         return np.load(os.path.join(self.root,f"{self.split}.npy"))
 
-    @property
-    def config_pool(self):
+    def config_pool_initial(self):
 
         _list = ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
                  [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+ # v component of wind and the 10m v wind
@@ -702,8 +720,8 @@ class WeathBench716(WeathBench71):
         std  = np.concatenate([ std, np.ones(1).reshape(1,1,1)])
         mean_std = np.stack([mean,std])
         config_pool={
-            '2D70N': (_list ,'gauss_norm'   , mean_std, lambda x:x, lambda x:x ),
-            '2D70U': (_list ,'unit_norm'    , mean_std, lambda x:x, lambda x:x ),
+            '2D70N': (_list ,'gauss_norm'   , mean_std, identity, identity ),
+            '2D70U': (_list ,'unit_norm'    , mean_std, identity, identity ),
         }
         return config_pool
 

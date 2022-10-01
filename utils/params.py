@@ -52,6 +52,7 @@ def get_args_parser():
     # Fourcast Parameter
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
     parser.add_argument('--fourcast_randn_initial', default=0, type=int)
+    parser.add_argument('--force_fourcast', default=0, type=int)
 
     # Optimizer parameters # feed into timm
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER', help='Optimizer (default: "adamw"')
