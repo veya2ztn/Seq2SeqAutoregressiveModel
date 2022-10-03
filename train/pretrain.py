@@ -48,7 +48,7 @@ from cephdataset import (ERA5CephDataset,WeathBench71_H5,ERA5CephSmallDataset,We
               load_small_dataset_in_memory,ERA5Tiny12_47_96,WeathBench71,WeathBench716)
 #dataset_type = ERA5CephDataset
 # dataset_type  = SpeedTestDataset
-
+Datafetcher = DataSimfetcher
 def find_free_port():
     import socket
     s = socket.socket()
@@ -295,7 +295,7 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
     logsys.eval()
     status     = 'test'
     gpu        = dist.get_rank() if hasattr(model,'module') else 0
-    Fethcher   = DataSimfetcher
+    Fethcher   = Datafetcher
     prefetcher = Fethcher(data_loader,next(model.parameters()).device)
     batches = len(data_loader)
     inter_b    = logsys.create_progress_bar(batches,unit=' img',unit_scale=data_loader.batch_size)
@@ -345,8 +345,11 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         raise NotImplementedError
     accumulation_steps = accumulation_steps_global # should be 16 for finetune. but I think its ok.
     half_model = next(model.parameters()).dtype == torch.float16
-    data_cost = train_cost = rest_cost = 0
-    Fethcher   = DataSimfetcher
+    data_cost  = []
+    train_cost = []
+    rest_cost = []
+
+    Fethcher   = Datafetcher
     device     = next(model.parameters()).device
     prefetcher = Fethcher(data_loader,device)
     batches    = len(data_loader)
@@ -370,7 +373,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         #batch = data_loader.dataset.do_normlize_data(batch)
         batch = make_data_regular(batch,half_model)
         #if len(batch)==1:batch = batch[0] # for Field -> Field_Dt dataset
-        data_cost += time.time() - now;now = time.time()
+        data_cost.append(time.time() - now);now = time.time()
         if status == 'train':
             if hasattr(model,'freeze_stratagy'):model.freeze_stratagy(step)
             if hasattr(model,'module') and hasattr(model.module,'freeze_stratagy'):model.module.freeze_stratagy(step)
@@ -396,14 +399,16 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         total_diff  += abs_loss.item()
         total_num  += len(batch) - 1
 
-        train_cost += time.time() - now;now = time.time()
+        train_cost.append(time.time() - now);now = time.time()
         time_step_now = len(batch)
-        if (step) % intervel==0 or step==1:
+        if (step) % intervel==0 or step<30:
             iter_info_pool['iter'] = epoch*batches + step
             if use_wandb:wandb.log(iter_info_pool)
             for key, val in iter_info_pool.items():logsys.record(key, val, epoch*batches + step)
-            outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [TimeLeng]:{time_step_now:} GPU:[{gpu}] abs_loss:{abs_loss.item():.2f} loss:{loss.item():.2f} cost:[Date]:{data_cost/intervel:.1e} [Train]:{train_cost/intervel:.1e} ")
-            data_cost = train_cost = rest_cost = 0
+            outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [TimeLeng]:{time_step_now:} GPU:[{gpu}] abs_loss:{abs_loss.item():.2f} loss:{loss.item():.2f} cost:[Date]:{np.mean(data_cost):.1e} [Train]:{np.mean(train_cost):.1e} ")
+            data_cost  = []
+            train_cost = []
+            rest_cost = []
             inter_b.lwrite(outstring, end="\r")
 
 
@@ -606,7 +611,7 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
         dataset_kargs={}
 
 
-
+    dataset_kargs['root'] = args.data_root if args.data_root != "" else None
     dataset_kargs['mode']        = args.mode
     dataset_kargs['time_step']   = args.time_step
     dataset_kargs['check_data']  = True

@@ -1,10 +1,11 @@
 #from tkinter.messagebox import NO
 import numpy as np
-import torch,os
+import torch,os,io
 from torchvision import datasets, transforms
 try:
     from petrel_client.client import Client
     import petrel_client
+    
 except:
     print("can not input petrel client, pass")
     pass
@@ -76,6 +77,7 @@ smalldataset_path={
 
 def load_small_dataset_in_memory(split):
     return torch.Tensor(np.load(smalldataset_path[split]))
+
 def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_coord=None,channel_last=True,vnames=vnames):
     client = None
     file_list = []
@@ -96,9 +98,9 @@ def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_
             url = f"{root}/{name}/{year}/{name}-{year}-{hour:04d}.npy"
             if "s3://" in url:
                 if client is None:client = Client(conf_path="~/petreloss.conf")
-                array = ERA5CephDataset.read_npy_from_ceph(client, url)
+                array = read_npy_from_ceph(client, url)
             else:
-                array = ERA5CephDataset.read_npy_from_buffer(url)
+                array = read_npy_from_buffer(url)
            # array = array[np.newaxis, :, :]
             arrays.append(array)
         arrays = np.stack(arrays, axis=0)
@@ -115,20 +117,35 @@ def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_
 def getFalse(x):return False
 def identity(x):
     return x
-
 def do_batch_normlize(batch,mean,std):
     if isinstance(batch,list):
         return [(x-mean/std) for x in batch]
     else:
         return batch-mean/std
-
 def inv_batch_normlize(batch,mean,std):
     if isinstance(batch,list):
         return [(x*std+mean) for x in batch]
     else:
         return batch*std+mean
 
+
+def read_npy_from_ceph(client, url, Ashape=Shape):
+    try:
+        array_ceph = client.get(url)
+        array_ceph = np.frombuffer(array_ceph, dtype=np.half).reshape(Ashape)
+    except:
+        os.system(f"echo '{url}' > fail_data_path.txt")
+    return array_ceph
+
+def read_npy_from_buffer(path):
+    buf = bytearray(os.path.getsize(path))
+    with open(path, 'rb') as f:
+        f.readinto(buf)
+    return np.frombuffer(buf, dtype=np.half).reshape(720,1440)
+
+
 class BaseDataset:
+    client = None
     time_intervel=1
     def do_normlize_data(self, batch):
         return batch
@@ -167,12 +184,17 @@ class BaseDataset:
                 print(self.error_path)
                 traceback.print_exc()
                 raise NotImplementedError("too many error happened, check the errer path")
+    
 
 class ERA5CephDataset(BaseDataset):
+    default_root = 'cluster3:s3://era5npy'
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,years=None,
-                class_name='ERA5Dataset', root='cluster3:s3://era5npy',random_time_step=False,dataset_flag=False, ispretrain=True, crop_coord=None,time_step=None,with_idx=False,**kargs):
-        self.client = Client(conf_path="~/petreloss.conf")
-        self.root = root
+                class_name='ERA5Dataset', root= None,random_time_step=False,dataset_flag=False, ispretrain=True, crop_coord=None,time_step=None,with_idx=False,**kargs):
+        
+        if root is not None:
+            self.root = root 
+        else:
+            self.root = root =self.default_root
         self.years = Years[split] if years is None else years
         self.crop_coord = crop_coord
         self.file_list = self.init_file_list()
@@ -206,21 +228,13 @@ class ERA5CephDataset(BaseDataset):
                 file_list.append([year, hour])
         return file_list
 
-    @staticmethod
-    def read_npy_from_ceph(client, url, Ashape=Shape):
-        try:
-            array_ceph = client.get(url)
-            array_ceph = np.frombuffer(array_ceph, dtype=np.half).reshape(Ashape)
-        except:
-            os.system(f"echo '{url}' > fail_data_path.txt")
-        return array_ceph
-    @staticmethod
-    def read_npy_from_buffer(path):
-        buf = bytearray(os.path.getsize(path))
-        with open(path, 'rb') as f:
-            f.readinto(buf)
-        return np.frombuffer(buf, dtype=np.half).reshape(720,1440)
-
+    def load_numpy_from_url(self,url):
+        if "s3://" in url:
+            if self.client is None:self.client=Client(conf_path="~/petreloss.conf")
+            array = read_npy_from_ceph(self.client, url)
+        else:
+            array = read_npy_from_buffer(url)
+        return array
 
     @lru_cache(maxsize=32)
     def get_item(self, idx,reversed_part=False):
@@ -228,10 +242,7 @@ class ERA5CephDataset(BaseDataset):
         arrays = []
         for name in self.vnames:
             url = f"{self.root}/{name}/{year}/{name}-{year}-{hour:04d}.npy"
-            if "s3://" in url:
-                array = self.read_npy_from_ceph(self.client, url)
-            else:
-                array = self.read_npy_from_buffer(url)
+            array = self.load_numpy_from_url(url)
             array = array[np.newaxis, :, :]
             arrays.append(array)
         arrays = np.concatenate(arrays, axis=0)
@@ -528,14 +539,15 @@ class WeathBench(BaseDataset):
             print(f"noice you assign your own year list {list(years)}")
 
         self.root             = self.default_root if root is None else root
+        print(f"use dataset in {root}")
         self.split            = split
         self.single_data_path_list = self.init_file_list(years) # [[year,idx],[year,idx],.....]
         self.dataset_tensor = None
         self.dataset_tensor = dataset_tensor
         self.dataset_flag     = dataset_flag
         self.clim_tensor      = [0]
-        self.mean_std         = np.load(os.path.join(self.root,"mean_std.npy"))
-        self.constants        = np.load(os.path.join(self.root,"constants.npy"))
+        self.mean_std         = self.load_numpy_from_url(os.path.join(self.root,"mean_std.npy"))
+        self.constants        = self.load_numpy_from_url(os.path.join(self.root,"constants.npy"))
         self.mode             = mode
         self.channel_last     = channel_last
         self.with_idx         = with_idx
@@ -643,11 +655,20 @@ class WeathBench71(WeathBench):
         # config_pool['3D70O'] =(_list  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
         return config_pool
 
+    def load_numpy_from_url(self,url):#the saved numpy is not buffer, so use normal reading
+        if "s3://" in url:
+            if self.client is None:self.client=Client(conf_path="~/petreloss.conf")
+            with io.BytesIO(self.client.get(url)) as f:
+                array = np.load(f)
+        else:
+            array = np.load(url)
+        return array
+
     def load_otensor(self,idx):
         if self.dataset_tensor is None:
             year, hour = self.single_data_path_list[idx]
             url = f"{self.root}/{year}/{year}-{hour:04d}.npy"
-            odata= np.load(url)
+            odata= self.load_numpy_from_url(url)
             return odata
         else:
             return self.dataset_tensor[idx]
