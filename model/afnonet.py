@@ -159,14 +159,10 @@ class AdaptiveFourierNeuralOperatorComplex(nn.Module):
         assert self.hidden_size % self.num_blocks == 0
 
         self.scale = 0.02
-        self.w1 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size,
-                                                              self.block_size, dtype=torch.cfloat))
-        self.b1 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size,
-                                                              dtype=torch.cfloat))
-        self.w2 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size,
-                                                              self.block_size, dtype=torch.cfloat))
-        self.b2 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size,
-                                                              dtype=torch.cfloat))
+        self.w1 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size,self.block_size, dtype=torch.cfloat))
+        self.b1 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size,dtype=torch.cfloat))
+        self.w2 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size,self.block_size, dtype=torch.cfloat))
+        self.b2 = torch.nn.Parameter(self.scale * torch.randn(self.num_blocks, self.block_size,dtype=torch.cfloat))
         self.relu = nonlinear_activate
 
         if fno_bias:
