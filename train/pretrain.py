@@ -681,7 +681,7 @@ def parse_default_args(args):
         "fno_softshrink": args.fno_softshrink,
         "history_length": args.history_length,
         "reduce_Field_coef":args.use_scalar_advection,
-        "modes":deal_with_tuple_string(args.modes,(24,48,6)),
+        "modes":deal_with_tuple_string(args.modes,(17,33,6)),
         "mode_select":args.mode_select,
         
     }

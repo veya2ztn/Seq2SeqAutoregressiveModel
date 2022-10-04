@@ -21,7 +21,7 @@ def get_args_parser():
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',choices=['AFNONet','FEDformer'])
     parser.add_argument('--patch_size', default="", type=str)
     parser.add_argument('--img_size'  , default="", type=str)
-    parser.add_argument('--modes'  , default="24,48,6", type=str)
+    parser.add_argument('--modes'  , default="17,33,6", type=str)
     parser.add_argument('--mode_select', default="", type=str)
     
     parser.add_argument('--input_channel' , type=int, default=0)
