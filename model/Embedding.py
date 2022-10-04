@@ -71,31 +71,35 @@ class TimeDEmbedding(nn.Module):
         return x
 
 class TimeFeatureEmbedding(nn.Module):
-    def __init__(self, d_model, embed_type='timeF', freq='h'):
+    def __init__(self, d_model, freq='h'):
         super(TimeFeatureEmbedding, self).__init__()
 
         freq_map = {'h': 4, 't': 5, 's': 6, 'm': 1, 'a': 1, 'w': 2, 'd': 3, 'b': 3}
         d_inp = freq_map[freq]
+        self.d_inp = d_inp
         self.embed = nn.Linear(d_inp, d_model, bias=False)
 
     def forward(self, x):
         return self.embed(x)
 
 class DataEmbedding_SLSDTD(nn.Module):
-    def __init__(self, c_in, d_model, space_num, embed_type='fixed', freq='h', dropout=0.1):
+    def __init__(self, c_in, d_model, space_num, freq='h', dropout=0.1):
         super().__init__()
 
         self.SL_embedding  = SpaceLEmbedding(c_in=c_in, d_model=d_model,space_num=space_num)
         self.SD_embedding  = SpaceDEmbedding(c_in=c_in, d_model=d_model,space_num=space_num)
         self.TD_embedding  = TimeDEmbedding(c_in=c_in, d_model=d_model)
-        self.TV_embedding  = TimeFeatureEmbedding(d_model=d_model, embed_type=embed_type, freq=freq)
-        self.TV_shape  = [1]+[1]*space_num+[-1,d_model]
+        self.TV_embedding  = TimeFeatureEmbedding(d_model=d_model, freq=freq)
+        self.TV_shape  = [1]*space_num+[-1,d_model]
         self.embedding_agg = nn.Linear(3*d_model,d_model)
         self.dropout = nn.Dropout(p=dropout)
         
     def forward(self, x, x_mark):
-        x = self.embedding_agg(torch.cat([self.SL_embedding(x),self.SD_embedding(x),self.TD_embedding(x)],dim=-1)) \
-          + self.TV_embedding(x_mark).reshape(*self.TV_shape)
+        a = self.SL_embedding(x)
+        b = self.SD_embedding(x)
+        c = self.TD_embedding(x)
+        d = self.TV_embedding(x_mark)
+        x = self.embedding_agg(torch.cat([a,b,c],dim=-1)) + d.reshape(len(d),*self.TV_shape)
         return self.dropout(x)
 
         

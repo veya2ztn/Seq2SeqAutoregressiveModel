@@ -12,23 +12,25 @@ def get_args_parser():
     parser.add_argument('--history_length', default=1, type=int)
     parser.add_argument('--seed', default=-1, type=int)
     parser.add_argument('--input_noise_std', type=float, default=0.0, help='input_noise_std')
-    parser.add_argument('--do_final_fourcast', type=bool, default=True, help='do fourcast step after finish training')
-    parser.add_argument('--debug', type=bool, default=False, help='debug mode')
-    parser.add_argument('--distributed', type=bool, default=False, help='distributed')
+    parser.add_argument('--do_final_fourcast', type=int, default=1, help='do fourcast step after finish training')
+    parser.add_argument('--debug', type=int, default=0, help='debug mode')
+    parser.add_argument('--distributed', type=int, default=0, help='distributed')
     parser.add_argument('--rank', type=int, default=0, help='rank')
 
     # Model parameters
-    parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',choices=['AFNONet'])
+    parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',choices=['AFNONet','FEDformer'])
     parser.add_argument('--patch_size', default="", type=str)
     parser.add_argument('--img_size'  , default="", type=str)
     parser.add_argument('--input_channel' , type=int, default=0)
     parser.add_argument('--output_channel', type=int, default=0)
     parser.add_argument('--embed_dim', type=int, default=768)
     parser.add_argument('--model_depth', type=int, default=12)
+    parser.add_argument('--use_amp', type=int, default=True, help='use_amp')
     parser.add_argument('--random_time_step', action='store_true')
     parser.set_defaults(random_time_step=False)
     parser.add_argument('--use_scalar_advection', action='store_true')
     parser.set_defaults(use_scalar_advection=False)
+    
     #### fno parameters
     parser.add_argument('--fno-bias', action='store_true')
     parser.add_argument('--fno-blocks', type=int, default=4)
@@ -51,6 +53,8 @@ def get_args_parser():
     parser.add_argument('--time_intervel', type=int, default=1)
     parser.add_argument('--time_step', type=int, default=0)
     parser.add_argument('--data_root', type=str, default="")
+    parser.add_argument('--use_time_stamp', type=int, default=0)
+
     # Fourcast Parameter
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
     parser.add_argument('--fourcast_randn_initial', default=0, type=int)

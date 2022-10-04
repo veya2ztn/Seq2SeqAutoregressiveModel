@@ -34,6 +34,7 @@ import torch.distributed as dist
 #import hfai.nn as hfnn
 #from hfai.datasets import ERA5
 from model.afnonet import AFNONet
+from model.FEDformer import FEDformer
 from model.physics_model import *
 from utils.params import get_args
 from utils.tools import getModelSize, load_model, save_model
@@ -119,7 +120,26 @@ def compute_rmse(pred, true):
     latweight = latweight.reshape(1, w, 1,1)
     return  torch.clamp(torch.sqrt((latweight*(pred - true)**2).mean(dim=(1,2) )),0,1000)
 
-def once_forward(model,i,start,end,dataset,time_step_1_mode):
+
+
+def once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode):
+    # start is data list [ [[B,P,h,w],[B,4]] , [[B,P,h,w],[B,4]], [[B,P,h,w],[B,4]], ...]
+    assert dataset.use_time_stamp
+    start_feature = torch.stack([t[0] for t in start],-1) #[B,P,h,w,T]
+    start_timestamp= torch.stack([t[1] for t in start],1) #[B,T,4]
+    
+    if not isinstance(end[0],(list,tuple)):end = [end]
+
+    target     = torch.stack([t[0] for t in end],-1) #[B,P,h,w,T]
+    end_timestamp = torch.stack([t[1] for t in end],1) #[B,T,4]
+    
+    ltmv_pred   = model(start_feature,start_timestamp, end_timestamp)
+    #print(ltmv_pred.shape)
+    extra_loss=0
+    extra_info_from_model_list = []
+    start = start[1:]+end[:1]
+    return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
+def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     Field = Advection = None
 
     if isinstance(start[0],(list,tuple)):# now is [Field, Field_Dt, physics_part]
@@ -135,7 +155,6 @@ def once_forward(model,i,start,end,dataset,time_step_1_mode):
     else:
         Field  = start[-1]
         if hasattr(model,'calculate_Advection'):Advection = model.calculate_Advection(Field)
-
         normlized_Field_list = dataset.do_normlize_data([start])[0]  #always use normlized input
         normlized_Field      = normlized_Field_list[0] if len(normlized_Field_list)==1 else torch.stack(normlized_Field_list,2)
         target               = dataset.do_normlize_data([end])[0] #always use normlized target
@@ -165,38 +184,46 @@ def once_forward(model,i,start,end,dataset,time_step_1_mode):
         start = start[1:]+[[ltmv_pred, 0 , end[-1]]]
     else:
         start     = start[1:] + [ltmv_pred]
+    
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
+
+def once_forward(model,i,start,end,dataset,time_step_1_mode):
+    if dataset.use_time_stamp:
+        return once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode)
+    else:
+       return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
+
 def run_one_iter(model, batch, criterion, status, gpu, dataset):
-    iter_info_pool={}
-    loss = 0
-    diff = 0
-    random_run_step = np.random.randint(1,len(batch)) if len(batch)>1 else 0
-    time_step_1_mode=False
-    if len(batch) == 1 and isinstance(batch[0],(list,tuple)) and len(batch[0])>1:
-        batch = batch[0] # (Field, FieldDt)
-        time_step_1_mode=True
-    if model.history_length > len(batch):
-        print(f"you want to use history={model.history_length}")
-        print(f"but your input batch(timesteps) only has len(batch)={len(batch)}")
-        raise
-    with torch.cuda.amp.autocast():
-        start = batch[0:model.history_length] # start must be a list
-        for i in range(model.history_length,len(batch)):# i now is the target index
-            ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
-            if extra_loss !=0:
-                iter_info_pool[f'{status}_extra_loss_gpu{gpu}_timestep{i}'] = extra_loss.item()
-            for extra_info_from_model in extra_info_from_model_list:
-                for name, value in extra_info_from_model.items():
-                    iter_info_pool[f'valid_on_{status}_{name}_timestep{i}'] = value
-            ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
-            abs_loss = criterion(ltmv_pred,target)
-            iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
-            loss += (abs_loss + extra_loss)/(len(batch) - 1)
-            diff += abs_loss/(len(batch) - 1)
-            if model.random_time_step_train and i >= random_run_step:
-                break
-    return loss, diff, iter_info_pool
+	iter_info_pool={}
+	loss = 0
+	diff = 0
+	random_run_step = np.random.randint(1,len(batch)) if len(batch)>1 else 0
+	time_step_1_mode=False
+	if len(batch) == 1 and isinstance(batch[0],(list,tuple)) and len(batch[0])>1:
+		batch = batch[0] # (Field, FieldDt)
+		time_step_1_mode=True
+	if model.history_length > len(batch):
+		print(f"you want to use history={model.history_length}")
+		print(f"but your input batch(timesteps) only has len(batch)={len(batch)}")
+		raise
+	#with torch.cuda.amp.autocast(dtype=torch.float):
+	start = batch[0:model.history_length] # start must be a list
+	for i in range(model.history_length,len(batch)):# i now is the target index
+		ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
+		if extra_loss !=0:
+			iter_info_pool[f'{status}_extra_loss_gpu{gpu}_timestep{i}'] = extra_loss.item()
+		for extra_info_from_model in extra_info_from_model_list:
+			for name, value in extra_info_from_model.items():
+				iter_info_pool[f'valid_on_{status}_{name}_timestep{i}'] = value
+		ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
+		abs_loss = criterion(ltmv_pred,target)
+		iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
+		loss += (abs_loss + extra_loss)/(len(batch) - 1)
+		diff += abs_loss/(len(batch) - 1)
+		if model.random_time_step_train and i >= random_run_step:
+			break
+	return loss, diff, iter_info_pool
 
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset):
     accu_series=[]
@@ -381,18 +408,27 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 time_truncate = max(min(epoch//3,data_loader.dataset.time_step),2)
                 batch=batch[:model.history_length -1 + time_truncate]
             # the normal initial method will cause numerial explore by using timestep > 4 senenrio.
-            loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
-
+            if model.use_amp:
+                with torch.cuda.amp.autocast():
+                    loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
+            else:
+                loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
             if torch.isnan(loss):raise
             loss /= accumulation_steps
             iter_info_pool[f'train_loss_gpu{gpu}'] =  loss.item()
-            loss_scaler.scale(loss).backward()
-            # 梯度累积
-            if (step+1) % accumulation_steps == 0:
-            #if half_model:
-                loss_scaler.step(optimizer)
-                loss_scaler.update()
-                optimizer.zero_grad()
+
+            if model.use_amp:
+                loss_scaler.scale(loss).backward()
+                if (step+1) % accumulation_steps == 0:
+                    loss_scaler.step(optimizer)
+                    loss_scaler.update()
+                    optimizer.zero_grad()
+            else:
+                loss.backward()
+                if (step+1) % accumulation_steps == 0:
+                    optimizer.step()
+                    optimizer.zero_grad()
+
         else:
             with torch.no_grad():
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
@@ -619,8 +655,11 @@ def parse_default_args(args):
     dataset_kargs['time_reverse_flag'] = 'only_forward' if not hasattr(args,'time_reverse_flag') else args.time_reverse_flag
     if hasattr(args,'dataset_flag') and args.dataset_flag:dataset_kargs['dataset_flag']= args.dataset_flag
     if hasattr(args,'time_intervel'):dataset_kargs['time_intervel']= args.time_intervel
+    if hasattr(args,'use_time_stamp') and args.use_time_stamp:dataset_kargs['use_time_stamp']= args.use_time_stamp
+
 
     args.dataset_type = dataset_type if not args.dataset_type else args.dataset_type
+    args.dataset_type = args.dataset_type.__name__ if not isinstance(args.dataset_type,str) else args.dataset_type
     x_c        = args.input_channel = x_c if not args.input_channel else args.input_channel
     y_c        = args.output_channel= y_c if not args.output_channel else args.output_channel
     patch_size = args.patch_size = deal_with_tuple_string(args.patch_size,patch_size)
@@ -715,6 +754,8 @@ def build_model(args):
     model.random_time_step_train = args.random_time_step
     model.input_noise_std = args.input_noise_std
     model.history_length=args.history_length
+    model.use_amp = args.use_amp
+
     return model
 
 def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,valid_dataset_tensor=None):
@@ -724,7 +765,7 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
     args= parse_default_args(args)
     SAVE_PATH = get_ckpt_path(args)
-    args.SAVE_PATH = SAVE_PATH
+    args.SAVE_PATH = str(SAVE_PATH)
     ########## inital log ###################
     logsys = create_logsys(args)
     

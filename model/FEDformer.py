@@ -560,7 +560,7 @@ class FEDformer(nn.Module):
     """
     def __init__(self, img_size=None, in_chans=None, out_chans=None,embed_dim=None, depth=2,
                history_length=6, modes=64, mode_select='',label_len=1,pred_len=1,moving_avg=None,
-               dropout=0,time_unit='h',head=8,**kargs):
+               dropout=0,time_unit='h',n_heads=8,**kargs):
         super(FEDformer, self).__init__()
         self.mode_select    = mode_select
         self.modes       = modes
@@ -571,7 +571,7 @@ class FEDformer(nn.Module):
         seq_len_dec = label_len + pred_len
         self.space_dims_encoder     = tuple(list(img_size)+[seq_len])
         self.space_dims_decoder     = tuple(list(img_size)+[seq_len_dec])
-        self.head = head
+        self.n_heads = n_heads
         self.dropout = dropout
         self.activation = 'tanh'
         self.in_chans = in_chans
@@ -586,8 +586,8 @@ class FEDformer(nn.Module):
         # Embedding
         # The series-wise connection inherently contains the sequential information.
         # Thus, we can discard the position embedding of transformers.
-        self.enc_embedding = DataEmbedding_SLSDTD(in_chans, embed_dim, len(self.space_dims_encoder) - 1, time_unit, 0)
-        self.dec_embedding = DataEmbedding_SLSDTD(in_chans, embed_dim, len(self.space_dims_encoder) - 1, time_unit, 0)
+        self.enc_embedding = DataEmbedding_SLSDTD(in_chans, embed_dim, len(self.space_dims_encoder) - 1, freq=time_unit, dropout=dropout)
+        self.dec_embedding = DataEmbedding_SLSDTD(in_chans, embed_dim, len(self.space_dims_encoder) - 1, freq=time_unit, dropout=dropout)
         
         Block_kargs={'in_channels':embed_dim,'out_channels':embed_dim,'modes':modes,'mode_select_method':mode_select}
         
@@ -624,6 +624,11 @@ class FEDformer(nn.Module):
 
     def forward(self, x_enc, x_mark_enc, x_mark_dec, enc_self_mask=None, dec_self_mask=None, dec_enc_mask=None):
         # decomp init
+        channel_last = True
+        if x_enc.shape[1:]==tuple([self.in_chans]+list(self.space_dims_encoder)):
+            channel_last = False
+            permute_order= [0]+list(range(2,len(x_enc.shape)))+[1]
+            x_enc = x_enc.permute(*permute_order)
         ## x_enc      -->  [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T1, in_channels]
         ## x_mark_enc -->  [Batch,  T1]
         ## x_dec      -->  [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T2, in_channels]
@@ -642,5 +647,9 @@ class FEDformer(nn.Module):
                             trend=trend_init)
         # final
         dec_out = trend_part + seasonal_part
-
-        return dec_out[..., -self.pred_len:, :]  # [B, L, D]
+        dec_out = dec_out[..., -self.pred_len:, :]
+           # [B, L, D]
+        if not channel_last:
+            permute_order= [0,-1]+list(range(1,len(dec_out.shape)-1))
+            dec_out = dec_out.permute(*permute_order)
+        return dec_out

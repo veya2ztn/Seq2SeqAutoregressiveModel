@@ -12,51 +12,15 @@ except:
 from functools import lru_cache
 import traceback
 from tqdm import tqdm
-vnames = [
-    '10m_u_component_of_wind', '10m_v_component_of_wind', '2m_temperature', 'surface_pressure', 'mean_sea_level_pressure',
-    '1000h_u_component_of_wind', '1000h_v_component_of_wind', '1000h_geopotential',
-    '850h_temperature', '850h_u_component_of_wind', '850h_v_component_of_wind', '850h_geopotential', '850h_relative_humidity',
-    '500h_temperature', '500h_u_component_of_wind', '500h_v_component_of_wind', '500h_geopotential', '500h_relative_humidity',
-    '50h_geopotential',
-    'total_column_water_vapour',
-]
-physice_vnames=[vnames[t] for t in [5, 9,14 , 6,10,15 ,7,11,16 ,2, 8,13]]
-vnames_short = [
-    'u10', 'v10', 't2m', 'sp', 'msl',
-    'u', 'v', 'z',
-    't', 'u', 'v', 'z', 'r',
-    't', 'u', 'v', 'z', 'r',
-    'z',
-    'tcwv'
-
-]
-mean_std_ERA5_20={
- '10m_u_component_of_wind': {'mean': -0.08244494681317033, 'std': 5.522365507485557},
- '10m_v_component_of_wind': {'mean': 0.1878750926415015,'std': 4.753310696543225},
- '2m_temperature': {'mean': 278.45956231728695, 'std': 21.364880588971882},
- 'surface_pressure': {'mean': 96659.29942439323, 'std': 9576.018310416932},
- 'mean_sea_level_pressure': {'mean': 100967.95123832714, 'std': 1317.7139732375715},
- '1000h_u_component_of_wind': {'mean': -0.07095991227445357,'std': 6.114047410072003},
- '1000h_v_component_of_wind': {'mean': 0.18681402351519094,'std': 5.2976192016365395},
- '1000h_geopotential': {'mean': 745.1660079545572, 'std': 1059.9845164332398},
- '850h_temperature': {'mean': 274.58180069739996, 'std': 15.676612264642246},
- '850h_u_component_of_wind': {'mean': 1.3814626339353238,'std': 8.15774947680599},
- '850h_v_component_of_wind': {'mean': 0.14620261110086222, 'std': 6.264685056755958},
- '850h_geopotential': {'mean': 13758.085881283701, 'std': 1459.716048599048},
- '850h_relative_humidity': {'mean': 69.10668451159029,'std': 26.372462450169042},
- '500h_temperature': {'mean': 253.0042938610095, 'std': 13.083165107000779},
- '500h_u_component_of_wind': {'mean': 6.544056434884079,'std': 11.968355707300768},
- '500h_v_component_of_wind': {'mean': -0.02533006083801716,'std': 9.185543423555893},
- '500h_geopotential': {'mean': 54130.677758771395, 'std': 3352.2513738740745},
- '500h_relative_humidity': {'mean': 50.39295631304117,'std': 33.51025992204092},
- '50h_geopotential': {'mean': 199408.6871957199, 'std': 5885.661841412361},
- 'total_column_water_vapour': {'mean': 18.389728930352515,'std': 16.47164306296514}
- }
-Years = range(1979, 2022)
-# Years4Train = range(1979, 2016)
-Years4Train = range(1979, 1987)
-Years4Valid = range(2016, 2018)
-Years4Test = range(2018, 2020)
+import pandas as pd
+from utils.timefeatures import time_features
+import os
+import h5py
+# Years = range(1979, 2022)
+# # Years4Train = range(1979, 2016)
+# Years4Train = range(1979, 1987)
+# Years4Valid = range(2016, 2018)
+# Years4Test = range(2018, 2020)
 Years = {
     'train': range(1979, 2016),
     'valid': range(2016, 2018),
@@ -65,9 +29,7 @@ Years = {
 
 }
 
-Shape = (720, 1440)
-import os
-import h5py
+
 
 smalldataset_path={
     'train': "./datasets/era5G32x64_set/train_data.npy",
@@ -78,7 +40,7 @@ smalldataset_path={
 def load_small_dataset_in_memory(split):
     return torch.Tensor(np.load(smalldataset_path[split]))
 
-def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_coord=None,channel_last=True,vnames=vnames):
+def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_coord=None,channel_last=True,vnames=[]):
     client = None
     file_list = []
     for year in years:
@@ -129,7 +91,7 @@ def inv_batch_normlize(batch,mean,std):
         return batch*std+mean
 
 
-def read_npy_from_ceph(client, url, Ashape=Shape):
+def read_npy_from_ceph(client, url, Ashape=(720,1440)):
     try:
         array_ceph = client.get(url)
         array_ceph = np.frombuffer(array_ceph, dtype=np.half).reshape(Ashape)
@@ -186,7 +148,52 @@ class BaseDataset:
                 raise NotImplementedError("too many error happened, check the errer path")
     
 
-class ERA5CephDataset(BaseDataset):
+class ERA5BaseDataset(BaseDataset):
+	full_vnames = [
+		'10m_u_component_of_wind', '10m_v_component_of_wind', '2m_temperature', 'surface_pressure', 'mean_sea_level_pressure',
+		'1000h_u_component_of_wind', '1000h_v_component_of_wind', '1000h_geopotential',
+		'850h_temperature', '850h_u_component_of_wind', '850h_v_component_of_wind', '850h_geopotential', '850h_relative_humidity',
+		'500h_temperature', '500h_u_component_of_wind', '500h_v_component_of_wind', '500h_geopotential', '500h_relative_humidity',
+		'50h_geopotential',
+		'total_column_water_vapour',
+	]
+	full_physics_index = [5, 9,14 , 6,10,15 ,7,11,16 ,2, 8,13]
+	volicity_idx = [0, 5, 9, 14 , 1, 6, 10, 15]
+
+	full_vnames_short = [
+		'u10', 'v10', 't2m', 'sp', 'msl',
+		'u', 'v', 'z',
+		't', 'u', 'v', 'z', 'r',
+		't', 'u', 'v', 'z', 'r',
+		'z',
+		'tcwv'
+
+	]
+	mean_std_ERA5_20={
+	 '10m_u_component_of_wind': {'mean': -0.08244494681317033, 'std': 5.522365507485557},
+	 '10m_v_component_of_wind': {'mean': 0.1878750926415015,'std': 4.753310696543225},
+	 '2m_temperature': {'mean': 278.45956231728695, 'std': 21.364880588971882},
+	 'surface_pressure': {'mean': 96659.29942439323, 'std': 9576.018310416932},
+	 'mean_sea_level_pressure': {'mean': 100967.95123832714, 'std': 1317.7139732375715},
+	 '1000h_u_component_of_wind': {'mean': -0.07095991227445357,'std': 6.114047410072003},
+	 '1000h_v_component_of_wind': {'mean': 0.18681402351519094,'std': 5.2976192016365395},
+	 '1000h_geopotential': {'mean': 745.1660079545572, 'std': 1059.9845164332398},
+	 '850h_temperature': {'mean': 274.58180069739996, 'std': 15.676612264642246},
+	 '850h_u_component_of_wind': {'mean': 1.3814626339353238,'std': 8.15774947680599},
+	 '850h_v_component_of_wind': {'mean': 0.14620261110086222, 'std': 6.264685056755958},
+	 '850h_geopotential': {'mean': 13758.085881283701, 'std': 1459.716048599048},
+	 '850h_relative_humidity': {'mean': 69.10668451159029,'std': 26.372462450169042},
+	 '500h_temperature': {'mean': 253.0042938610095, 'std': 13.083165107000779},
+	 '500h_u_component_of_wind': {'mean': 6.544056434884079,'std': 11.968355707300768},
+	 '500h_v_component_of_wind': {'mean': -0.02533006083801716,'std': 9.185543423555893},
+	 '500h_geopotential': {'mean': 54130.677758771395, 'std': 3352.2513738740745},
+	 '500h_relative_humidity': {'mean': 50.39295631304117,'std': 33.51025992204092},
+	 '50h_geopotential': {'mean': 199408.6871957199, 'std': 5885.661841412361},
+	 'total_column_water_vapour': {'mean': 18.389728930352515,'std': 16.47164306296514}
+	 }
+    
+    
+class ERA5CephDataset(ERA5BaseDataset):
     default_root = 'cluster3:s3://era5npy'
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,years=None,
                 class_name='ERA5Dataset', root= None,random_time_step=False,dataset_flag=False, ispretrain=True, crop_coord=None,time_step=None,with_idx=False,**kargs):
@@ -211,7 +218,7 @@ class ERA5CephDataset(BaseDataset):
         if time_step is not None:self.time_step=time_step
         self.name  = f"{self.time_step}-step-task"
         self.random_time_step=random_time_step
-        self.vnames= physice_vnames if dataset_flag else vnames
+        self.vnames= [self.full_vnames[t] for t in self.full_physics_index] if dataset_flag else self.full_vnames
     def __len__(self):
         return len(self.file_list) - self.time_step + 1
 
@@ -265,26 +272,33 @@ class ERA5CephDataset(BaseDataset):
 class ERA5CephSmallDataset(ERA5CephDataset):
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,
                 class_name='ERA5CephSmallDataset', ispretrain=True,
-                crop_coord=None,
+                crop_coord=None,root=None,
                 dataset_tensor=None,
-                time_step=None,with_idx=False,random_time_step=False,dataset_flag=False,time_reverse_flag='only_forward',time_intervel=1):
+                time_step=None,with_idx=False,random_time_step=False,dataset_flag=False,
+                time_reverse_flag='only_forward',time_intervel=1,use_time_stamp=False):
         self.crop_coord   = crop_coord
         self.mode         = mode
         self.data         = load_small_dataset_in_memory(split) if dataset_tensor is None else dataset_tensor
         smalldataset_clim_path = "datasets/era5G32x64_set/time_means.npy"
         self.clim_tensor = np.load(smalldataset_clim_path)
-        self.volicity_idx = [0, 5, 9, 14 , 1, 6, 10, 15]
+        if split == 'train':
+            datatimelist  = np.arange(np.datetime64("1979-01-01"), np.datetime64("2016-01-01"), np.timedelta64(6, "h"))
+        elif split == 'valid':
+            datatimelist  = np.arange(np.datetime64("2016-01-01"), np.datetime64("2018-01-01"), np.timedelta64(6, "h"))
+        elif split == 'test':
+            datatimelist  = np.arange(np.datetime64("2018-01-01"), np.datetime64("2022-01-01"), np.timedelta64(6, "h"))
+        self.timestamp = time_features(pd.to_datetime(datatimelist)).transpose(1, 0)
         self.channel_pick = list(range(20))
-        if dataset_flag=='physics':
-            self.channel_pick = [5, 9,14 , 6,10,15 ,7,11,16 ,2, 8,13]
-        self.vnames       = [vnames[t] for t in self.channel_pick]
-        self.unit_list    = [mean_std_ERA5_20[name]['std'] for name in self.vnames]
+        if dataset_flag=='physics':self.channel_pick = self.full_physics_index
+        self.vnames       = [self.full_vnames[t] for t in self.channel_pick]
+        self.unit_list    = [self.mean_std_ERA5_20[name]['std'] for name in self.vnames]
         self.clim_tensor  = self.clim_tensor[:,self.channel_pick]
         self.channel_last = channel_last
         self.with_idx     = with_idx
         self.time_intervel= time_intervel
         self.error_path   = []
         self.random_time_step = random_time_step
+        self.use_time_stamp = use_time_stamp
         if self.random_time_step:
             print("we are going use random step mode. in this mode, data sequence will randomly set 2-6 ")
 
@@ -294,9 +308,10 @@ class ERA5CephSmallDataset(ERA5CephDataset):
         if time_step is not None:
             self.time_step = time_step
 
+
         self.time_reverse_flag = time_reverse_flag
         self.set_time_reverse(time_reverse_flag)
-
+        
 
     def __len__(self):
         return len(self.data) - self.time_step + 1
@@ -316,7 +331,10 @@ class ERA5CephSmallDataset(ERA5CephDataset):
                 arrays = arrays.transpose(1,2,0)
             else:
                 arrays = arrays.permute(1,2,0)
-        return arrays
+        if self.use_time_stamp:
+            return arrays, self.timestamp[idx]
+        else:
+            return arrays
 
 
 class ERA5CephInMemoryDataset(ERA5CephDataset):
@@ -327,10 +345,10 @@ class ERA5CephInMemoryDataset(ERA5CephDataset):
             self.data=load_test_dataset_in_memory(years=years,root=root,crop_coord=crop_coord,channel_last=channel_last)
         else:
             self.data= dataset_tensor
-        self.vnames= vnames
+        self.vnames= self.full_vnames
         if dataset_flag=='physics':
-            self.data = self.data[:,[5, 9,14 , 6,10,15 ,7,11,16 ,2, 8,13]]
-            self.vnames= physice_vnames
+            self.data = self.data[:,self.full_physics_index]
+            self.vnames= [self.full_vnames[t] for t in self.full_physics_index]
         self.mode = mode
         self.channel_last = channel_last
         self.with_idx = with_idx
@@ -371,7 +389,7 @@ class SpeedTestDataset(BaseDataset):
         return batch
 
 
-class ERA5Tiny12_47_96(BaseDataset):
+class ERA5Tiny12_47_96(ERA5BaseDataset):
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,years=[2018],dataset_tensor=None,
                 class_name='ERA5Dataset', root='datasets/ERA5/h5_set', ispretrain=True, crop_coord=None,time_step=2,
                 with_idx=False,dataset_flag='normal',time_reverse_flag='only_forward',**kargs):
@@ -383,7 +401,7 @@ class ERA5Tiny12_47_96(BaseDataset):
         else:
             raise NotImplementedError
         self.dataset_flag = dataset_flag
-        self.vnames= [vnames[t] for t in [5, 9,14 , 6,10,15  ,2, 8,13,7,11,16]]
+        self.vnames= [self.full_vnames[t] for t in [5, 9,14 , 6,10,15  ,2, 8,13,7,11,16]]
         self.mode  = mode
         self.channel_last = channel_last
         self.with_idx = with_idx
