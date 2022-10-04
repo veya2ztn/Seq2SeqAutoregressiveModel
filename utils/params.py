@@ -16,6 +16,7 @@ def get_args_parser():
     parser.add_argument('--debug', type=int, default=0, help='debug mode')
     parser.add_argument('--distributed', type=int, default=0, help='distributed')
     parser.add_argument('--rank', type=int, default=0, help='rank')
+    parser.add_argument('--continue_train', type=int, default=0, help='continue_train')
 
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',choices=['AFNONet','FEDformer'])

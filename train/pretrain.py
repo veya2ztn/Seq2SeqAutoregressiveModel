@@ -124,7 +124,6 @@ def compute_rmse(pred, true):
 
 def once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode):
     # start is data list [ [[B,P,h,w],[B,4]] , [[B,P,h,w],[B,4]], [[B,P,h,w],[B,4]], ...]
-    assert dataset.use_time_stamp
     start_feature = torch.stack([t[0] for t in start],-1) #[B,P,h,w,T]
     start_timestamp= torch.stack([t[1] for t in start],1) #[B,T,4]
     
@@ -189,7 +188,7 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
 
 
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
-    if dataset.use_time_stamp:
+    if hasattr(dataset,'use_time_stamp') and dataset.use_time_stamp:
         return once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode)
     else:
        return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
@@ -616,10 +615,9 @@ def get_ckpt_path(args):
     if not hasattr(args,'train_set'):args.train_set='large'
     args.time_step  = ts_for_mode[args.mode] if not args.time_step else args.time_step
     model_name, datasetname, project_name = get_projectname(args)
-    if args.pretrain_weight and args.mode!='finetune':
+    if (args.pretrain_weight and args.mode!='finetune') or args.continue_train:
         #args.mode = "finetune"
         SAVE_PATH = Path(os.path.dirname(args.pretrain_weight))
-
     else:
         SAVE_PATH = Path(f'./checkpoints/{datasetname}/{model_name}/{project_name}/{TIME_NOW}')
         SAVE_PATH.mkdir(parents=True, exist_ok=True)

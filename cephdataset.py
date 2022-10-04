@@ -557,7 +557,7 @@ class WeathBench(BaseDataset):
             print(f"noice you assign your own year list {list(years)}")
 
         self.root             = self.default_root if root is None else root
-        print(f"use dataset in {root}")
+        print(f"use dataset in {self.root}")
         self.split            = split
         self.single_data_path_list = self.init_file_list(years) # [[year,idx],[year,idx],.....]
         self.dataset_tensor = None
