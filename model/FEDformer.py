@@ -559,7 +559,7 @@ class FEDformer(nn.Module):
     FEDformer performs the attention mechanism on frequency domain and achieved O(N) complexity
     """
     def __init__(self, img_size=None, in_chans=None, out_chans=None,embed_dim=None, depth=2,
-               history_length=6, modes=(32,16,6), mode_select='',label_len=1,pred_len=1,moving_avg=None,
+               history_length=6, modes=(24,48,6), mode_select='',label_len=1,pred_len=1,moving_avg=None,
                dropout=0,time_unit='h',n_heads=8,**kargs):
         super(FEDformer, self).__init__()
         self.mode_select    = mode_select
