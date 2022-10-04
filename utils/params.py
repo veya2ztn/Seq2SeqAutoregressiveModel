@@ -13,7 +13,9 @@ def get_args_parser():
     parser.add_argument('--seed', default=-1, type=int)
     parser.add_argument('--input_noise_std', type=float, default=0.0, help='input_noise_std')
     parser.add_argument('--do_final_fourcast', type=bool, default=True, help='do fourcast step after finish training')
-    
+    parser.add_argument('--debug', type=bool, default=False, help='debug mode')
+    parser.add_argument('--distributed', type=bool, default=False, help='distributed')
+    parser.add_argument('--rank', type=int, default=0, help='rank')
 
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',choices=['AFNONet'])

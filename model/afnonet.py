@@ -274,7 +274,7 @@ class PatchEmbed(nn.Module):
 
 class AFNONet(BaseModel):
     def __init__(self, img_size, patch_size=8, in_chans=20, out_chans=20, embed_dim=768, depth=12, mlp_ratio=4.,
-                 uniform_drop=False, drop_rate=0., drop_path_rate=0., norm_layer=None,
+                 uniform_drop=False, drop_rate=0., drop_path_rate=0., 
                  dropcls=0, checkpoint_activations=False, fno_blocks=3,double_skip=False,
                  fno_bias=False, fno_softshrink=False,debug_mode=False,history_length=1,reduce_Field_coef=False):
         super().__init__()
@@ -293,7 +293,7 @@ class AFNONet(BaseModel):
         self.history_length = history_length
         self.checkpoint_activations=checkpoint_activations
         self.embed_dim   = embed_dim
-        norm_layer       = norm_layer or partial(nn.LayerNorm, eps=1e-6)
+        norm_layer       = partial(nn.LayerNorm, eps=1e-6)
         self.img_size    = img_size
         self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
         num_patches      = self.patch_embed.num_patches

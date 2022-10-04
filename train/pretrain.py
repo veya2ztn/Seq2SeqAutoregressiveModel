@@ -522,6 +522,7 @@ def run_fourcast(args, model,logsys):
             if use_wandb:wandb.log(info_pool)
     return 1
 
+
 def get_model_name(args):
     model_name = args.model_type
     if hasattr(args,'model_depth') and args.model_depth == 6:
@@ -550,6 +551,7 @@ def get_projectname(args):
     if hasattr(args,'time_reverse_flag') and args.time_reverse_flag !="only_forward":project_name = f"{args.time_reverse_flag}_"+project_name
     if hasattr(args,'time_intervel') and args.time_intervel:project_name = project_name + f"_every_{args.time_intervel}_step"
     return model_name, datasetname,project_name
+
 def deal_with_tuple_string(patch_size,defult=None):
     if isinstance(patch_size,str):
         if len(patch_size)>0:
@@ -567,11 +569,10 @@ def deal_with_tuple_string(patch_size,defult=None):
         patch_size = defult
     return patch_size
 
-def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,valid_dataset_tensor=None):
-    print(f"we are at mode={args.mode}")
-    ##### locate the checkpoint dir ###########
+def get_ckpt_path(args):
+    if args.debug: return Path('./debug')
     TIME_NOW  = time.strftime("%m_%d_%H_%M") if args.distributed else time.strftime("%m_%d_%H_%M_%S")
-    if args.seed == -1:args.seed = random.randint(1, 100000)
+    if args.seed == -1:args.seed = 42;#random.randint(1, 100000)
     TIME_NOW  = f"{TIME_NOW}-seed_{args.seed}"
     args.trail_name = TIME_NOW
     if not hasattr(args,'train_set'):args.train_set='large'
@@ -584,13 +585,10 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
     else:
         SAVE_PATH = Path(f'./checkpoints/{datasetname}/{model_name}/{project_name}/{TIME_NOW}')
         SAVE_PATH.mkdir(parents=True, exist_ok=True)
+    return SAVE_PATH
 
-
-
-    ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
-    ngpus = torch.cuda.device_count()
-
-    args.gpu = gpu  = local_rank
+def parse_default_args(args):
+    if args.seed == -1:args.seed = 42
     args.half_model = half_model
     args.accumulation_steps_global=accumulation_steps_global
     args.batch_size = bs_for_mode[args.mode] if args.batch_size == -1 else args.batch_size
@@ -619,14 +617,34 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
     if hasattr(args,'dataset_flag') and args.dataset_flag:dataset_kargs['dataset_flag']= args.dataset_flag
     if hasattr(args,'time_intervel'):dataset_kargs['time_intervel']= args.time_intervel
 
-    x_c        = input_channel   = x_c if not args.input_channel else args.input_channel
-    y_c        = output_channel  = y_c if not args.output_channel else args.output_channel
+    x_c        = args.input_channel = x_c if not args.input_channel else args.input_channel
+    y_c        = args.output_channel= y_c if not args.output_channel else args.output_channel
     patch_size = args.patch_size = deal_with_tuple_string(args.patch_size,patch_size)
     img_size   = args.img_size   = deal_with_tuple_string(args.img_size,img_size)
-
-
+    
     args.dataset_kargs = dataset_kargs
-    ########## inital log ###################
+    
+    model_kargs={
+        "img_size": args.img_size, 
+        "patch_size": args.patch_size, 
+        "in_chans": args.input_channel, 
+        "out_chans": args.output_channel,
+        "fno_blocks": args.fno_blocks,
+        "embed_dim": args.embed_dim if not args.debug else 16, 
+        "depth": args.model_depth if not args.debug else 1,
+        "debug_mode":args.debug,
+        "double_skip":args.double_skip, 
+        "fno_bias": args.fno_bias, 
+        "fno_softshrink": args.fno_softshrink,
+        "history_length": args.history_length,
+        "reduce_Field_coef":args.use_scalar_advection
+    }
+    args.model_kargs = model_kargs
+    return args
+
+def create_logsys(args):
+    local_rank = args.gpu
+    SAVE_PATH  = args.SAVE_PATH
     if local_rank     == 0:
         dirname = SAVE_PATH
         dirname,name     = os.path.split(dirname)
@@ -643,23 +661,70 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
             settings=wandb.Settings(_disable_stats=True)
             #reinit=True
             )
-    logsys   = LoggingSystem(local_rank==0 or not args.distributed,SAVE_PATH,seed=args.seed)
-    _        = logsys.create_recorder(hparam_dict={'patch_size':patch_size , 'lr':args.lr, 'batch_size':args.batch_size,
+    logsys   = LoggingSystem(local_rank==0 or not args.distributed,args.SAVE_PATH,seed=args.seed)
+    _        = logsys.create_recorder(hparam_dict={'patch_size':args.patch_size , 'lr':args.lr, 'batch_size':args.batch_size,
                                                    'model':args.model_type},
                                       metric_dict={'best_loss':None})
     # fix the seed for reproducibility
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
-    #cudnn.benchmark = True
+    # torch.manual_seed(args.seed)
+    # np.random.seed(args.seed)
+    # cudnn.benchmark = True
+    ## already done in logsys
+    
+    if not args.debug:
+        for key, val in vars(args).items():print(f"{key:30s} ---> {val}")
+        config_path = os.path.join(logsys.ckpt_root,'config.json')
+        if not os.path.exists(config_path):
+            with open(config_path,'w') as f:
+                json.dump(vars(args),f)
+    args.logsys = logsys
+    return logsys
 
-    #for key, val in vars(args).items():print(f"{key:30s} ---> {val}")
-    config_path = os.path.join(logsys.ckpt_root,'config.json')
-    if not os.path.exists(config_path):
-        with open(config_path,'w') as f:
-            json.dump(vars(args),f)
+def build_model(args):
+    logsys = args.logsys
+    logsys.info(f"model args: img_size= {args.img_size}")
+    logsys.info(f"model args: patch_size= {args.patch_size}")
+    # ==============> Initial Model <=============
+    model = eval(args.model_type)(**args.model_kargs)
+    if args.wrapper_model:
+        model = eval(args.wrapper_model)(args,model)
+    logsys.info(f"use model ==> {model.__class__.__name__}")
+    local_rank=args.local_rank
+    rank = args.rank
+    if local_rank == 0:
+        param_sum, buffer_sum, all_size = getModelSize(model)
+        logsys.info(f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
 
-    args.dataset_type = dataset_type if not args.dataset_type else eval(args.dataset_type)
-    args.dataset_type_string = args.dataset_type.__name__
+    if args.distributed:
+        # For multiprocessing distributed, DistributedDataParallel constructor
+        # should always set the single device scope, otherwise,
+        # DistributedDataParallel will use all available devices.
+        torch.cuda.set_device(args.gpu)
+        model.cuda(args.gpu)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+    else:
+        model = model.cuda()
+
+    if args.half_model:model = model.half()
+
+    model.train_mode=args.mode
+    model.random_time_step_train = args.random_time_step
+    model.input_noise_std = args.input_noise_std
+    model.history_length=args.history_length
+    return model
+
+def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,valid_dataset_tensor=None):
+    print(f"we are at mode={args.mode}")
+    ##### locate the checkpoint dir ###########
+    args.gpu = gpu  = local_rank
+    ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
+    args= parse_default_args(args)
+    SAVE_PATH = get_ckpt_path(args)
+    args.SAVE_PATH = SAVE_PATH
+    ########## inital log ###################
+    logsys = create_logsys(args)
+    
+
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
             args.rank = int(os.environ["RANK"])
@@ -670,51 +735,7 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
         logsys.info(f"start init_process_group,backend={args.dist_backend}, init_method={args.dist_url},world_size={args.world_size}, rank={args.rank}")
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,world_size=args.world_size, rank=args.rank)
 
-    print(f"model args: img_size= {img_size}")
-    print(f"model args: patch_size= {patch_size}")
-    # ==============> Initial Model <=============
-    if args.distributed or force_big:
-        model = eval(args.model_type)(img_size=img_size, patch_size=patch_size, in_chans=x_c, out_chans=y_c,
-                        norm_layer=partial(nn.LayerNorm, eps=1e-6),
-                        fno_blocks=args.fno_blocks,embed_dim=args.embed_dim, depth=args.model_depth,
-                        double_skip=args.double_skip, fno_bias=args.fno_bias, fno_softshrink=args.fno_softshrink,
-                        history_length=args.history_length,
-                        reduce_Field_coef= args.use_scalar_advection
-                        )
-    else:
-        model = eval(args.model_type)(img_size=img_size, patch_size=patch_size, in_chans=x_c, out_chans=y_c,
-                        norm_layer=partial(nn.LayerNorm, eps=1e-6),
-                        fno_blocks=args.fno_blocks,
-                        double_skip=args.double_skip, fno_bias=args.fno_bias, fno_softshrink=args.fno_softshrink,
-                        embed_dim=16, depth=1,debug_mode=1,
-                        history_length=args.history_length,
-                        reduce_Field_coef= args.use_scalar_advection
-                        )
-    if args.wrapper_model:
-        model = eval(args.wrapper_model)(args,model)
-        
-    #model = hfnn.to_hfai(model)
-    
-    logsys.info(f"use model ==> {model.__class__.__name__}")
-    rank = args.rank
-    if local_rank == 0:
-        param_sum, buffer_sum, all_size = getModelSize(model)
-        logsys.info(f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
-    if args.distributed:
-        # For multiprocessing distributed, DistributedDataParallel constructor
-        # should always set the single device scope, otherwise,
-        # DistributedDataParallel will use all available devices.
-        torch.cuda.set_device(args.gpu)
-        model.cuda(args.gpu)
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
-    else:
-        model = model.cuda()
-    if args.half_model:model = model.half()
-    model.train_mode=args.mode
-    model.random_time_step_train = args.random_time_step
-    model.input_noise_std = args.input_noise_std
-    model.history_length=args.history_length
-    # args.lr = args.lr * args.batch_size * dist.get_world_size() / 512.0
+    model           = build_model(args)
     param_groups    = timm.optim.optim_factory.add_weight_decay(model, args.weight_decay)
     optimizer       = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
     loss_scaler     = torch.cuda.amp.GradScaler(enabled=True)
@@ -744,12 +765,10 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
     else:
         train_dataset, val_dataset, train_dataloader,val_dataloader = get_train_and_valid_dataset(args,
                        train_dataset_tensor=train_dataset_tensor,valid_dataset_tensor=valid_dataset_tensor)
-        if local_rank == 0:
-            logsys.info(f"use dataset ==> {train_dataset.__class__.__name__}")
-            logsys.info(f"Start training for {args.epochs} epochs")
-
+        logsys.info(f"use dataset ==> {train_dataset.__class__.__name__}")
+        logsys.info(f"Start training for {args.epochs} epochs")
         master_bar        = logsys.create_master_bar(args.epochs)
-        last_best_path = None
+        now_best_path = None
         for epoch in master_bar:
             if epoch < start_epoch:continue
             train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
@@ -758,7 +777,7 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys,status='train') if 'small' in args.train_set else -1
             val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
 
-            if (not args.distributed) or (rank == 0 and local_rank == 0) :
+            if (not args.distributed) or (args.rank == 0 and local_rank == 0) :
                 logsys.info(f"Epoch {epoch} | Train loss: {train_loss:.6f}, Val loss: {val_loss:.6f}")
                 logsys.record('train', train_loss, epoch)
                 logsys.record('valid', val_loss, epoch)
@@ -778,6 +797,7 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
                     logsys.info(f"saving latest model ....")
                     save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, SAVE_PATH / 'pretrain_latest.pt')
                     logsys.info(f"done ....")
+        
 
         if os.path.exists(now_best_path) and args.do_final_fourcast:
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
