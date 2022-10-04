@@ -423,8 +423,9 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
 
 def get_train_and_valid_dataset(args,train_dataset_tensor=None,valid_dataset_tensor=None):
-    train_dataset = args.dataset_type(split="train",dataset_tensor=train_dataset_tensor,**args.dataset_kargs)
-    val_dataset   = args.dataset_type(split="valid",dataset_tensor=valid_dataset_tensor,**args.dataset_kargs)
+    dataset_type   = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
+    train_dataset  = dataset_type(split="train",dataset_tensor=train_dataset_tensor,**args.dataset_kargs)
+    val_dataset   = dataset_type(split="valid",dataset_tensor=valid_dataset_tensor,**args.dataset_kargs)
     train_datasampler = DistributedSampler(train_dataset, shuffle=True) if args.distributed else None
     val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
     train_dataloader  = DataLoader(train_dataset, args.batch_size,   sampler=train_datasampler, num_workers=8, pin_memory=True, drop_last=True)
@@ -437,7 +438,8 @@ def get_test_dataset(args,train_dataset_tensor=None):
     dataset_kargs['time_step'] = time_step
     if dataset_kargs['time_reverse_flag'] in ['only_forward','random_forward_backward']:
         dataset_kargs['time_reverse_flag'] = 'only_forward'
-    test_dataset = args.dataset_type(split="test", dataset_tensor=train_dataset_tensor,with_idx=True,**dataset_kargs)
+    dataset_type = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
+    test_dataset = dataset_type(split="test", dataset_tensor=train_dataset_tensor,with_idx=True,**dataset_kargs)
 
     assert hasattr(test_dataset,'clim_tensor')
     test_datasampler  = DistributedSampler(test_dataset,  shuffle=False) if args.distributed else None
@@ -599,6 +601,7 @@ def parse_default_args(args):
 
     if args.train_set is not None and args.train_set in train_set:
         img_size, patch_size, x_c, y_c, dataset_type,dataset_kargs = train_set[args.train_set]
+        
         if 'Euler' in args.wrapper_model: y_c  = 15
     else:
         assert args.img_size
@@ -617,6 +620,7 @@ def parse_default_args(args):
     if hasattr(args,'dataset_flag') and args.dataset_flag:dataset_kargs['dataset_flag']= args.dataset_flag
     if hasattr(args,'time_intervel'):dataset_kargs['time_intervel']= args.time_intervel
 
+    args.dataset_type = dataset_type if not args.dataset_type else args.dataset_type
     x_c        = args.input_channel = x_c if not args.input_channel else args.input_channel
     y_c        = args.output_channel= y_c if not args.output_channel else args.output_channel
     patch_size = args.patch_size = deal_with_tuple_string(args.patch_size,patch_size)
@@ -716,7 +720,7 @@ def build_model(args):
 def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,valid_dataset_tensor=None):
     print(f"we are at mode={args.mode}")
     ##### locate the checkpoint dir ###########
-    args.gpu = gpu  = local_rank
+    args.gpu = args.local_rank = gpu  = local_rank
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
     args= parse_default_args(args)
     SAVE_PATH = get_ckpt_path(args)
