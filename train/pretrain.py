@@ -7,7 +7,7 @@ idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
 hostname = socket.gethostname()
 if hostname in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185']:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "6,7"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "6"
 os.environ['WANDB_MODE'] = 'offline'
 os.environ['WANDB_CONSOLE']='off'
 force_big  = True
@@ -470,7 +470,7 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
     train_datasampler = DistributedSampler(train_dataset, shuffle=True) if args.distributed else None
     val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
     train_dataloader  = DataLoader(train_dataset, args.batch_size,   sampler=train_datasampler, num_workers=8, pin_memory=True, drop_last=True)
-    val_dataloader    = DataLoader(val_dataset  , args.batch_size*8, sampler=val_datasampler,   num_workers=8, pin_memory=True, drop_last=False)
+    val_dataloader    = DataLoader(val_dataset  , args.valid_batch_size, sampler=val_datasampler,   num_workers=8, pin_memory=True, drop_last=False)
     return   train_dataset,   val_dataset, train_dataloader, val_dataloader
 
 def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
@@ -635,6 +635,7 @@ def parse_default_args(args):
     args.half_model = half_model
     args.accumulation_steps_global=accumulation_steps_global
     args.batch_size = bs_for_mode[args.mode] if args.batch_size == -1 else args.batch_size
+    args.valid_batch_size = args.batch_size*8 if args.valid_batch_size == -1 else args.valid_batch_size
     args.epochs     = ep_for_mode[args.mode] if args.epochs == -1 else args.epochs
     args.lr         = lr_for_mode[args.mode] if args.lr == -1 else args.lr
     args.time_step = ts_for_mode[args.mode] if args.time_step == -1 else args.time_step

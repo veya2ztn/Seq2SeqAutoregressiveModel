@@ -7,6 +7,7 @@ def get_args_parser():
     parser.add_argument('--train_set', type=str, default='physics_small')
 
     parser.add_argument('--batch_size', default=-1, type=int)
+    parser.add_argument('--valid_batch_size', default=-1, type=int)
     parser.add_argument('--epochs', default=-1, type=int)
     parser.add_argument('--save_warm_up', default=5, type=int)
     parser.add_argument('--history_length', default=1, type=int)
@@ -59,6 +60,7 @@ def get_args_parser():
     parser.add_argument('--data_root', type=str, default="")
     parser.add_argument('--use_time_stamp', type=int, default=0)
     parser.add_argument('--use_inmemory_dataset',type=int,default=0)
+
     # Fourcast Parameter
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
     parser.add_argument('--fourcast_randn_initial', default=0, type=int)
