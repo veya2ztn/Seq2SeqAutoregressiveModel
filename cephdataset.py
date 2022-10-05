@@ -527,8 +527,8 @@ class ERA5Tiny12_47_96(ERA5BaseDataset):
             return [Field, Field_Dt, pysics_part] #(B,12,z,y,x)
 
 class WeathBench(BaseDataset):
-    years_split={'train':range(2018,2019),#range(1979, 2016),
-           'valid':range(2018,2019),#range(2016, 2018),
+    years_split={'train':range(1979, 2016),
+           'valid':range(2016, 2018),
            'test':range(2018,2019),
             'all': range(1979, 2022),
             'debug':range(1979,1980)}

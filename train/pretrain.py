@@ -422,12 +422,14 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             if model.use_amp:
                 loss_scaler.scale(loss).backward()
                 if (step+1) % accumulation_steps == 0:
+                    if model.clip_grad:nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
                     loss_scaler.step(optimizer)
                     loss_scaler.update()
                     optimizer.zero_grad()
             else:
                 loss.backward()
                 if (step+1) % accumulation_steps == 0:
+                    if model.clip_grad:nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
                     optimizer.step()
                     optimizer.zero_grad()
 
@@ -444,7 +446,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             if use_wandb:wandb.log(iter_info_pool)
             for key, val in iter_info_pool.items():logsys.record(key, val, epoch*batches + step)
             outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [TimeLeng]:{time_step_now:} GPU:[{gpu}] abs_loss:{abs_loss.item():.2f} loss:{loss.item():.2f} cost:[Date]:{np.mean(data_cost):.1e} [Train]:{np.mean(train_cost):.1e} ")
-            print(data_loader.dataset.record_load_tensor.mean().item())
+            #print(data_loader.dataset.record_load_tensor.mean().item())
             data_cost  = []
             train_cost = []
             rest_cost = []
@@ -565,6 +567,8 @@ def run_fourcast(args, model,logsys,test_dataloader):
 
 def get_model_name(args):
     model_name = args.model_type
+    if args.model_type == 'FEDformer':
+        return f"{args.model_type}_{args.modes}_{args.mode_select}"
     if hasattr(args,'model_depth') and args.model_depth == 6:
         model_name = "small_"+model_name
     model_name = f"ViT_in_bulk-{model_name}" if len(args.img_size)>2 else model_name
@@ -720,7 +724,8 @@ def create_logsys(args):
     ## already done in logsys
     
     if not args.debug:
-        for key, val in vars(args).items():print(f"{key:30s} ---> {val}")
+        for key, val in vars(args).items():
+            if local_rank==0:print(f"{key:30s} ---> {val}")
         config_path = os.path.join(logsys.ckpt_root,'config.json')
         if not os.path.exists(config_path):
             with open(config_path,'w') as f:
@@ -760,7 +765,7 @@ def build_model(args):
     model.input_noise_std = args.input_noise_std
     model.history_length=args.history_length
     model.use_amp = args.use_amp
-
+    model.clip_grad= args.clip_grad
     return model
 
 def main_worker(local_rank, ngpus_per_node, args,
