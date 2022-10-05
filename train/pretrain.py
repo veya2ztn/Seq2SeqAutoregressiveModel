@@ -7,7 +7,7 @@ idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
 hostname = socket.gethostname()
 if hostname in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185']:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "6"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "6,7"
 os.environ['WANDB_MODE'] = 'offline'
 os.environ['WANDB_CONSOLE']='off'
 force_big  = True
@@ -45,8 +45,7 @@ from mltool.dataaccelerate import DataLoaderX,DataLoader,DataPrefetcher,DataSimf
 from mltool.loggingsystem import LoggingSystem
 
 
-from cephdataset import (ERA5CephDataset,WeathBench71_H5,ERA5CephSmallDataset,WeathBench706,SpeedTestDataset,load_test_dataset_in_memory,
-              load_small_dataset_in_memory,ERA5Tiny12_47_96,WeathBench71,WeathBench716)
+from cephdataset import (ERA5CephDataset,WeathBench71_H5,ERA5CephSmallDataset,WeathBench706,SpeedTestDataset,ERA5Tiny12_47_96,WeathBench71,WeathBench716)
 #dataset_type = ERA5CephDataset
 # dataset_type  = SpeedTestDataset
 Datafetcher = DataSimfetcher
@@ -361,6 +360,7 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
 
 
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
+
     if status == 'train':
         model.train()
         logsys.train()
@@ -378,6 +378,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     Fethcher   = Datafetcher
     device     = next(model.parameters()).device
     prefetcher = Fethcher(data_loader,device)
+    #raise
     batches    = len(data_loader)
 
     inter_b    = logsys.create_progress_bar(batches,unit=' img',unit_scale=data_loader.batch_size)
@@ -395,6 +396,8 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         #if inter_b.now>10:break
         step = inter_b.now
         batch = prefetcher.next()
+        #print(batch[0].shape)
+        #raise
         if step < start_step:continue
         #batch = data_loader.dataset.do_normlize_data(batch)
         batch = make_data_regular(batch,half_model)
@@ -441,6 +444,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             if use_wandb:wandb.log(iter_info_pool)
             for key, val in iter_info_pool.items():logsys.record(key, val, epoch*batches + step)
             outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [TimeLeng]:{time_step_now:} GPU:[{gpu}] abs_loss:{abs_loss.item():.2f} loss:{loss.item():.2f} cost:[Date]:{np.mean(data_cost):.1e} [Train]:{np.mean(train_cost):.1e} ")
+            print(data_loader.dataset.record_load_tensor.mean().item())
             data_cost  = []
             train_cost = []
             rest_cost = []
@@ -457,36 +461,35 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     return loss_val
 
 
-def get_train_and_valid_dataset(args,train_dataset_tensor=None,valid_dataset_tensor=None):
+def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     dataset_type   = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
-    train_dataset  = dataset_type(split="train",dataset_tensor=train_dataset_tensor,**args.dataset_kargs)
-    val_dataset   = dataset_type(split="valid",dataset_tensor=valid_dataset_tensor,**args.dataset_kargs)
+    train_dataset  = dataset_type(split="train",dataset_tensor=train_dataset_tensor,record_load_tensor=train_record_load,**args.dataset_kargs)
+    val_dataset   = dataset_type(split="valid",dataset_tensor=valid_dataset_tensor,record_load_tensor=valid_record_load,**args.dataset_kargs)
     train_datasampler = DistributedSampler(train_dataset, shuffle=True) if args.distributed else None
     val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
     train_dataloader  = DataLoader(train_dataset, args.batch_size,   sampler=train_datasampler, num_workers=8, pin_memory=True, drop_last=True)
     val_dataloader    = DataLoader(val_dataset  , args.batch_size*8, sampler=val_datasampler,   num_workers=8, pin_memory=True, drop_last=False)
     return   train_dataset,   val_dataset, train_dataloader, val_dataloader
 
-def get_test_dataset(args,train_dataset_tensor=None):
+def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
     time_step = max(3*24//6,args.time_step) if args.mode=='fourcast' else 3*24//6 + args.time_step
     dataset_kargs = copy.deepcopy(args.dataset_kargs)
     dataset_kargs['time_step'] = time_step
     if dataset_kargs['time_reverse_flag'] in ['only_forward','random_forward_backward']:
         dataset_kargs['time_reverse_flag'] = 'only_forward'
     dataset_type = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
-    test_dataset = dataset_type(split="test", dataset_tensor=train_dataset_tensor,with_idx=True,**dataset_kargs)
-
+    test_dataset = dataset_type(split="test", with_idx=True,dataset_tensor=test_dataset_tensor,record_load_tensor=test_record_load,**dataset_kargs)
     assert hasattr(test_dataset,'clim_tensor')
     test_datasampler  = DistributedSampler(test_dataset,  shuffle=False) if args.distributed else None
     test_dataloader   = DataLoader(test_dataset, args.batch_size, sampler=test_datasampler, num_workers=8, pin_memory=False)
     return   test_dataset,   test_dataloader
 
-def run_fourcast(args, model,logsys):
+def run_fourcast(args, model,logsys,test_dataloader):
     import warnings
     warnings.filterwarnings("ignore")
     logsys.info_log_path = os.path.join(logsys.ckpt_root, 'fourcast.info')
-    
-    test_dataset,  test_dataloader = get_test_dataset(args)
+    test_dataset = test_dataloader.dataset
+    #test_dataset,  test_dataloader = get_test_dataset(args)
     prefix_pool={
         'only_backward':"time_reverse_",
         'only_forward':""
@@ -630,6 +633,7 @@ def parse_default_args(args):
     args.batch_size = bs_for_mode[args.mode] if args.batch_size == -1 else args.batch_size
     args.epochs     = ep_for_mode[args.mode] if args.epochs == -1 else args.epochs
     args.lr         = lr_for_mode[args.mode] if args.lr == -1 else args.lr
+    args.time_step = ts_for_mode[args.mode] if args.time_step == -1 else args.time_step
     # input size
     img_size = patch_size = x_c = y_c =  dataset_type = None
 
@@ -759,7 +763,8 @@ def build_model(args):
 
     return model
 
-def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,valid_dataset_tensor=None):
+def main_worker(local_rank, ngpus_per_node, args,
+        train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     print(f"we are at mode={args.mode}")
     ##### locate the checkpoint dir ###########
     args.gpu = args.local_rank = gpu  = local_rank
@@ -807,10 +812,13 @@ def main_worker(local_rank, ngpus_per_node, args, train_dataset_tensor=None,vali
     print(f"entering {args.mode} training")
     now_best_path = SAVE_PATH / f'backbone.best.pt'
     if args.mode=='fourcast':
-        run_fourcast(args, model,logsys)
+        test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,
+                                      test_record_load=train_record_load)
+        run_fourcast(args, model,logsys,test_dataloader)
     else:
         train_dataset, val_dataset, train_dataloader,val_dataloader = get_train_and_valid_dataset(args,
-                       train_dataset_tensor=train_dataset_tensor,valid_dataset_tensor=valid_dataset_tensor)
+                       train_dataset_tensor=train_dataset_tensor,train_record_load=train_record_load,
+                       valid_dataset_tensor=valid_dataset_tensor,valid_record_load=valid_record_load)
         logsys.info(f"use dataset ==> {train_dataset.__class__.__name__}")
         logsys.info(f"Start training for {args.epochs} epochs")
         master_bar        = logsys.create_master_bar(args.epochs)
@@ -895,49 +903,43 @@ def main(args=None):
     else:
         args.world_size = 1
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
-    train_dataset_tensor=valid_dataset_tensor=None
+    train_dataset_tensor=valid_dataset_tensor=train_record_load=valid_record_load=None
 
 
-    if args.dataset_type in ['ERA5CephDataset','ERA5CephSmallDataset'] and args.multiprocessing_distributed:
+    if args.use_inmemory_dataset:
+        assert args.dataset_type
         print("======== loading data as shared memory==========")
-        if args.dataset_type == 'ERA5CephSmallDataset':
-            if not args.mode=='fourcast':
-                train_dataset_tensor = load_small_dataset_in_memory('train').share_memory_()
-                print(f"train->{train_dataset_tensor.shape}")
-                valid_dataset_tensor = load_small_dataset_in_memory('valid').share_memory_()
-                print(f"valid->{train_dataset_tensor.shape}")
-            else:
-                train_dataset_tensor = load_small_dataset_in_memory('test').share_memory_()
-                print(f"test->{train_dataset_tensor.shape}")
-                valid_dataset_tensor = None
+        if not args.mode=='fourcast':
+            print(f"create training dataset template, .....")
+            train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='train',root=args.data_root)
+            train_dataset_tensor = train_dataset_tensor.share_memory_()
+            train_record_load  = train_record_load.share_memory_()
+            print(f"done! -> train template shape={train_dataset_tensor.shape}")
+            
+            print(f"create validing dataset template, .....")
+            valid_dataset_tensor, valid_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='valid',root=args.data_root)
+            valid_dataset_tensor = valid_dataset_tensor.share_memory_()
+            valid_record_load  = valid_record_load.share_memory_()
+            print(f"done! -> train template shape={valid_dataset_tensor.shape}")
         else:
-            if args.mode=='fourcast':
-                train_dataset_tensor = load_test_dataset_in_memory(years=[2018],
-                                                                root="datasets/era5G32x64_new"
-                                                                ).share_memory_()
-                print(f"test->{train_dataset_tensor.shape}")
-                valid_dataset_tensor = None
-        print("=======done==========")
+            print(f"create testing dataset template, .....")
+            train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='test',root=args.data_root)
+            train_dataset_tensor = train_dataset_tensor.share_memory_()
+            train_record_load  = train_record_load.share_memory_()
+            print(f"done! -> test template shape={train_dataset_tensor.shape}")          
+            valid_dataset_tensor = valid_record_load = None
+        print("========      done        ==========")
 
-    # if args.dataset_type in ['WeathBench71'] and args.multiprocessing_distributed:
-    #     print("======== loading data as shared memory==========")
-    #     if not args.mode=='fourcast':
-    #         train_dataset_tensor = torch.Tensor(np.load('datasets/weatherbench/valid_set.npy')).share_memory_()
-    #         print(f"train->{train_dataset_tensor.shape}")
-    #         valid_dataset_tensor = torch.Tensor(np.load('datasets/weatherbench/valid_set.npy')).share_memory_()
-    #         print(f"valid->{train_dataset_tensor.shape}")
-    #     else:
-    #         train_dataset_tensor = torch.Tensor(np.load('datasets/weatherbench/test_set.npy')).share_memory_()
-    #         print(f"test->{train_dataset_tensor.shape}")
-    #         valid_dataset_tensor = None
-        
     if args.multiprocessing_distributed:
         print("======== entering  multiprocessing train ==========")
         args.world_size = ngpus_per_node * args.world_size
-        torch.multiprocessing.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args,train_dataset_tensor,valid_dataset_tensor))
+        torch.multiprocessing.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args,
+                                    train_dataset_tensor,train_record_load,
+                                    valid_dataset_tensor,valid_record_load))
     else:
         print("======== entering  single gpu train ==========")
-        main_worker(0, ngpus_per_node, args,train_dataset_tensor,valid_dataset_tensor)
+        main_worker(0, ngpus_per_node, args,train_dataset_tensor,train_record_load,
+                            valid_dataset_tensor,valid_record_load)
 
 if __name__ == '__main__':
     main()

@@ -55,10 +55,10 @@ def get_args_parser():
     parser.add_argument('--dataset_flag', default="", type=str)
     parser.add_argument('--time_reverse_flag', default='only_forward', type=str)
     parser.add_argument('--time_intervel', type=int, default=1)
-    parser.add_argument('--time_step', type=int, default=0)
+    parser.add_argument('--time_step', type=int, default=-1)
     parser.add_argument('--data_root', type=str, default="")
     parser.add_argument('--use_time_stamp', type=int, default=0)
-
+    parser.add_argument('--use_inmemory_dataset',type=int,default=0)
     # Fourcast Parameter
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
     parser.add_argument('--fourcast_randn_initial', default=0, type=int)

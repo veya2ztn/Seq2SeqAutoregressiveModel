@@ -1,14 +1,12 @@
 #from tkinter.messagebox import NO
 import numpy as np
-import torch,os,io
+import torch,os,io,socket
 from torchvision import datasets, transforms
-try:
+hostname = socket.gethostname()
+if hostname not in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185']:
     from petrel_client.client import Client
     import petrel_client
-    
-except:
-    print("can not input petrel client, pass")
-    pass
+
 from functools import lru_cache
 import traceback
 from tqdm import tqdm
@@ -31,14 +29,7 @@ Years = {
 
 
 
-smalldataset_path={
-    'train': "./datasets/era5G32x64_set/train_data.npy",
-    'valid': "./datasets/era5G32x64_set/valid_data.npy",
-    'test':  "./datasets/era5G32x64_set/test_data.npy"
-}
 
-def load_small_dataset_in_memory(split):
-    return torch.Tensor(np.load(smalldataset_path[split]))
 
 def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_coord=None,channel_last=True,vnames=[]):
     client = None
@@ -77,13 +68,16 @@ def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_
     return data
 
 def getFalse(x):return False
+
 def identity(x):
     return x
+
 def do_batch_normlize(batch,mean,std):
     if isinstance(batch,list):
         return [(x-mean/std) for x in batch]
     else:
         return batch-mean/std
+
 def inv_batch_normlize(batch,mean,std):
     if isinstance(batch,list):
         return [(x*std+mean) for x in batch]
@@ -130,6 +124,7 @@ class BaseDataset:
     def do_time_reverse(self,idx):
         return False
     def __getitem__(self,idx):
+        
         try:
             reversed_part = self.do_time_reverse(idx)
             time_step_list= [idx+i*self.time_intervel for i in range(self.time_step)]
@@ -195,6 +190,7 @@ class ERA5BaseDataset(BaseDataset):
     
 class ERA5CephDataset(ERA5BaseDataset):
     default_root = 'cluster3:s3://era5npy'
+    default_time_step={'pretrain':2,'fintune':3}
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,years=None,
                 class_name='ERA5Dataset', root= None,random_time_step=False,dataset_flag=False, ispretrain=True, crop_coord=None,time_step=None,with_idx=False,**kargs):
         
@@ -268,19 +264,28 @@ class ERA5CephDataset(ERA5BaseDataset):
             url = f"{self.root}/{name}/{year}/{name}-{year}-{hour:04d}.npy"
             print(url)
 
-
 class ERA5CephSmallDataset(ERA5CephDataset):
+    clim_path = "datasets/era5G32x64_set/time_means.npy"
+    dataset_path = {
+            'train': "./datasets/era5G32x64_set/train_data.npy",
+            'valid': "./datasets/era5G32x64_set/valid_data.npy",
+            'test':  "./datasets/era5G32x64_set/test_data.npy"
+        }
+    
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,
                 class_name='ERA5CephSmallDataset', ispretrain=True,
                 crop_coord=None,root=None,
-                dataset_tensor=None,
-                time_step=None,with_idx=False,random_time_step=False,dataset_flag=False,
+                dataset_tensor=None,record_load_tensor=None,time_step=None,with_idx=False,random_time_step=False,dataset_flag=False,
                 time_reverse_flag='only_forward',time_intervel=1,use_time_stamp=False):
         self.crop_coord   = crop_coord
-        self.mode         = mode
-        self.data         = load_small_dataset_in_memory(split) if dataset_tensor is None else dataset_tensor
-        smalldataset_clim_path = "datasets/era5G32x64_set/time_means.npy"
-        self.clim_tensor = np.load(smalldataset_clim_path)
+        self.mode      = mode
+        if dataset_tensor is None:
+            self.data,self.record_load_tensor = self.create_offline_dataset_templete(split)
+        else:
+            self.data,self.record_load_tensor = dataset_tensor,record_load_tensor
+        self.clim_tensor = np.load(self.clim_path)
+        
+        ## [TODO] its better to offline below time stamp data
         if split == 'train':
             datatimelist  = np.arange(np.datetime64("1979-01-01"), np.datetime64("2016-01-01"), np.timedelta64(6, "h"))
         elif split == 'valid':
@@ -288,8 +293,10 @@ class ERA5CephSmallDataset(ERA5CephDataset):
         elif split == 'test':
             datatimelist  = np.arange(np.datetime64("2018-01-01"), np.datetime64("2022-01-01"), np.timedelta64(6, "h"))
         self.timestamp = time_features(pd.to_datetime(datatimelist)).transpose(1, 0)
-        self.channel_pick = list(range(20))
-        if dataset_flag=='physics':self.channel_pick = self.full_physics_index
+
+
+        self.channel_pick = self.full_physics_index if dataset_flag=='physics' else list(range(20)) 
+        
         self.vnames       = [self.full_vnames[t] for t in self.channel_pick]
         self.unit_list    = [self.mean_std_ERA5_20[name]['std'] for name in self.vnames]
         self.clim_tensor  = self.clim_tensor[:,self.channel_pick]
@@ -301,17 +308,17 @@ class ERA5CephSmallDataset(ERA5CephDataset):
         self.use_time_stamp = use_time_stamp
         if self.random_time_step:
             print("we are going use random step mode. in this mode, data sequence will randomly set 2-6 ")
-
-        if self.mode   == 'pretrain':self.time_step = 2
-        elif self.mode == 'finetune':self.time_step = 3
-        elif self.mode == 'free5':self.time_step = 5
-        if time_step is not None:
-            self.time_step = time_step
-
+        self.time_step = self.default_time_step[self.mode] if time_step is None else time_step
 
         self.time_reverse_flag = time_reverse_flag
         self.set_time_reverse(time_reverse_flag)
-        
+    
+    @staticmethod
+    def create_offline_dataset_templete(split='test',years=None, root=None):
+        print(f"in this dataset:{ERA5CephSmallDataset.__name__}, years/root args is disabled")
+        data = torch.Tensor(np.load(ERA5CephSmallDataset.dataset_path[split]))
+        record_load_tensor = torch.ones(len(data))
+        return data,record_load_tensor
 
     def __len__(self):
         return len(self.data) - self.time_step + 1
@@ -520,12 +527,11 @@ class ERA5Tiny12_47_96(ERA5BaseDataset):
             return [Field, Field_Dt, pysics_part] #(B,12,z,y,x)
 
 class WeathBench(BaseDataset):
-    years_split={'train':range(1979, 2016),
-                'valid':range(2016, 2018),
-                 #'test':range(2018,2022),
-                 'test':range(2018,2019),
-                'all': range(1979, 2022),
-                'debug':range(1979,1980)}
+    years_split={'train':range(2018,2019),#range(1979, 2016),
+           'valid':range(2018,2019),#range(2016, 2018),
+           'test':range(2018,2019),
+            'all': range(1979, 2022),
+            'debug':range(1979,1980)}
     single_vnames = ["2m_temperature",
                       "10m_u_component_of_wind",
                       "10m_v_component_of_wind",
@@ -543,11 +549,12 @@ class WeathBench(BaseDataset):
     cons_vnames= ["lsm", "slt", "orography"]
     default_root='datasets/weatherbench'
     constant_channel_pick = []
+    one_single_data_shape = [110,32,64]
 
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,
                  root=None, time_step=2,
                  with_idx=False,
-                 years=None,dataset_tensor=None,
+                 years=None,dataset_tensor=None,record_load_tensor=None,
                  dataset_flag='normal',time_reverse_flag='only_forward',time_intervel=1,
                  **kargs):
         if years is None:
@@ -560,8 +567,17 @@ class WeathBench(BaseDataset):
         print(f"use dataset in {self.root}")
         self.split            = split
         self.single_data_path_list = self.init_file_list(years) # [[year,idx],[year,idx],.....]
-        self.dataset_tensor = None
+
+        # in memory dataset, if we activate the in memory procedure, please create shared tensor 
+        # via Tensor.share_memory_() before call this module and pass the create tensor as args of this module
+        # the self.dataset_tensor should be same shape as the otensor, for example (10000, 110, 32, 64)
+        # the self.record_load_tensor is used to record which row is record.
+        # This implement will automatively offline otensor after load it once.
         self.dataset_tensor = dataset_tensor
+        self.record_load_tensor = record_load_tensor
+        assert ((self.record_load_tensor is not None) and (self.dataset_tensor is not None)) or \
+            ((self.record_load_tensor is    None) and (self.dataset_tensor is   None))
+        
         self.dataset_flag     = dataset_flag
         self.clim_tensor      = [0]
         self.mean_std         = self.load_numpy_from_url(os.path.join(self.root,"mean_std.npy"))
@@ -583,15 +599,14 @@ class WeathBench(BaseDataset):
         else:
             raise NotImplementedError
         
-        self.volicity_idx   = ([1,2]+
-                               list(range(6+13*4,6+13*5))+
-                               list(range(6+13*5,6+13*6)))# we always assume the raw data is (P,y,x)
+        self.volicity_idx   = ([1,2]+list(range(6+13*4,6+13*5))+list(range(6+13*5,6+13*6)))# we always assume the raw data is (P,y,x)
         self.time_reverse_flag = time_reverse_flag
         self.set_time_reverse(time_reverse_flag)
         self.vnames= [self.all_vnames[i] for i in self.channel_choice]
         self.vnames= self.vnames + [self.cons_vnames[i] for i in self.constant_channel_pick]
     
-    def init_file_list(self,years):
+    @staticmethod
+    def init_file_list(years):
         file_list = []
         for year in years:
             if year == 1979: # 1979年数据只有8753个，缺少第一天前7小时数据，所以这里我们从第二天开始算起
@@ -605,6 +620,18 @@ class WeathBench(BaseDataset):
                 for hour in range(0, max_item, 1):
                     file_list.append([year, hour])
         return file_list
+
+    @staticmethod
+    def create_offline_dataset_templete(split='test',years=None, root=None):
+        if years is None:
+            years = WeathBench.years_split[split]
+        else:
+            print(f"you are using flag={split}, the default range is {list(WeathBench.years_split[split])}")
+            print(f"noice you assign your own year list {list(years)}")
+
+        root  = WeathBench.default_root if root is None else root
+        batches = len(WeathBench.init_file_list(years))
+        return torch.empty(batches,*WeathBench.one_single_data_shape),torch.zeros(batches)
 
     def config_pool_initial(self):
         config_pool={
@@ -683,17 +710,23 @@ class WeathBench71(WeathBench):
         return array
 
     def load_otensor(self,idx):
-        if self.dataset_tensor is None:
+        if (self.record_load_tensor is None) or (not self.record_load_tensor[idx]):
             year, hour = self.single_data_path_list[idx]
             url = f"{self.root}/{year}/{year}-{hour:04d}.npy"
             odata= self.load_numpy_from_url(url)
-            return odata
+            if self.record_load_tensor is not None: 
+                self.record_load_tensor[idx] = 1
+                self.dataset_tensor[idx] = torch.Tensor(odata)
+        if self.record_load_tensor is not None:
+            return self.dataset_tensor[idx].clone()
         else:
-            return self.dataset_tensor[idx]
+            return odata
     
     def get_item(self,idx,reversed_part=False):
         odata=self.load_otensor(idx)
-        if reversed_part:odata[reversed_part] = -odata[reversed_part]
+        if reversed_part:
+            odata = odata.clone() if isinstance(odata,torch.Tensor) else odata.copy()
+            odata[reversed_part] = -odata[reversed_part]
         data = odata[self.channel_choice]
         eg = torch if isinstance(data,torch.Tensor) else np
         if '3D' in self.normalize_type:
