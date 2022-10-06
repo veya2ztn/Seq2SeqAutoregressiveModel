@@ -424,7 +424,7 @@ class EncoderLayerN(nn.Module):
     """
     def __init__(self, attention, d_model, d_ff=None, moving_avg=25, dropout=0.1, activation="relu"):
         super().__init__()
-        d_ff = d_ff or 4 * d_model
+        d_ff = 2 * d_model
         self.attention = attention
         self.distill_layer=nn.Sequential(
             nn.Linear(in_features=d_model, out_features=d_ff, bias=False),
@@ -511,7 +511,7 @@ class FEDformer(nn.Module):
         self.modes       = modes
         self.label_len     = label_len
         self.pred_len      = pred_len
-        self.moving_avg     = [history_length//2] if moving_avg is None else moving_avg
+        self.moving_avg     = history_length//2 if moving_avg is None else moving_avg
         self.seq_len = seq_len = history_length
         seq_len_dec = label_len + pred_len
         self.space_dims_encoder     = tuple(list(img_size)+[seq_len])
