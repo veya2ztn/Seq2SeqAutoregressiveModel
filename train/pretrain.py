@@ -45,7 +45,7 @@ from mltool.dataaccelerate import DataLoaderX,DataLoader,DataPrefetcher,DataSimf
 from mltool.loggingsystem import LoggingSystem
 
 
-from cephdataset import (ERA5CephDataset,WeathBench71_H5,ERA5CephSmallDataset,WeathBench706,SpeedTestDataset,ERA5Tiny12_47_96,WeathBench71,WeathBench716)
+from cephdataset import (ERA5CephDataset,WeathBench71_H5,ERA5CephSmallDataset,WeathBench706,WeathBench7066,SpeedTestDataset,ERA5Tiny12_47_96,WeathBench71,WeathBench716)
 #dataset_type = ERA5CephDataset
 # dataset_type  = SpeedTestDataset
 Datafetcher = DataSimfetcher
@@ -78,7 +78,7 @@ train_set={
     '2D70N':((32,64), (2,2), 70, 70, WeathBench71,{'dataset_flag':'2D70N'}),
     '2D70NH5':((32,64), (2,2), 70, 70, WeathBench71_H5,{'dataset_flag':'2D70N'}),
     '2D706N':((32,64), (2,2), 70, 70, WeathBench706,{'dataset_flag':'2D70N'}),
-    '2D716N':((32,64), (2,2), 71, 71, WeathBench716,{'dataset_flag':'2D70N'}),
+    '2D716N':((32,64), (2,2), 71, 71, WeathBench716,{'dataset_flag':'2D71N'}),
     '3D70N':((14,32,64), (2,2,2), 5, 5, WeathBench71,{'dataset_flag':'3D70N'}),
 }
 #img_size, patch_size, x_c, y_c, dataset_type = train_set[args.train_set]
@@ -159,7 +159,6 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
 
     if model.training and model.input_noise_std and i==1:
         normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
-
 
     out   = model(normlized_Field)
     extra_loss = 0
@@ -430,6 +429,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     nan_count+=1
                     if nan_count>10:
                         print("too many nan happened")
+                        raise
                     print(f"detect nan, now at {nan_count}/10 warning level, pass....")   
                     continue
             loss /= accumulation_steps
@@ -679,7 +679,8 @@ def parse_default_args(args):
     if hasattr(args,'dataset_flag') and args.dataset_flag:dataset_kargs['dataset_flag']= args.dataset_flag
     if hasattr(args,'time_intervel'):dataset_kargs['time_intervel']= args.time_intervel
     if hasattr(args,'use_time_stamp') and args.use_time_stamp:dataset_kargs['use_time_stamp']= args.use_time_stamp
-
+    if hasattr(args,'physics_num'):dataset_kargs['physics_num']= args.physics_num
+    
 
     args.dataset_type = dataset_type if not args.dataset_type else args.dataset_type
     args.dataset_type = args.dataset_type.__name__ if not isinstance(args.dataset_type,str) else args.dataset_type
@@ -844,7 +845,6 @@ def main_worker(local_rank, ngpus_per_node, args,
         logsys.info(f"use dataset ==> {train_dataset.__class__.__name__}")
         logsys.info(f"Start training for {args.epochs} epochs")
         master_bar        = logsys.create_master_bar(args.epochs)
-        now_best_path = None
         for epoch in master_bar:
             if epoch < start_epoch:continue
             train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')

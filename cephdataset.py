@@ -73,16 +73,25 @@ def identity(x):
     return x
 
 def do_batch_normlize(batch,mean,std):
+    torchQ = isinstance(batch,torch.Tensor)
+    if torchQ:
+        mean=torch.Tensor(mean).to(batch.device)
+        std =torch.Tensor(std).to(batch.device)
+    
     if isinstance(batch,list):
-        return [(x-mean/std) for x in batch]
+        return [do_batch_normlize(x,mean,std) for x in batch]
     else:
-        return batch-mean/std
+        return (batch-mean)/(std+1e-10)
 
 def inv_batch_normlize(batch,mean,std):
+    torchQ = isinstance(batch,torch.Tensor)
+    if torchQ:
+        mean=torch.Tensor(mean).to(batch.device)
+        std=torch.Tensor(std).to(batch.device)
     if isinstance(batch,list):
-        return [(x*std+mean) for x in batch]
+        return [inv_batch_normlize(x,mean,std) for x in batch]
     else:
-        return batch*std+mean
+        return batch*(std+1e-10)+mean
 
 
 def read_npy_from_ceph(client, url, Ashape=(720,1440)):
@@ -124,7 +133,6 @@ class BaseDataset:
     def do_time_reverse(self,idx):
         return False
     def __getitem__(self,idx):
-        
         try:
             reversed_part = self.do_time_reverse(idx)
             time_step_list= [idx+i*self.time_intervel for i in range(self.time_step)]
@@ -550,7 +558,7 @@ class WeathBench(BaseDataset):
     default_root='datasets/weatherbench'
     constant_channel_pick = []
     one_single_data_shape = [110,32,64]
-
+    reduce_Field_coef = np.array([1])
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,
                  root=None, time_step=2,
                  with_idx=False,
@@ -655,6 +663,8 @@ class WeathBench(BaseDataset):
         
         return config_pool
 
+
+
     def __len__(self):
         return len(self.single_data_path_list) - self.time_step*self.time_intervel + 1
 
@@ -677,15 +687,15 @@ class WeathBench(BaseDataset):
 
 
 class WeathBench71(WeathBench):
-
-    def config_pool_initial(self):
-
-        _list = ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
+    _component_list= ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
                  [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+ # v component of wind and the 10m v wind
                  [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,  0]+ # Temperature and the 2m_temperature
                  [ 6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 18]+ # Geopotential and the last one is ground Geopotential, should be replace later
                  [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 57] # Realitve humidity and the Realitve humidity at groud, should be modified by total precipitaiton later
                  )
+    def config_pool_initial(self):
+
+        _list = self._component_list
         config_pool={
             '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
@@ -743,6 +753,7 @@ class WeathBench71(WeathBench):
             data[14*4-1]    = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
             total_precipitaiton = odata[4]
             data[14*5-1]    = total_precipitaiton
+        
         if 'gauss_norm' in self.normalize_type:
             return (data - self.mean)/self.std
         elif 'unit_norm' in self.normalize_type:
@@ -771,20 +782,17 @@ class WeathBench706(WeathBench71):
         super().__init__(**kargs)
         self.single_data_path_list = self.single_data_path_list[::6]
 
+
+
 class WeathBench716(WeathBench71):
     default_root='datasets/weatherbench_6hour'
-
+    
     def init_file_list(self,years):
         return np.load(os.path.join(self.root,f"{self.split}.npy"))
-
+    def load_otensor(self,idx):
+        return self.single_data_path_list[idx]
     def config_pool_initial(self):
-
-        _list = ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
-                 [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+ # v component of wind and the 10m v wind
-                 [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,  0]+ # Temperature and the 2m_temperature
-                 [ 6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 18]+ # Geopotential and the last one is ground Geopotential, should be replace later
-                 [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 57] # Realitve humidity and the Realitve humidity at groud, should be modified by total precipitaiton later
-                 )
+        _list = self._component_list
         self.constant_channel_pick = [0]
         mean_std = self.mean_std[:,_list].reshape(2,70,1,1)
         mean, std= mean_std #(70,1,1)
@@ -792,13 +800,13 @@ class WeathBench716(WeathBench71):
         std  = np.concatenate([ std, np.ones(1).reshape(1,1,1)])
         mean_std = np.stack([mean,std])
         config_pool={
-            '2D70N': (_list ,'gauss_norm'   , mean_std, identity, identity ),
-            '2D70U': (_list ,'unit_norm'    , mean_std, identity, identity ),
+            '2D71N': (_list ,'gauss_norm'   , mean_std, identity, identity ),
+            '2D71U': (_list ,'unit_norm'    , mean_std, identity, identity ),
         }
         return config_pool
 
     def get_item(self, idx,reversed_part=False):
-        arrays = self.single_data_path_list[idx]
+        arrays = self.load_otensor(idx)
         if reversed_part:
             arrays = arrays.copy()#it is a torch.tensor
             arrays[reversed_part] = -arrays[reversed_part]
@@ -811,6 +819,33 @@ class WeathBench716(WeathBench71):
             else:
                 arrays = arrays.permute(1,2,0)
         return arrays
+
+class WeathBench7066(WeathBench71):
+    default_root='datasets/weatherbench_6hour'
+    
+    def init_file_list(self,years):
+        return np.load(os.path.join(self.root,f"{self.split}.npy"))
+    
+    def load_otensor(self,idx):
+        data = self.single_data_path_list[idx]
+        data = data*self.mean_std[1].reshape(110,1,1) + self.mean_std[0].reshape(110,1,1)
+        return data
+
+    def config_pool_initial(self):
+        _list = self._component_list
+        config_pool={
+            '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
+            '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
+            '3D70N': (_list ,'gauss_norm_3D', self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), identity, identity ),
+            '3D70U': (_list ,'unit_norm_3D' , self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), identity, identity ),
+        }
+        
+        mean, std = self.mean_std[:,_list].reshape(2,70,1,1)
+        config_pool['2D70O'] =(_list,'none', (0,1) , lambda x:do_batch_normlize(x,mean,std), lambda x:inv_batch_normlize(x,mean,std))
+        mean, std = self.mean_std[:,_list].reshape(2,5,14,1,1)
+        config_pool['3D70O'] =(_list  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
+        return config_pool
+    
 
 if __name__ == "__main__":
     import sys

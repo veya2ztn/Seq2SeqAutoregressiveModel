@@ -13,7 +13,7 @@ from .afnonet import BaseModel
 # $$
 
 class First_Derivative_Layer(torch.nn.Module):
-    def __init__(self,position=-1,dim=2,mode='five-point-stencil',pad_mode='circular',intervel=1):
+    def __init__(self,position=-1,dim=2,mode='five-point-stencil',pad_mode='circular',intervel=torch.Tensor([1])):
         super().__init__()
         self.postion=position
         self.dim    =dim
@@ -55,6 +55,7 @@ class First_Derivative_Layer(torch.nn.Module):
         # if (x,y,z) pannel, the the input should be (Batch, 1 , x , y , z)
         x = self.conv_engine(F.pad(x, self.padtuple, mode=self.pad_mode),self.runtime_weight)
         x = x/self.intervel.to(x.device)
+
         return x.squeeze(1) if expandQ else x
 
 class OnlineNormModel(BaseModel):
@@ -132,7 +133,7 @@ class EulerEquationModel2(BaseModel):
         #self.p_list         = nn.Parameter(torch.Tensor([10,8.5,5]).reshape(1,3,1,1),requires_grad=False)
         self.backbone =  backbone
         self.monitor  = True
-
+        self.physics_num= args.physics_num if hasattr(args,'physics_num') else 4
     def calculateEPI(self,Field):
         # u^{t+1} &= u^{t} + F_x - \nabla (Vu)  + u \nabla\cdot V - \partial_x\phi\\
         # v^{t+1} &= v^{t} + F_y - \nabla (Vv)  + v \nabla\cdot V - \partial_y\phi\\
@@ -143,11 +144,11 @@ class EulerEquationModel2(BaseModel):
         # need generate unknown data [Fx, Fy , Q, W, o]
         #print(Field.shape)
         b, si_z, i_y, i_x = Field.shape
-        s=4
-        i_z= si_z//4
+        s=self.physics_num
+        i_z= si_z//self.physics_num
         MachineLearningPart = self.backbone(Field).reshape(b, s+1, i_z, i_y, i_x) #(Batch, 5, z, y ,x)
-        ExternalForce = MachineLearningPart[:,:4] #(Batch, 4, z, y ,x)
-        o = MachineLearningPart[:,4:5] #(Batch, 1, z, y ,x)
+        ExternalForce = MachineLearningPart[:,:-1] #(Batch, 4, z, y ,x)
+        o = MachineLearningPart[:,-1:] #(Batch, 1, z, y ,x)
         Field = Field.reshape(b, s, i_z, i_y,  i_x) #(Batch, 5, z, y ,x)
         u = Field[:,0:1]#(Batch, 1, z, y ,x)
         v = Field[:,1:2]#(Batch, 1, z, y ,x)
@@ -157,6 +158,7 @@ class EulerEquationModel2(BaseModel):
         Nabla_cdot_V = (self.Dx(u[:,0]) + self.Dy(v[:,0]) + self.Dz(o[:,0])).unsqueeze(1)#(Batch, 1, z, y ,x)
         Nabla_V_Field= Nabla_cdot_V*Field #(Batch, 4, z, y ,x)
         Vphysics     = torch.stack([V*u,V*v,V*T,V*p],1)#(Batch,4, 3, z, y ,x)
+        
         Vphysics_dx  = self.Dx(Vphysics[:,:,0].flatten(0,1)).reshape(Field.shape)#(Batch, 4, z, y ,x)
         Vphysics_dy  = self.Dy(Vphysics[:,:,1].flatten(0,1)).reshape(Field.shape)#(Batch, 4, z, y ,x)
         Vphysics_dz  = self.Dz(Vphysics[:,:,2].flatten(0,1)).reshape(Field.shape)#(Batch, 4, z, y ,x)
@@ -214,6 +216,7 @@ class ConVectionModel(BaseModel):
     def __init__(self, args, backbone):
         super().__init__()
         h, w = backbone.img_size[-2:]
+        print(f'h intervel: {h} , w intervel: {w}')
         if h in [51,49,47]:
             Hdx = 6371000*torch.sin(torch.linspace(0,720,49)/720*np.pi)*2*np.pi/w
             Hdx = Hdx.reshape(1,1,1,49,1)[...,1:-1,:] # (1,1,1,47,1)
@@ -225,6 +228,17 @@ class ConVectionModel(BaseModel):
             Hdy = torch.Tensor([6371000*np.pi/48])
             print(f"please notice we will using dt= 3600*6 as intertime")
             self.DT = 3600*6
+            Hdx = Hdx/self.DT
+            Hdy = Hdy/self.DT
+            self.Hdx = Hdx
+            self.Hdy = Hdy
+        elif h in [32]:
+            Hdx = 6371000*torch.sin(torch.linspace(0,1,34)*np.pi)*2*np.pi/w
+            Hdx = Hdx[1:-1].reshape(1,1,1,32,1)
+            shape = Hdx.shape
+            Hdy = torch.Tensor([6371000*np.pi/32])
+            print(f"please notice we will using dt= 3600*1 as intertime")
+            self.DT = 3600*1
             Hdx = Hdx/self.DT
             Hdy = Hdy/self.DT
             self.Hdx = Hdx
@@ -241,6 +255,7 @@ class ConVectionModel(BaseModel):
         v            = Field[:,1:2]
         Field_dx     = self.Dx(Field.flatten(0,1)).reshape(Field.shape)
         Field_dy     = self.Dy(Field.flatten(0,1)).reshape(Field.shape)
+
         Advection    = (u*Field_dx + v*Field_dy) #(B,P,z,y,x)
         return Advection
 

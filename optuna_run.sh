@@ -17,6 +17,6 @@
 #                      --save_warm_up 1000 --wrapper_model DeltaModel
 
 #python optuna_run.py --train_set physics_small --epoch 100 --mode pretrain --time_step 3 --save_warm_up 1000 --time_reverse_flag random_forward_backward
-python optuna_run.py --train_set small --use_time_stamp 1  --history_length 6 --time_step 7 --model_type FEDformer --embed_dim 128 --use_amp 0 \
---batch_size 4 --model_depth 1 \
---modes 32,64,6 --valid_batch_size 12
+# python optuna_run.py --train_set small --use_time_stamp 1  --history_length 6 --time_step 7 --model_type FEDformer --embed_dim 128 --use_amp 0 \
+# --batch_size 4 --model_depth 1 \
+# --modes 32,64,6 --valid_batch_size 12

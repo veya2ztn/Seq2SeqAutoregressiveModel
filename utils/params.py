@@ -25,7 +25,7 @@ def get_args_parser():
     parser.add_argument('--img_size'  , default="", type=str)
     parser.add_argument('--modes'  , default="17,33,6", type=str)
     parser.add_argument('--mode_select', default="", type=str)
-    
+    parser.add_argument('--physics_num' , type=int, default=4)
     parser.add_argument('--input_channel' , type=int, default=0)
     parser.add_argument('--output_channel', type=int, default=0)
     parser.add_argument('--embed_dim', type=int, default=768)
@@ -51,8 +51,8 @@ def get_args_parser():
                 'EulerEquationModel3','EulerEquationModel2','EulerEquationModel4','OnlineNormModel'])
 
     # Dataset parameters
-    parser.add_argument('--dataset_type', default='', type=str, help='Name of dataset to train',choices=["",'WeathBench71','ERA5Tiny12_47_96_Normal','ERA5CephDataset',
-                'ERA5CephSmallDataset','ERA5Tiny12_47_96'])
+    parser.add_argument('--dataset_type', default='', type=str, help='Name of dataset to train',choices=["",
+    'WeathBench71','ERA5Tiny12_47_96_Normal','ERA5CephDataset','ERA5CephSmallDataset','ERA5Tiny12_47_96','WeathBench7066'])
     parser.add_argument('--dataset_flag', default="", type=str)
     parser.add_argument('--time_reverse_flag', default='only_forward', type=str)
     parser.add_argument('--time_intervel', type=int, default=1)
