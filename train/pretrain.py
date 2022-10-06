@@ -391,7 +391,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
     now = time.time()
     total_diff,total_num  = torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
-
+    nan_count = 0
     while inter_b.update_step():
         #if inter_b.now>10:break
         step = inter_b.now
@@ -415,7 +415,23 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
             else:
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
-            if torch.isnan(loss):raise
+            if torch.isnan(loss):
+                # we will check whether weight has nan 
+                bad_weight_name = []
+                bad_check = False
+                for name, p in model.named_parameters():
+                    if torch.isnan(p).any():
+                        bad_check    = True
+                        bad_weight_name.append(name)
+                if bad_check:
+                    print(f"the value is nan in weight:{bad_weight_name}")
+                    raise
+                else:
+                    nan_count+=1
+                    if nan_count>10:
+                        print("too many nan happened")
+                    print(f"detect nan, now at {nan_count}/10 warning level, pass....")   
+                    continue
             loss /= accumulation_steps
             iter_info_pool[f'train_loss_gpu{gpu}'] =  loss.item()
 
@@ -909,9 +925,8 @@ def main(args=None):
     else:
         args.world_size = 1
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
+    
     train_dataset_tensor=valid_dataset_tensor=train_record_load=valid_record_load=None
-
-
     if args.use_inmemory_dataset:
         assert args.dataset_type
         print("======== loading data as shared memory==========")

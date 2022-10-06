@@ -26,7 +26,8 @@ def optuna_high_level_main():
         args.seed  = random_seed= random.randint(1, 100000)
         args.hparam_dict = {}
         args.lr             = args.hparam_dict['lr']         = trial.suggest_uniform(f"lr", *lr_range)
-        args.batch_size     = args.hparam_dict['batch_size'] = trial.suggest_categorical("batch_size", batchsize_list)
+        if not gargs.batch_size:
+            args.batch_size     = args.hparam_dict['batch_size'] = trial.suggest_categorical("batch_size", batchsize_list)
         if not gargs.patch_size:
             args.patch_size     = args.hparam_dict['patch_size'] = trial.suggest_categorical("patch_size", patchsize_list)
         # if not gargs.input_noise_std:
@@ -34,22 +35,31 @@ def optuna_high_level_main():
         # #trial.set_user_attr('trial_name', TRIAL_NOW)
 
         #################################################################################
-        train_dataset_tensor=valid_dataset_tensor=None
-
-        print("======== loading data ==========")
-        if 'small' in args.train_set:
-            if not args.mode == 'fourcast':
-                train_dataset_tensor = load_small_dataset_in_memory('train').share_memory_()
-                valid_dataset_tensor = load_small_dataset_in_memory('valid').share_memory_()
+        train_dataset_tensor=valid_dataset_tensor=train_record_load=valid_record_load=None
+        if args.use_inmemory_dataset:
+            assert args.dataset_type
+            print("======== loading data as shared memory==========")
+            if not args.mode=='fourcast':
+                print(f"create training dataset template, .....")
+                train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='train',root=args.data_root)
+                train_dataset_tensor = train_dataset_tensor.share_memory_()
+                train_record_load  = train_record_load.share_memory_()
+                print(f"done! -> train template shape={train_dataset_tensor.shape}")
+                
+                print(f"create validing dataset template, .....")
+                valid_dataset_tensor, valid_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='valid',root=args.data_root)
+                valid_dataset_tensor = valid_dataset_tensor.share_memory_()
+                valid_record_load  = valid_record_load.share_memory_()
+                print(f"done! -> train template shape={valid_dataset_tensor.shape}")
             else:
-                train_dataset_tensor = load_small_dataset_in_memory('test').share_memory_()
-                valid_dataset_tensor = None
-        else:
-            if args.mode == 'fourcast':
-                train_dataset_tensor = load_test_dataset_in_memory(years=[2018],root="/nvme/zhangtianning/datasets/ERA5").share_memory_()
-                valid_dataset_tensor = None
-        print("=======done==========")
-        #print(train_dataset_tensor.shape)
+                print(f"create testing dataset template, .....")
+                train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='test',root=args.data_root)
+                train_dataset_tensor = train_dataset_tensor.share_memory_()
+                train_record_load  = train_record_load.share_memory_()
+                print(f"done! -> test template shape={train_dataset_tensor.shape}")          
+                valid_dataset_tensor = valid_record_load = None
+            print("========      done        ==========")
+
         result=main_worker(0, 1, args,train_dataset_tensor,valid_dataset_tensor)
         torch.cuda.empty_cache()
         #################################################################################

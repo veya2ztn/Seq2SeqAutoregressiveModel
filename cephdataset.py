@@ -43,7 +43,7 @@ def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_
             file_list.append([year, hour])
     print("loading data!!!")
     #file_list = file_list[:40]
-    data = torch.empty(len(file_list),720,1440,20)
+    data = torch.empty(len(file_list),720,1440,20,pin_memory=True)
     #print(data.shape)
     for idx,(year, hour) in tqdm(enumerate(file_list)):
         arrays = []
@@ -527,8 +527,8 @@ class ERA5Tiny12_47_96(ERA5BaseDataset):
             return [Field, Field_Dt, pysics_part] #(B,12,z,y,x)
 
 class WeathBench(BaseDataset):
-    years_split={'train':range(2018,2019),#range(1979, 2016),
-           'valid':range(2018,2019),#range(2016, 2018),
+    years_split={'train':range(1979, 2016),
+           'valid':range(2016, 2018),
            'test':range(2018,2019),
             'all': range(1979, 2022),
             'debug':range(1979,1980)}
