@@ -7,7 +7,7 @@ idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
 hostname = socket.gethostname()
 if hostname in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185']:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "6"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "6,7"
 os.environ['WANDB_MODE'] = 'offline'
 os.environ['WANDB_CONSOLE']='off'
 force_big  = True
@@ -153,6 +153,7 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     else:
         Field  = start[-1]
         if hasattr(model,'calculate_Advection'):Advection = model.calculate_Advection(Field)
+        if hasattr(model,'module') and hasattr(model.module,'calculate_Advection'):Advection = model.module.calculate_Advection(Field)
         normlized_Field_list = dataset.do_normlize_data([start])[0]  #always use normlized input
         normlized_Field      = normlized_Field_list[0] if len(normlized_Field_list)==1 else torch.stack(normlized_Field_list,2)
         target               = dataset.do_normlize_data([end])[0] #always use normlized target
@@ -481,8 +482,8 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
 def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     dataset_type   = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
-    train_dataset  = dataset_type(split="train",dataset_tensor=train_dataset_tensor,record_load_tensor=train_record_load,**args.dataset_kargs)
-    val_dataset   = dataset_type(split="valid",dataset_tensor=valid_dataset_tensor,record_load_tensor=valid_record_load,**args.dataset_kargs)
+    train_dataset  = dataset_type(split="train" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,record_load_tensor=train_record_load,**args.dataset_kargs)
+    val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,record_load_tensor=valid_record_load,**args.dataset_kargs)
     train_datasampler = DistributedSampler(train_dataset, shuffle=True) if args.distributed else None
     val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
     train_dataloader  = DataLoader(train_dataset, args.batch_size,   sampler=train_datasampler, num_workers=8, pin_memory=True, drop_last=True)
@@ -932,13 +933,13 @@ def main(args=None):
         print("======== loading data as shared memory==========")
         if not args.mode=='fourcast':
             print(f"create training dataset template, .....")
-            train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='train',root=args.data_root)
+            train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='train' if not args.debug else 'test',root=args.data_root)
             train_dataset_tensor = train_dataset_tensor.share_memory_()
             train_record_load  = train_record_load.share_memory_()
             print(f"done! -> train template shape={train_dataset_tensor.shape}")
             
             print(f"create validing dataset template, .....")
-            valid_dataset_tensor, valid_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='valid',root=args.data_root)
+            valid_dataset_tensor, valid_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='valid' if not args.debug else 'test',root=args.data_root)
             valid_dataset_tensor = valid_dataset_tensor.share_memory_()
             valid_record_load  = valid_record_load.share_memory_()
             print(f"done! -> train template shape={valid_dataset_tensor.shape}")

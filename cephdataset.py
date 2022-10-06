@@ -133,6 +133,13 @@ class BaseDataset:
     def do_time_reverse(self,idx):
         return False
     def __getitem__(self,idx):
+        reversed_part = self.do_time_reverse(idx)
+        time_step_list= [idx+i*self.time_intervel for i in range(self.time_step)]
+        if reversed_part:time_step_list = time_step_list[::-1]
+        batch = [self.get_item(i,reversed_part) for i in time_step_list]
+        self.error_path = []
+        return batch if not self.with_idx else (idx,batch)
+
         try:
             reversed_part = self.do_time_reverse(idx)
             time_step_list= [idx+i*self.time_intervel for i in range(self.time_step)]
@@ -581,11 +588,14 @@ class WeathBench(BaseDataset):
         # the self.dataset_tensor should be same shape as the otensor, for example (10000, 110, 32, 64)
         # the self.record_load_tensor is used to record which row is record.
         # This implement will automatively offline otensor after load it once.
-        self.dataset_tensor = dataset_tensor
-        self.record_load_tensor = record_load_tensor
-        assert ((self.record_load_tensor is not None) and (self.dataset_tensor is not None)) or \
-            ((self.record_load_tensor is    None) and (self.dataset_tensor is   None))
+        assert ((record_load_tensor is not None) and (dataset_tensor is not None)) or \
+            ((record_load_tensor is    None) and (dataset_tensor is   None))
         
+        if dataset_tensor is None:
+            self.dataset_tensor,self.record_load_tensor = self.create_offline_dataset_templete(split,years=years, root=self.root, do_in_class=True)
+        else:
+            self.dataset_tensor,self.record_load_tensor = dataset_tensor,record_load_tensor
+
         self.dataset_flag     = dataset_flag
         self.clim_tensor      = [0]
         self.mean_std         = self.load_numpy_from_url(os.path.join(self.root,"mean_std.npy"))
@@ -630,7 +640,8 @@ class WeathBench(BaseDataset):
         return file_list
 
     @staticmethod
-    def create_offline_dataset_templete(split='test',years=None, root=None):
+    def create_offline_dataset_templete(split='test',years=None, root=None, do_in_class=False):
+        if do_in_class:return None, None
         if years is None:
             years = WeathBench.years_split[split]
         else:
@@ -822,12 +833,16 @@ class WeathBench716(WeathBench71):
 
 class WeathBench7066(WeathBench71):
     default_root='datasets/weatherbench_6hour'
-    
-    def init_file_list(self,years):
-        return np.load(os.path.join(self.root,f"{self.split}.npy"))
-    
+    def __len__(self):
+        return len(self.dataset_tensor) - self.time_step*self.time_intervel + 1
+    @staticmethod
+    def create_offline_dataset_templete(split='test',years=None, root=None, do_in_class=False):
+        dataset_tensor   = torch.Tensor(np.load(os.path.join(WeathBench7066.default_root,f"{split}.npy")))
+        record_load_tensor = torch.ones(len(dataset_tensor))
+        return dataset_tensor,record_load_tensor
+
     def load_otensor(self,idx):
-        data = self.single_data_path_list[idx]
+        data = self.dataset_tensor[idx]
         data = data*self.mean_std[1].reshape(110,1,1) + self.mean_std[0].reshape(110,1,1)
         return data
 
@@ -840,10 +855,10 @@ class WeathBench7066(WeathBench71):
             '3D70U': (_list ,'unit_norm_3D' , self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), identity, identity ),
         }
         
-        mean, std = self.mean_std[:,_list].reshape(2,70,1,1)
-        config_pool['2D70O'] =(_list,'none', (0,1) , lambda x:do_batch_normlize(x,mean,std), lambda x:inv_batch_normlize(x,mean,std))
-        mean, std = self.mean_std[:,_list].reshape(2,5,14,1,1)
-        config_pool['3D70O'] =(_list  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
+        # mean, std = self.mean_std[:,_list].reshape(2,70,1,1)
+        # config_pool['2D70O'] =(_list,'none', (0,1) , lambda x:do_batch_normlize(x,mean,std), lambda x:inv_batch_normlize(x,mean,std))
+        # mean, std = self.mean_std[:,_list].reshape(2,5,14,1,1)
+        # config_pool['3D70O'] =(_list  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
         return config_pool
     
 
