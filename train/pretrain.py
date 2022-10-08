@@ -122,21 +122,24 @@ def compute_rmse(pred, true):
 
 
 def once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode):
+    #print([(s[0].shape,s[1].shape) for s in start])
     # start is data list [ [[B,P,h,w],[B,4]] , [[B,P,h,w],[B,4]], [[B,P,h,w],[B,4]], ...]
     start_feature = torch.stack([t[0] for t in start],-1) #[B,P,h,w,T]
     start_timestamp= torch.stack([t[1] for t in start],1) #[B,T,4]
     
     if not isinstance(end[0],(list,tuple)):end = [end]
 
-    target     = torch.stack([t[0] for t in end],-1) #[B,P,h,w,T]
+    target        = torch.stack([t[0] for t in end],-1) #[B,P,h,w,T]
     end_timestamp = torch.stack([t[1] for t in end],1) #[B,T,4]
     
     ltmv_pred   = model(start_feature,start_timestamp, end_timestamp)
+    
     #print(ltmv_pred.shape)
     extra_loss=0
     extra_info_from_model_list = []
-    start = start[1:]+end[:1]
+    start = start[1:]+[[ltmv_pred[...,0],end_timestamp[:,0]]]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
+
 def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     Field = Advection = None
 
@@ -223,7 +226,7 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
 			break
 	return loss, diff, iter_info_pool
 
-def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset):
+def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,save_prediction_first_step=None,save_prediction_final_step=None):
     accu_series=[]
     rmse_series=[]
     extra_info = {}
@@ -241,14 +244,22 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset):
         ltmv_true = dataset.inv_normlize_data([target])[0].detach().cpu()
         ltmv_pred = ltmv_pred.detach().cpu()
         if len(clim.shape)!=len(ltmv_pred.shape):
-            clim = clim[...,None] # temporary use this for timestamp input like [B, P, w,h,T]
+            ltmv_pred = ltmv_pred.squeeze(-1)
+            ltmv_true = ltmv_true.squeeze(-1) # temporary use this for timestamp input like [B, P, w,h,T]
+
+        if save_prediction_first_step is not None and i==model.history_length:save_prediction_first_step[idxes] = ltmv_pred.detach().cpu()
+        if save_prediction_final_step is not None and i==len(batch) - 1:save_prediction_final_step[idxes] = ltmv_pred.detach().cpu()
+
         accu_series.append(compute_accu(ltmv_pred - clim, ltmv_true - clim))
         #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
+        
         rmse_series.append(compute_rmse(ltmv_pred , ltmv_true ))
-        torch.cuda.empty_cache()
-
+        #torch.cuda.empty_cache()
+    
+    
     accu_series = torch.stack(accu_series,1) # (B,fourcast_num,20)
     rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,20)
+
 
     for idx, accu,rmse in zip(idxes,accu_series,rmse_series):
         #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
@@ -331,9 +342,12 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
     now = time.time()
     model.clim = torch.Tensor(data_loader.dataset.clim_tensor).to(device)
     fourcastresult={}
+    save_prediction_first_step = None#torch.zeros_like(data_loader.dataset.data)
+    save_prediction_final_step = None#torch.zeros_like(data_loader.dataset.data)
     intervel = batches//100 + 1
     with torch.no_grad():
         inter_b.lwrite("load everything, start_validating......", end="\r")
+        
         while inter_b.update_step():
             #if inter_b.now>10:break
             data_cost += time.time() - now;now = time.time()
@@ -341,7 +355,8 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
             idxes,batch = prefetcher.next()
             batch       = make_data_regular(batch,half_model)
             # first sum should be (B, P, W, H )
-            fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset)
+            fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset,
+                                         save_prediction_first_step=save_prediction_first_step,save_prediction_final_step=save_prediction_final_step)
             train_cost += time.time() - now;now = time.time()
             start = batch[0]
             for _ in range(random_repeat):
@@ -358,6 +373,9 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
                     if use_wandb:wandb.log(info_pool)
                 outstring=(f"epoch:fourcast iter:[{step:5d}]/[{len(data_loader)}] GPU:[{gpu}] cost:[Date]:{data_cost/intervel:.1e} [Train]:{train_cost/intervel:.1e} [Rest]:{rest_cost/intervel:.1e}")
                 inter_b.lwrite(outstring, end="\r")
+    if save_prediction_first_step is not None:torch.save(save_prediction_first_step,os.path.join(logsys.ckpt_root,'save_prediction_first_step')) 
+    if save_prediction_final_step is not None:torch.save(save_prediction_final_step,os.path.join(logsys.ckpt_root,'save_prediction_final_step')) 
+    
     return fourcastresult
 
 
@@ -517,7 +535,7 @@ def run_fourcast(args, model,logsys,test_dataloader):
     }
     prefix = prefix_pool[test_dataset.time_reverse_flag]
 
-    
+    args.force_fourcast=True
     gpu       = dist.get_rank() if hasattr(model,'module') else 0
     save_path = os.path.join(logsys.ckpt_root,f"fourcastresult.gpu_{gpu}")
     if not os.path.exists(save_path) or  args.force_fourcast:
@@ -532,7 +550,6 @@ def run_fourcast(args, model,logsys,test_dataloader):
         fourcastresult = torch.load(save_path)
 
     if not args.distributed:
-
         accu_list = torch.stack([p['accu'] for p in fourcastresult.values()]).mean(0)# (fourcast_num,property_num)
         accu_table= pd.DataFrame(accu_list.transpose(1,0),index=test_dataset.vnames)
         logsys.info("===>accu_table<===")
@@ -549,7 +566,7 @@ def run_fourcast(args, model,logsys,test_dataloader):
         try:
             if not isinstance(test_dataset.unit_list,int):
                 unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
-                print(unit_list)
+                #print(unit_list)
                 unit_num  = max(unit_list.shape)
                 unit_list = unit_list.reshape(1,unit_num)
                 property_num = len(test_dataset.vnames)
