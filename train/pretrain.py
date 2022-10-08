@@ -240,10 +240,12 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset):
 
         ltmv_true = dataset.inv_normlize_data([target])[0].detach().cpu()
         ltmv_pred = ltmv_pred.detach().cpu()
+        if len(clim.shape)!=len(ltmv_pred.shape):
+            clim = clim[...,None] # temporary use this for timestamp input like [B, P, w,h,T]
         accu_series.append(compute_accu(ltmv_pred - clim, ltmv_true - clim))
         #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
         rmse_series.append(compute_rmse(ltmv_pred , ltmv_true ))
-
+        torch.cuda.empty_cache()
 
     accu_series = torch.stack(accu_series,1) # (B,fourcast_num,20)
     rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,20)
@@ -680,7 +682,7 @@ def parse_default_args(args):
     if hasattr(args,'dataset_flag') and args.dataset_flag:dataset_kargs['dataset_flag']= args.dataset_flag
     if hasattr(args,'time_intervel'):dataset_kargs['time_intervel']= args.time_intervel
     if hasattr(args,'use_time_stamp') and args.use_time_stamp:dataset_kargs['use_time_stamp']= args.use_time_stamp
-    if hasattr(args,'physics_num'):dataset_kargs['physics_num']= args.physics_num
+    
     
 
     args.dataset_type = dataset_type if not args.dataset_type else args.dataset_type
@@ -708,7 +710,7 @@ def parse_default_args(args):
         "reduce_Field_coef":args.use_scalar_advection,
         "modes":deal_with_tuple_string(args.modes,(17,33,6)),
         "mode_select":args.mode_select,
-        
+        "physics_num":args.physics_num,
     }
     args.model_kargs = model_kargs
     return args

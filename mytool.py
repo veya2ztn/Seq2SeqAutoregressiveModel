@@ -143,7 +143,7 @@ def run_fourcast(ckpt_path):
     #args.train_set = "small"
     args.fourcast  = True
     args.mode      = 'fourcast'
-    args.batch_size= 128
+    args.batch_size= 12
     args.pretrain_weight = best_path
 
     if 'config.json' in os.listdir(ckpt_path):
@@ -159,7 +159,7 @@ def run_fourcast(ckpt_path):
     #args.train_set = 'small'
     args.mode      = 'fourcast'
     args.fourcast  = True
-    args.batch_size= 128    
+    args.batch_size= 8    
     args.pretrain_weight = best_path
     args.time_step = 4*24//6
     # args.time_reverse_flag = 'only_backward'
