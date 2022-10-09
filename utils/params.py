@@ -10,7 +10,7 @@ def get_args_parser():
     parser.add_argument('--valid_batch_size', default=-1, type=int)
     parser.add_argument('--epochs', default=-1, type=int)
     parser.add_argument('--save_warm_up', default=5, type=int)
-    parser.add_argument('--history_length', default=1, type=int)
+    
     parser.add_argument('--seed', default=-1, type=int)
     parser.add_argument('--input_noise_std', type=float, default=0.0, help='input_noise_std')
     parser.add_argument('--do_final_fourcast', type=int, default=1, help='do fourcast step after finish training')
@@ -30,6 +30,9 @@ def get_args_parser():
     parser.add_argument('--output_channel', type=int, default=0)
     parser.add_argument('--embed_dim', type=int, default=768)
     parser.add_argument('--model_depth', type=int, default=12)
+    parser.add_argument('--history_length', default=1, type=int)
+    parser.add_argument('--pred_len', type=int, default=1)
+    parser.add_argument('--label_len', type=int, default=3)
     parser.add_argument('--use_amp', type=int, default=True, help='use_amp')
     parser.add_argument('--random_time_step', action='store_true')
     parser.set_defaults(random_time_step=False)

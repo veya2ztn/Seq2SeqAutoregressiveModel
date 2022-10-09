@@ -7,7 +7,7 @@ idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
 hostname = socket.gethostname()
 if hostname in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185']:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1,3,4,5,6,7"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "6"
 os.environ['WANDB_MODE'] = 'offline'
 os.environ['WANDB_CONSOLE']='off'
 force_big  = True
@@ -593,6 +593,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset):
         if use_wandb:wandb.log(info_pool)
         info_pool_list.append(info_pool)
     return info_pool_list
+
 def run_fourcast(args, model,logsys,test_dataloader):
     import warnings
     warnings.filterwarnings("ignore")
@@ -626,7 +627,8 @@ def run_fourcast(args, model,logsys,test_dataloader):
 def get_model_name(args):
     model_name = args.model_type
     if "FED" in args.model_type:
-        return f"{args.model_type}_{args.modes}_{args.mode_select}"
+        mode_name =args.modes.replace(",","-")
+        return f"{args.model_type}.{args.mode_select}_select.M{mode_name}_P{args.pred_len}L{args.label_len}"
     if "AFN" in args.model_type and hasattr(args,'model_depth') and args.model_depth == 6:
         model_name = "small_" + model_name
     model_name = f"ViT_in_bulk-{model_name}" if len(args.img_size)>2 else model_name
@@ -750,6 +752,8 @@ def parse_default_args(args):
         "modes":deal_with_tuple_string(args.modes,(17,33,6)),
         "mode_select":args.mode_select,
         "physics_num":args.physics_num,
+        "pred_len":args.pred_len,
+        "label_len":args.label_len,
     }
     args.model_kargs = model_kargs
     return args

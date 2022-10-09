@@ -270,6 +270,13 @@ class FEDformer1D(nn.Module):
 
     def forward(self, x_enc, x_mark_enc, x_mark_dec,
                 enc_self_mask=None, dec_self_mask=None, dec_enc_mask=None):
+   
+        channel_last = True
+        if x_enc.shape[1:]==tuple([self.in_chans]+list(self.img_size)+[self.seq_len]):
+            channel_last = False
+            permute_order= [0]+list(range(2,len(x_enc.shape)))+[1]
+            x_enc = x_enc.permute(*permute_order)
+
         ## x_enc      -->  [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T1, in_channels]
         ## x_mark_enc -->  [Batch,  T1, T_feature]
         ## x_dec      -->  [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T2, in_channels]
@@ -297,9 +304,10 @@ class FEDformer1D(nn.Module):
         dec_out = trend_part + seasonal_part
         e_shape = dec_out.shape
         dec_out = dec_out.reshape(*o_shape[:-2],e_shape[-2],e_shape[-1])
-        if self.output_attention:
-            return dec_out[..., -self.pred_len:, :], attns
-        else:
-            return dec_out[..., -self.pred_len:, :]  # [B, L, D]
+        dec_out = dec_out[..., -self.pred_len:, :]
+        if not channel_last:
+            permute_order= [0,-1]+list(range(1,len(dec_out.shape)-1))
+            dec_out = dec_out.permute(*permute_order)
+        return   dec_out
 
 

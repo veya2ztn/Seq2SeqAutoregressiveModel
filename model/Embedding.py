@@ -90,7 +90,16 @@ class DataEmbedding_wo_pos(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
     def forward(self, x, x_mark):
-        x = self.value_embedding(x) + self.temporal_embedding(x_mark)
+        a = self.value_embedding(x)
+        b = self.temporal_embedding(x_mark)
+        reshape = False
+        if a.shape[0]!= b.shape[0]:
+            a = a.reshape(len(b),-1,a.shape[-2],a.shape[-1])
+            b = b.unsqueeze(1)
+            reshape = True
+
+        x = a + b
+        if reshape: x = x.flatten(0,1)
         return self.dropout(x)
 
 class DataEmbedding_SLSDTD(nn.Module):
