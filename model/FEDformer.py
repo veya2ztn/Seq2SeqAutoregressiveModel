@@ -504,7 +504,7 @@ class FEDformer(nn.Module):
     FEDformer performs the attention mechanism on frequency domain and achieved O(N) complexity
     """
     def __init__(self, img_size=None, in_chans=None, out_chans=None,embed_dim=None, depth=2,
-               history_length=6, modes=(17,33,6), mode_select='',label_len=1,pred_len=1,moving_avg=None,
+               history_length=6, modes=(17,33,6), mode_select='',label_len=3,pred_len=1,moving_avg=None,
                dropout=0,time_unit='h',n_heads=8,**kargs):
         super(FEDformer, self).__init__()
         self.mode_select    = mode_select
@@ -581,19 +581,18 @@ class FEDformer(nn.Module):
         seasonal_init, trend_init = self.decomp(x_enc)
         # decoder input
         mean           = torch.mean(x_enc, dim=-2,keepdim=True)
-        trend_init     = torch.cat([trend_init[..., -self.label_len:, :], mean], dim=-2)
+        trend_init     = torch.cat([trend_init[..., -self.label_len:, :]]+[mean]*self.pred_len, dim=-2)
         seasonal_init  = F.pad(seasonal_init[..., -self.label_len:, :], (0, 0, 0, self.pred_len))
-        # enc
         enc_out        = self.enc_embedding(x_enc, x_mark_enc)
         enc_out, attns = self.encoder(enc_out, attn_mask=enc_self_mask)
         # dec
+
         dec_out                   = self.dec_embedding(seasonal_init, x_mark_dec)
-        seasonal_part, trend_part = self.decoder(dec_out, enc_out,x_mask=dec_self_mask, cross_mask=dec_enc_mask,
-                            trend=trend_init)
+        seasonal_part, trend_part = self.decoder(dec_out, enc_out,x_mask=dec_self_mask, cross_mask=dec_enc_mask,trend=trend_init)
         # final
         dec_out = trend_part + seasonal_part
         dec_out = dec_out[..., -self.pred_len:, :]
-           # [B, L, D]
+        # [B, L, D]
         if not channel_last:
             permute_order= [0,-1]+list(range(1,len(dec_out.shape)-1))
             dec_out = dec_out.permute(*permute_order)

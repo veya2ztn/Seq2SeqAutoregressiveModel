@@ -82,6 +82,17 @@ class TimeFeatureEmbedding(nn.Module):
     def forward(self, x):
         return self.embed(x)
 
+class DataEmbedding_wo_pos(nn.Module):
+    def __init__(self, c_in, d_model, freq='h', dropout=0.1):
+        super().__init__()
+        self.value_embedding    = TimeDEmbedding(c_in=c_in, d_model=d_model)
+        self.temporal_embedding = TimeFeatureEmbedding(d_model=d_model, freq=freq)
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, x, x_mark):
+        x = self.value_embedding(x) + self.temporal_embedding(x_mark)
+        return self.dropout(x)
+
 class DataEmbedding_SLSDTD(nn.Module):
     def __init__(self, c_in, d_model, space_num, freq='h', dropout=0.1):
         super().__init__()

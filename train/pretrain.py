@@ -122,22 +122,21 @@ def compute_rmse(pred, true):
 
 
 def once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode):
+    target        = torch.stack([t[0] for t in end],-1) #[B,P,h,w,T]
     #print([(s[0].shape,s[1].shape) for s in start])
     # start is data list [ [[B,P,h,w],[B,4]] , [[B,P,h,w],[B,4]], [[B,P,h,w],[B,4]], ...]
     start_feature = torch.stack([t[0] for t in start],-1) #[B,P,h,w,T]
     start_timestamp= torch.stack([t[1] for t in start],1) #[B,T,4]
-    
-    if not isinstance(end[0],(list,tuple)):end = [end]
-
-    target        = torch.stack([t[0] for t in end],-1) #[B,P,h,w,T]
-    end_timestamp = torch.stack([t[1] for t in end],1) #[B,T,4]
+    assert model.pred_len == 1
+    assert not isinstance(end[0],(list,tuple))#if not isinstance(end[0],(list,tuple)):end = [end]
+    end_timestamp = torch.stack([t[1] for t in start[-model.label_len:]] + [t[1] for t in end],1) #[B,T,4]
     
     ltmv_pred   = model(start_feature,start_timestamp, end_timestamp)
     
     #print(ltmv_pred.shape)
     extra_loss=0
     extra_info_from_model_list = []
-    start = start[1:]+[[ltmv_pred[...,0],end_timestamp[:,0]]]
+    start = start[1:]+[[ltmv_pred[...,0],end_timestamp[:,-1]]]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
@@ -601,7 +600,7 @@ def run_fourcast(args, model,logsys,test_dataloader):
     #test_dataset,  test_dataloader = get_test_dataset(args)
     
 
-    args.force_fourcast=True
+    #args.force_fourcast=True
     gpu       = dist.get_rank() if hasattr(model,'module') else 0
     save_path = os.path.join(logsys.ckpt_root,f"fourcastresult.gpu_{gpu}")
     if not os.path.exists(save_path) or  args.force_fourcast:
