@@ -1,4 +1,5 @@
 from ast import Not
+from distutils.log import info
 import os
 os.environ['WANDB_SILENT']="true"
 
@@ -51,13 +52,14 @@ def assign_trail_job(trial_path):
         reader = SummaryReader(log_dir)
         df = reader.scalars
         if 'tag' not in reader.hparams:
-            print(trial_path)
-            print(os.listdir(trial_path))
-            print(reader.hparams)
+            print(f"no hparams at {log_dir}")
+            #print(reader.hparams)
           
-        if len(df) < 1: continue
-
-        for key in set(df['tag'].values):
+        if len(df) < 1: 
+            print(f"no scalars at {log_dir},pass")
+            continue
+        print("start parsing tensorboard..............")
+        for key in tqdm.tqdm(set(df['tag'].values)):
             all_pool = test_pool if 'test' in key else epoch_pool
             if len(df[df['tag'] == key] )>1e3:
                 now = df[df['tag'] == key]
@@ -94,6 +96,7 @@ def assign_trail_job(trial_path):
             for step, val in zip(steps,values):
                 if step not in all_pool:all_pool[step]={}
                 all_pool[step][key]=val
+        print("tensorboard parse done, start wandb..............")
     hparams = hparams2 if hparams1 is None else hparams1
     if hparams == None:return
     hparams['mode']      = mode
@@ -105,7 +108,8 @@ def assign_trail_job(trial_path):
             job_type= job_type,
             name    = name,
             #dir     = "ERA5_20-12/AFNONet/pretrain-physics_small/08_11_21_34",
-            settings=wandb.Settings(_disable_stats=True)
+            settings=wandb.Settings(_disable_stats=True),
+            resume="allow"
             #reinit=True
             )
     for step, record in epoch_pool.items():
@@ -119,15 +123,20 @@ def assign_trail_job(trial_path):
         for step, val in zip(iters[iter_pick],values[iter_pick]):
             wandb.log({'iter':step,name:val})
     wandb.finish()
+    print("all done..............")
 
 class Config(object):
     def __init__(self, config_dict):
         for key, val in config_dict.items():
             self.__setattr__(key, val)
 
-def run_fourcast(ckpt_path):
-    from train.pretrain import main,get_args
+def run_fourcast(ckpt_path,step = 4*24//6):
+    from train.pretrain import main
+    args = get_args(ckpt_path,step = step)
+    main(args)
 
+def get_args(ckpt_path,step = 4*24//6):
+    from train.pretrain import get_args
     args = get_args(args=[])
         
     
@@ -161,12 +170,11 @@ def run_fourcast(ckpt_path):
     args.fourcast  = True
     args.batch_size= 8    
     args.pretrain_weight = best_path
-    args.time_step = 4*24//6
+    args.time_step = step
     # args.time_reverse_flag = 'only_backward'
     # args.img_size  = (3,51,96)
     # args.patch_size= (1,3,3)
-
-    main(args)
+    return args
 
 def remove_trail_path(trial_path):
     trail_file_list= os.listdir(trial_path)
@@ -178,8 +186,40 @@ def remove_trail_path(trial_path):
         'rmse_unit' not in trail_file_list):
         os.system(f"rm -rf {trail_path}")
 
+def create_fourcast_table(ckpt_path,step = 4*24//6):
+    from train.pretrain import create_fourcast_metric_table,get_test_dataset,LoggingSystem,parse_default_args,create_logsys
+    import wandb
+    import re,torch
+    args = get_args(ckpt_path,step = step)
+    args.gpu = args.local_rank = gpu  = local_rank = 0
+    ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
+    args= parse_default_args(args)
+    args.SAVE_PATH = ckpt_path
+    ########## inital log ###################
+    
+    test_dataset,   test_dataloader = get_test_dataset(args)
+    args.SAVE_PATH = './debug'
+    args.local_rank=1
+    logsys = create_logsys(args,False)
+    info_pool_list = create_fourcast_metric_table(ckpt_path, logsys,test_dataset)
 
+    dirname = summary_dir= ckpt_path
+    dirname,name     = os.path.split(dirname)
+    dirname,job_type = os.path.split(dirname)
+    dirname,group    = os.path.split(dirname)
+    dirname,project  = os.path.split(dirname)
+    torch.save( info_pool_list, os.path.join(args.SAVE_PATH,f'{project}_{job_type}_{name}'))
 
+    wandb.init(project = project,
+            entity  = "szztn951357",
+            group   = group,
+            job_type= job_type,
+            name    = name,
+            resume="allow"
+            )
+    for info_pool in info_pool_list:
+        wandb.log(info_pool)
+    wandb.finish()
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('parse tf.event file to wandb', add_help=False)
     parser.add_argument('--path',type=str)
@@ -187,6 +227,7 @@ if __name__ == "__main__":
     parser.add_argument('--level', default=1, type=int)
     parser.add_argument('--divide', default=1, type=int)
     parser.add_argument('--part', default=0, type=int)
+    parser.add_argument('--fourcast_step', default=4*24//6, type=int)
     args = parser.parse_args()
 
     level = args.level
@@ -205,31 +246,29 @@ if __name__ == "__main__":
     length = int(np.ceil(1.0*total_lenght/args.divide))
     s = args.part
 
+
+    #now_path = [
+    #    "checkpoints/WeathBench71/small_AFNONet/history_6_time_step_7_pretrain-2D70N_every_6_step/09_29_13_44_49-seed_43796",        
+    #    "checkpoints/WeathBench71/small_AFNONet/history_6_time_step_7_pretrain-2D70N_every_12_step/09_29_14_28_06-seed_97967",
+    #    "checkpoints/WeathBench71/small_AFNONet/history_6_time_step_7_pretrain-2D70N_every_24_step/09_29_14_28_06-seed_26333-pollution",
+    #]
+
+
     print(f"we detect {len(now_path)} trail path; from {now_path[0]} to {now_path[-1]}")
     now_path = now_path[s*length:(s+1)*length]
     print(f"we process from {now_path[0]} to {now_path[-1]}")
 
-    # now_path = [
-    #     "checkpoints/ERA5_20-12/AFNONet/time_step_2_pretrain-physics_small/08_25_20_21_40-seed_42",        
-    #     "checkpoints/ERA5_20-12/AFNONet/time_step_3_pretrain-physics_small/09_16_22_52_10-seed_47117",
-    #     "checkpoints/ERA5_20-12/AFNONet/time_step_4_pretrain-physics_small/09_15_04_24_58-seed_36823",
-    #     "checkpoints/ERA5_20-12/AFNONet/time_step_5_pretrain-physics_small/09_15_08_38_29-seed_91367",
-    #     "checkpoints/ERA5_20-12/AFNONet/time_step_6_pretrain-physics_small/09_17_23_28_33-seed_27848",
-    #     "checkpoints/ERA5_20-12/AFNONet/time_step_7_pretrain-physics_small/09_17_13_25_48-seed_79912",
-    #     "checkpoints/ERA5_20-12/AFNONet/time_step_8_pretrain-physics_small/09_16_18_53_07-seed_69917"
-
-    # ]
-
+    
     for trail_path in tqdm.tqdm(now_path):
         #os.system(f"sensesync sync s3://QNL1575AXM6DF9QUZDA9:BiulXCfnNpIx6tl6P14I8W5QDw6NSU3yqSWVdbkH@FourCastNet.10.140.2.204:80/{trail_path}/ {trail_path}/")
         #os.system(f"sensesync sync {trail_path}/ s3://QNL1575AXM6DF9QUZDA9:BiulXCfnNpIx6tl6P14I8W5QDw6NSU3yqSWVdbkH@FourCastNet.10.140.2.204:80/{trail_path}/ ")
         #os.system(f"aws s3 --endpoint-url=http://10.140.2.204:80 --profile zhangtianning sync s3://FourCastNet/{trail_path}/ {trail_path}/")
         # print(trail_path)
         # print(os.listdir(trail_path))
-
-        if   args.mode == 'fourcast':run_fourcast(trail_path)
+        if   args.mode == 'fourcast':run_fourcast(trail_path,step=args.fourcast_step)
         elif args.mode == 'tb2wandb':assign_trail_job(trail_path)
         elif args.mode == 'cleantmp':remove_trail_path(trail_path)
         elif args.mode == 'cleanwgt':remove_weight(trail_path)
+        elif args.mode == 'createtb':create_fourcast_table(trail_path)
         else:
             raise NotImplementedError

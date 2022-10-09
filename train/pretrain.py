@@ -7,7 +7,7 @@ idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
 hostname = socket.gethostname()
 if hostname in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185']:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "6,7"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1,3,4,5,6,7"
 os.environ['WANDB_MODE'] = 'offline'
 os.environ['WANDB_CONSOLE']='off'
 force_big  = True
@@ -523,17 +523,83 @@ def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
     test_dataloader   = DataLoader(test_dataset, args.batch_size, sampler=test_datasampler, num_workers=8, pin_memory=False)
     return   test_dataset,   test_dataloader
 
+def create_fourcast_metric_table(fourcastresult, logsys,test_dataset):
+    prefix_pool={
+        'only_backward':"time_reverse_",
+        'only_forward':""
+    }
+    prefix = prefix_pool[test_dataset.time_reverse_flag]
+
+    if isinstance(fourcastresult,str):
+        # then it is the fourcastresult path
+        ROOT= fourcastresult
+        fourcastresult_list = [os.path.join(ROOT,p) for p in os.listdir(fourcastresult) if 'fourcastresult.gpu' in p]
+        fourcastresult={}
+        for save_path in fourcastresult_list:
+            tmp = torch.load(save_path)
+            for key,val in tmp.items():
+                fourcastresult[key] = val
+        
+    accu_list = torch.stack([p['accu'] for p in fourcastresult.values()]).mean(0)# (fourcast_num,property_num)
+    accu_table= pd.DataFrame(accu_list.transpose(1,0),index=test_dataset.vnames)
+    logsys.info("===>accu_table<===")
+    logsys.info(accu_table);
+    accu_table.to_csv(os.path.join(logsys.ckpt_root,prefix+'accu_table'))
+
+    rmse_list = torch.stack([p['rmse'] for p in fourcastresult.values()]).mean(0)# (fourcast_num,property_num)
+    rmse_table= pd.DataFrame(rmse_list.transpose(1,0),index=test_dataset.vnames)
+    logsys.info("===>rmse_table<===")
+    logsys.info(rmse_table);
+    rmse_table.to_csv(os.path.join(logsys.ckpt_root,prefix+'rmse_table'))
+    try:
+        if not isinstance(test_dataset.unit_list,int):
+            unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
+            #print(unit_list)
+            unit_num  = max(unit_list.shape)
+            unit_list = unit_list.reshape(1,unit_num)
+            property_num = len(test_dataset.vnames)
+            if property_num > unit_num:
+                assert property_num%unit_num == 0
+                unit_list = torch.repeat_interleave(unit_list,int(property_num//unit_num),dim=1)
+        else:
+            logsys.info(f"unit list is int, ")
+            unit_list= test_dataset.unit_list
+        
+        rmse_unit_list= (rmse_list*unit_list)
+        print(rmse_unit_list.shape)
+        rmse_table_unit = pd.DataFrame(rmse_unit_list.transpose(1,0),index=test_dataset.vnames)
+        logsys.info("===>rmse_unit_table<===")
+        logsys.info(rmse_table_unit);rmse_table_unit.to_csv(os.path.join(logsys.ckpt_root,prefix+'rmse_table_unit'))
+    except:
+        logsys.info(f"get wrong when use unit list, we will fource let [rmse_unit_list] = [rmse_list]")
+        traceback.print_exc()
+
+    info_pool_list = []
+    for predict_time in range(len(accu_list)):
+        
+        real_time = (predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit
+        info_pool={}
+        accu_table = accu_list[predict_time]
+        rmse_table = rmse_list[predict_time]
+        rmse_table_unit = rmse_unit_list[predict_time]
+        for name,accu,rmse,rmse_unit in zip(test_dataset.vnames,accu_table,rmse_table, rmse_table_unit):
+            info_pool[prefix + f'test_accu_{name}'] = accu.item()
+            info_pool[prefix + f'test_rmse_{name}'] = rmse.item()
+            info_pool[prefix + f'test_rmse_unit_{name}'] = rmse_unit.item()
+        info_pool['real_time'] = real_time
+        for key, val in info_pool.items():
+            logsys.record(key,val, predict_time)
+        info_pool['time_step'] = predict_time
+        if use_wandb:wandb.log(info_pool)
+        info_pool_list.append(info_pool)
+    return info_pool_list
 def run_fourcast(args, model,logsys,test_dataloader):
     import warnings
     warnings.filterwarnings("ignore")
     logsys.info_log_path = os.path.join(logsys.ckpt_root, 'fourcast.info')
     test_dataset = test_dataloader.dataset
     #test_dataset,  test_dataloader = get_test_dataset(args)
-    prefix_pool={
-        'only_backward':"time_reverse_",
-        'only_forward':""
-    }
-    prefix = prefix_pool[test_dataset.time_reverse_flag]
+    
 
     args.force_fourcast=True
     gpu       = dist.get_rank() if hasattr(model,'module') else 0
@@ -550,55 +616,11 @@ def run_fourcast(args, model,logsys,test_dataloader):
         fourcastresult = torch.load(save_path)
 
     if not args.distributed:
-        accu_list = torch.stack([p['accu'] for p in fourcastresult.values()]).mean(0)# (fourcast_num,property_num)
-        accu_table= pd.DataFrame(accu_list.transpose(1,0),index=test_dataset.vnames)
-        logsys.info("===>accu_table<===")
-        logsys.info(accu_table);
-        accu_table.to_csv(os.path.join(logsys.ckpt_root,prefix+'accu_table'))
-
-        rmse_list = torch.stack([p['rmse'] for p in fourcastresult.values()]).mean(0)# (fourcast_num,property_num)
-        rmse_table= pd.DataFrame(rmse_list.transpose(1,0),index=test_dataset.vnames)
-        logsys.info("===>rmse_table<===")
-        logsys.info(rmse_table);
-        rmse_table.to_csv(os.path.join(logsys.ckpt_root,prefix+'rmse_table'))
-
-        #if args.dataset_type_string in ["",'ERA5CephDataset','ERA5CephSmallDataset']:
-        try:
-            if not isinstance(test_dataset.unit_list,int):
-                unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
-                #print(unit_list)
-                unit_num  = max(unit_list.shape)
-                unit_list = unit_list.reshape(1,unit_num)
-                property_num = len(test_dataset.vnames)
-                if property_num > unit_num:
-                    assert property_num%unit_num == 0
-                    unit_list = torch.repeat_interleave(unit_list,int(property_num//unit_num),dim=1)
-            else:
-                logsys.info(f"unit list is int, ")
-                unit_list= test_dataset.unit_list
-            
-            rmse_unit_list= (rmse_list*unit_list)
-            rmse_table_unit = pd.DataFrame(rmse_unit_list.transpose(1,0),index=test_dataset.vnames)
-            logsys.info("===>rmse_unit_table<===")
-            logsys.info(rmse_table_unit);rmse_table_unit.to_csv(os.path.join(logsys.ckpt_root,prefix+'rmse_table_unit'))
-        except:
-            logsys.info(f"get wrong when use unit list, we will fource let [rmse_unit_list] = [rmse_list]")
-            traceback.print_exc()
-
-        for predict_time in range(len(accu_list)):
-            info_pool={}
-            accu_table = accu_list[predict_time]
-            rmse_table = rmse_list[predict_time]
-            rmse_table_unit = rmse_unit_list[predict_time]
-            for name,accu,rmse,rmse_unit in zip(test_dataset.vnames,accu_table,rmse_table, rmse_table_unit):
-                info_pool[prefix + f'test_accu_{name}'] = accu.item()
-                info_pool[prefix + f'test_rmse_{name}'] = rmse.item()
-                info_pool[prefix + f'test_rmse_unit_{name}'] = rmse_unit.item()
-            for key, val in info_pool.items():
-                logsys.record(key,val, predict_time)
-            info_pool['time_step'] = predict_time
-            if use_wandb:wandb.log(info_pool)
+        create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
+    
     return 1
+
+
 
 
 def get_model_name(args):
@@ -732,7 +754,7 @@ def parse_default_args(args):
     args.model_kargs = model_kargs
     return args
 
-def create_logsys(args):
+def create_logsys(args,save_config=True):
     local_rank = args.gpu
     SAVE_PATH  = args.SAVE_PATH
     if local_rank     == 0:
@@ -761,7 +783,7 @@ def create_logsys(args):
     # cudnn.benchmark = True
     ## already done in logsys
     
-    if not args.debug:
+    if not args.debug and save_config:
         for key, val in vars(args).items():
             if local_rank==0:print(f"{key:30s} ---> {val}")
         config_path = os.path.join(logsys.ckpt_root,'config.json')
@@ -858,6 +880,7 @@ def main_worker(local_rank, ngpus_per_node, args,
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,
                                       test_record_load=train_record_load)
         run_fourcast(args, model,logsys,test_dataloader)
+        return 1
     else:
         train_dataset, val_dataset, train_dataloader,val_dataloader = get_train_and_valid_dataset(args,
                        train_dataset_tensor=train_dataset_tensor,train_record_load=train_record_load,

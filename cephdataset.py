@@ -169,7 +169,7 @@ class ERA5BaseDataset(BaseDataset):
 	]
 	full_physics_index = [5, 9,14 , 6,10,15 ,7,11,16 ,2, 8,13]
 	volicity_idx = [0, 5, 9, 14 , 1, 6, 10, 15]
-
+	time_unit=6
 	full_vnames_short = [
 		'u10', 'v10', 't2m', 'sp', 'msl',
 		'u', 'v', 'z',
@@ -336,7 +336,7 @@ class ERA5CephSmallDataset(ERA5CephDataset):
         return data,record_load_tensor
 
     def __len__(self):
-        return len(self.data) - self.time_step + 1
+        return len(self.data) - self.time_step*self.time_intervel + 1
 
     def get_item(self, idx,reversed_part=False):
         arrays = self.data[idx]
@@ -542,6 +542,7 @@ class ERA5Tiny12_47_96(ERA5BaseDataset):
             return [Field, Field_Dt, pysics_part] #(B,12,z,y,x)
 
 class WeathBench(BaseDataset):
+    time_unit=1
     years_split={'train':range(1979, 2016),
            'valid':range(2016, 2018),
            'test':range(2018,2019),
