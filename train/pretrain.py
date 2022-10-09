@@ -35,6 +35,7 @@ import torch.distributed as dist
 #from hfai.datasets import ERA5
 from model.afnonet import AFNONet
 from model.FEDformer import FEDformer
+from model.FEDformer1D import FEDformer1D
 from model.physics_model import *
 from utils.params import get_args
 from utils.tools import getModelSize, load_model, save_model
@@ -122,14 +123,14 @@ def compute_rmse(pred, true):
 
 
 def once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode):
-    target        = torch.stack([t[0] for t in end],-1) #[B,P,h,w,T]
+    assert model.pred_len == 1
+    assert not isinstance(end[0],(list,tuple))#if not isinstance(end[0],(list,tuple)):end = [end]
+    target        = end[0].unsqueeze(-1) #[B,P,h,w,T]
     #print([(s[0].shape,s[1].shape) for s in start])
     # start is data list [ [[B,P,h,w],[B,4]] , [[B,P,h,w],[B,4]], [[B,P,h,w],[B,4]], ...]
     start_feature = torch.stack([t[0] for t in start],-1) #[B,P,h,w,T]
     start_timestamp= torch.stack([t[1] for t in start],1) #[B,T,4]
-    assert model.pred_len == 1
-    assert not isinstance(end[0],(list,tuple))#if not isinstance(end[0],(list,tuple)):end = [end]
-    end_timestamp = torch.stack([t[1] for t in start[-model.label_len:]] + [t[1] for t in end],1) #[B,T,4]
+    end_timestamp = torch.stack([t[1] for t in start[-model.label_len:]] + [end[1]],1) #[B,T,4]
     
     ltmv_pred   = model(start_feature,start_timestamp, end_timestamp)
     
@@ -624,10 +625,10 @@ def run_fourcast(args, model,logsys,test_dataloader):
 
 def get_model_name(args):
     model_name = args.model_type
-    if args.model_type == 'FEDformer':
+    if "FED" in args.model_type:
         return f"{args.model_type}_{args.modes}_{args.mode_select}"
-    if hasattr(args,'model_depth') and args.model_depth == 6:
-        model_name = "small_"+model_name
+    if "AFN" in args.model_type and hasattr(args,'model_depth') and args.model_depth == 6:
+        model_name = "small_" + model_name
     model_name = f"ViT_in_bulk-{model_name}" if len(args.img_size)>2 else model_name
     model_name = f"{args.wrapper_model}-{model_name}" if args.wrapper_model else model_name
     return model_name

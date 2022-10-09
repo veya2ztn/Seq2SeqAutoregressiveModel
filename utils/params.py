@@ -20,11 +20,11 @@ def get_args_parser():
     parser.add_argument('--continue_train', type=int, default=0, help='continue_train')
 
     # Model parameters
-    parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',choices=['AFNONet','FEDformer'])
+    parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',choices=['AFNONet','FEDformer','FEDformer1D'])
     parser.add_argument('--patch_size', default="", type=str)
     parser.add_argument('--img_size'  , default="", type=str)
     parser.add_argument('--modes'  , default="17,33,6", type=str)
-    parser.add_argument('--mode_select', default="", type=str)
+    parser.add_argument('--mode_select', default="normal", type=str)
     parser.add_argument('--physics_num' , type=int, default=4)
     parser.add_argument('--input_channel' , type=int, default=0)
     parser.add_argument('--output_channel', type=int, default=0)
