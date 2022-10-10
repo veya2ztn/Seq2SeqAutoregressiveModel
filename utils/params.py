@@ -20,7 +20,8 @@ def get_args_parser():
     parser.add_argument('--continue_train', type=int, default=0, help='continue_train')
 
     # Model parameters
-    parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',choices=['AFNONet','FEDformer','FEDformer1D'])
+    parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
+                        choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC'])
     parser.add_argument('--patch_size', default="", type=str)
     parser.add_argument('--img_size'  , default="", type=str)
     parser.add_argument('--modes'  , default="17,33,6", type=str)

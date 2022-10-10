@@ -37,6 +37,7 @@ import torch.distributed as dist
 from model.afnonet import AFNONet
 from model.FEDformer import FEDformer
 from model.FEDformer1D import FEDformer1D
+from JCmodels.fourcastnet import AFNONet as AFNONetJC
 from model.physics_model import *
 from utils.params import get_args
 from utils.tools import getModelSize, load_model, save_model
@@ -166,6 +167,7 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
         normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
 
     out   = model(normlized_Field)
+
     extra_loss = 0
     extra_info_from_model_list = []
     if isinstance(out,(list,tuple)):
