@@ -2,12 +2,13 @@
 from cmath import isnan
 import os, sys,time,json,copy
 import socket
+from tkinter.messagebox import NO
 sys.path.append(os.getcwd())
 idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
 hostname = socket.gethostname()
 if hostname in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185']:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "6"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "7"
 os.environ['WANDB_MODE'] = 'offline'
 os.environ['WANDB_CONSOLE']='off'
 force_big  = True
@@ -196,35 +197,40 @@ def once_forward(model,i,start,end,dataset,time_step_1_mode):
        return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
 
 def run_one_iter(model, batch, criterion, status, gpu, dataset):
-	iter_info_pool={}
-	loss = 0
-	diff = 0
-	random_run_step = np.random.randint(1,len(batch)) if len(batch)>1 else 0
-	time_step_1_mode=False
-	if len(batch) == 1 and isinstance(batch[0],(list,tuple)) and len(batch[0])>1:
-		batch = batch[0] # (Field, FieldDt)
-		time_step_1_mode=True
-	if model.history_length > len(batch):
-		print(f"you want to use history={model.history_length}")
-		print(f"but your input batch(timesteps) only has len(batch)={len(batch)}")
-		raise
-	#with torch.cuda.amp.autocast(dtype=torch.float):
-	start = batch[0:model.history_length] # start must be a list
-	for i in range(model.history_length,len(batch)):# i now is the target index
-		ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
-		if extra_loss !=0:
-			iter_info_pool[f'{status}_extra_loss_gpu{gpu}_timestep{i}'] = extra_loss.item()
-		for extra_info_from_model in extra_info_from_model_list:
-			for name, value in extra_info_from_model.items():
-				iter_info_pool[f'valid_on_{status}_{name}_timestep{i}'] = value
-		ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
-		abs_loss = criterion(ltmv_pred,target)
-		iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
-		loss += (abs_loss + extra_loss)/(len(batch) - 1)
-		diff += abs_loss/(len(batch) - 1)
-		if model.random_time_step_train and i >= random_run_step:
-			break
-	return loss, diff, iter_info_pool
+    iter_info_pool={}
+    loss = 0
+    diff = 0
+    random_run_step = np.random.randint(1,len(batch)) if len(batch)>1 else 0
+    time_step_1_mode=False
+    if len(batch) == 1 and isinstance(batch[0],(list,tuple)) and len(batch[0])>1:
+        batch = batch[0] # (Field, FieldDt)
+        time_step_1_mode=True
+    if model.history_length > len(batch):
+        print(f"you want to use history={model.history_length}")
+        print(f"but your input batch(timesteps) only has len(batch)={len(batch)}")
+        raise
+    pred_step = 0
+    start = batch[0:model.history_length] # start must be a list
+    for i in range(model.history_length,len(batch)):# i now is the target index
+        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
+        if extra_loss !=0:
+            iter_info_pool[f'{status}_extra_loss_gpu{gpu}_timestep{i}'] = extra_loss.item()
+        for extra_info_from_model in extra_info_from_model_list:
+            for name, value in extra_info_from_model.items():
+                iter_info_pool[f'valid_on_{status}_{name}_timestep{i}'] = value
+        ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
+        abs_loss = criterion(ltmv_pred,target)
+        iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
+        pred_step+=1
+        loss += abs_loss + extra_loss
+        diff += abs_loss
+        if model.random_time_step_train and i >= random_run_step:
+            break
+    loss = loss/(len(batch) - 1)
+    diff = diff/(len(batch) - 1)
+    # loss = loss/pred_step
+    # diff = diff/pred_step
+    return loss, diff, iter_info_pool
 
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,save_prediction_first_step=None,save_prediction_final_step=None):
     accu_series=[]
@@ -474,7 +480,8 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             with torch.no_grad():
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
         total_diff  += abs_loss.item()
-        total_num  += len(batch) - 1
+        total_num   += len(batch) - 1 #batch 
+        # total_num   += 1 
 
         train_cost.append(time.time() - now);now = time.time()
         time_step_now = len(batch)
@@ -636,10 +643,12 @@ def get_model_name(args):
     return model_name
 
 def get_datasetname(args):
-    if args.train_set in train_set:
+    datasetname = args.dataset_type
+    if not args.dataset_type and args.train_set in train_set:
         datasetname = train_set[args.train_set][4].__name__
-    else:
-        datasetname = args.dataset_type
+    if not datasetname:
+        raise NotImplementedError("please use right dataset type")
+        
     if datasetname in ["",'ERA5CephDataset','ERA5CephSmallDataset']:
         datasetname  = "ERA5_20-12" if 'physics' in args.train_set else "ERA5_20"
     return datasetname
