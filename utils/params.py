@@ -32,6 +32,8 @@ def get_args_parser():
     parser.add_argument('--embed_dim', type=int, default=768)
     parser.add_argument('--model_depth', type=int, default=12)
     parser.add_argument('--history_length', default=1, type=int)
+    parser.add_argument('--block_target_timestamp', default=0, type=int)
+    
     parser.add_argument('--pred_len', type=int, default=1)
     parser.add_argument('--label_len', type=int, default=3)
     parser.add_argument('--use_amp', type=int, default=True, help='use_amp')
@@ -52,7 +54,7 @@ def get_args_parser():
     parser.add_argument('--autoresume', action='store_true')
 
     parser.add_argument('--wrapper_model', default='', type=str, help='Name of model to train',choices=["",'DeltaModel','EulerEquationModel','ConVectionModel',
-                'EulerEquationModel3','EulerEquationModel2','EulerEquationModel4','OnlineNormModel'])
+                'EulerEquationModel3','Time_Sphere_Model','EulerEquationModel2','EulerEquationModel4','OnlineNormModel'])
 
     # Dataset parameters
     parser.add_argument('--dataset_type', default='', type=str, help='Name of dataset to train',choices=["",
