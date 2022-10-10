@@ -638,11 +638,21 @@ class FEDformer(nn.Module):
 
     def forward(self, x_enc, x_mark_enc, x_mark_dec, enc_self_mask=None, dec_self_mask=None, dec_enc_mask=None):
         # decomp init
-        channel_last = True
-        if x_enc.shape[1:]==tuple([self.in_chans]+list(self.space_dims_encoder)):
-            channel_last = False
+        
+        if x_mark_dec.shape[1] == self.pred_len:
+            # the input forget to cat the label len, then we do here
+            x_mark_dec = torch.cat([x_mark_enc[:,-self.label_len],x_mark_dec],1)
+
+        channel_last = 0
+        if x_enc.shape[1:]==tuple([self.in_chans]+list(img_size)+[self.seq_len]):
+            channel_last = 1
             permute_order= [0]+list(range(2,len(x_enc.shape)))+[1]
             x_enc = x_enc.permute(*permute_order)
+        elif x_enc.shape[1:]==tuple([self.in_chans]+[self.seq_len]+list(img_size)):
+            channel_last = 2
+            permute_order= [0]+list(range(3,len(x_enc.shape)))+[2,1]
+            x_enc = x_enc.permute(*permute_order)
+        
         ## x_enc      -->  [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T1, in_channels]
         ## x_mark_enc -->  [Batch,  T1]
         ## x_dec      -->  [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T2, in_channels]
@@ -664,7 +674,10 @@ class FEDformer(nn.Module):
         dec_out = dec_out[..., -self.pred_len:, :]
         #dec_out  = F.pad(dec_out,(2,2))
         # [B, L, D]
-        if not channel_last:
-            permute_order= [0,-1]+list(range(1,len(dec_out.shape)-1))
+        if channel_last == 1:
+            permute_order= [0,-1]+list(range(1,len(dec_out.shape)-1))# from (B,H,W,T,P) take [0,-1,1,2,3] to (B,P,H,W,T)
+            dec_out = dec_out.permute(*permute_order)
+        elif channel_last == 2:
+            permute_order= [0,-1,-2]+list(range(1,len(dec_out.shape)-2)) # from (B,h,W,T,P) take [0,-1,-2,1,2] to (B,P,T,H,W)
             dec_out = dec_out.permute(*permute_order)
         return dec_out

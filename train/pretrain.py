@@ -126,20 +126,41 @@ def compute_rmse(pred, true):
 
 def once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode):
     assert model.pred_len == 1
-    assert not isinstance(end[0],(list,tuple))#if not isinstance(end[0],(list,tuple)):end = [end]
-    target        = end[0].unsqueeze(-1) #[B,P,h,w,T]
+    if not isinstance(end[0],(list,tuple)):end = [end]
+    start_timestamp= torch.stack([t[1] for t in start],1) #[B,T,4]
+    end_timestamp = torch.stack([t[1] for t in end],1) #[B,T,4]    
     #print([(s[0].shape,s[1].shape) for s in start])
     # start is data list [ [[B,P,h,w],[B,4]] , [[B,P,h,w],[B,4]], [[B,P,h,w],[B,4]], ...]
-    start_feature = torch.stack([t[0] for t in start],-1) #[B,P,h,w,T]
-    start_timestamp= torch.stack([t[1] for t in start],1) #[B,T,4]
-    end_timestamp = torch.stack([t[1] for t in start[-model.label_len:]] + [end[1]],1) #[B,T,4]
+    start  = [t[0] for t in start]
+    normlized_Field_list = dataset.do_normlize_data([start])[0]  #always use normlized input
+    normlized_Field    = normlized_Field_list[0] if len(normlized_Field_list)==1 else torch.stack(normlized_Field_list,2) #(B,P,T,w,h)
     
-    ltmv_pred   = model(start_feature,start_timestamp, end_timestamp)
-    
-    #print(ltmv_pred.shape)
-    extra_loss=0
+    target    =[t[0] for t in end]
+    target_list = dataset.do_normlize_data([target])[0]  #always use normlized input
+    target   = target_list[0] if len(target_list)==1 else torch.stack(target_list,2) #(B,P,T,w,h)
+
+    out  = model(normlized_Field,start_timestamp, end_timestamp)
+    extra_loss = 0
     extra_info_from_model_list = []
-    start = start[1:]+[[ltmv_pred[...,0],end_timestamp[:,-1]]]
+    if isinstance(out,(list,tuple)):
+        extra_loss                 = out[1]
+        extra_info_from_model_list = out[2:]
+        out = out[0]
+    ltmv_pred = dataset.inv_normlize_data([out])[0]
+
+    if ltmv_pred.shape[-1]==1:
+        ltmv_pred = ltmv_pred.squeeze(-1)
+        target  = target.squeeze(-1)
+
+    end_timestamp= end_timestamp.squeeze(1)
+    start = start[1:]+[[ltmv_pred,end_timestamp]]
+    
+    # return:
+    #  ltmv_pred [not normlized pred Field]
+    #   target  [normlized target Field]
+    #   extra_loss
+    #   extra_info_from_model_list
+    #   start [not normlized Field list]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
@@ -228,10 +249,10 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
         diff += abs_loss
         if model.random_time_step_train and i >= random_run_step:
             break
-    loss = loss/(len(batch) - 1)
-    diff = diff/(len(batch) - 1)
-    # loss = loss/pred_step
-    # diff = diff/pred_step
+    # loss = loss/(len(batch) - 1)
+    # diff = diff/(len(batch) - 1)
+    loss = loss/pred_step
+    diff = diff/pred_step
     return loss, diff, iter_info_pool
 
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,save_prediction_first_step=None,save_prediction_final_step=None):
@@ -482,8 +503,8 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             with torch.no_grad():
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
         total_diff  += abs_loss.item()
-        total_num   += len(batch) - 1 #batch 
-        # total_num   += 1 
+        #total_num   += len(batch) - 1 #batch 
+        total_num   += 1 
 
         train_cost.append(time.time() - now);now = time.time()
         time_step_now = len(batch)
