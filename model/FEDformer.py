@@ -230,9 +230,38 @@ class FourierBlockN(nn.Module):
         x = torch.fft.irfftn(out_ft, dim=fft_dim, s=space_dims, norm='ortho')
         return (x, None)
 
+class CplxAdaptiveModReLU(nn.Module):
+    r"""Applies soft thresholding to the complex modulus:
+    $$
+        F
+        \colon \mathbb{C}^d \to \mathbb{C}^d
+        \colon z \mapsto (\lvert z_j \rvert - \tau_j)_+
+                        \tfrac{z_j}{\lvert z_j \rvert}
+        \,, $$
+    with $\tau_j \in \mathbb{R}$ being the $j$-th learnable threshold. Torch's
+    broadcasting rules apply and the passed dimensions must conform with the
+    upstream input. `CplxChanneledModReLU(1)` learns a common threshold for all
+    features of the $d$-dim complex vector, and `CplxChanneledModReLU(d)` lets
+    each dimension have its own threshold.
+    """
+    def __init__(self, *dim):
+        super().__init__()
+        self.dim = dim if dim else (1,)
+        self.threshold = torch.nn.Parameter(torch.randn(*self.dim) * 0.02)
+
+    def forward(self, input):
+        modulus = torch.clamp(abs(input), min=1e-5)
+        return input * torch.relu(1. - self.threshold / modulus)
+        
+
+    def __repr__(self):
+        body = repr(self.dim)[1:-1] if len(self.dim) > 1 else repr(self.dim[0])
+        return f"{self.__class__.__name__}({body})"
+
+
 class FourierCrossAttentionN(nn.Module):
     def __init__(self, in_channels=None, out_channels=None, space_dims_q=None, space_dims_kv=None, 
-                 modes=64, mode_select_method='random',
+                 modes=64, mode_select_method='random', attention_stratagy='hydra',
                  activation='tanh', policy=0,head_num=8):
         super().__init__()
         print(' fourier enhanced cross attention used!')
@@ -247,11 +276,12 @@ class FourierCrossAttentionN(nn.Module):
         - the 2D Fourier Block is [Batch, head_num, in_channels,  w,  h]
     
         """
-        self.activation = activation
-        self.in_channels = in_channels
+        self.activation   = activation
+        self.in_channels  = in_channels
         self.out_channels = out_channels
         self.space_dims_q =space_dims_q
         self.space_dims_kv=space_dims_kv
+        self.attention_stratagy = attention_stratagy
         # get modes for queries and keys (& values) on frequency domain
         self.mask_q  = get_frequency_modes_mask_rfft(space_dims_q, modes=modes, mode_select_method=mode_select_method)
         self.mask_kv = get_frequency_modes_mask_rfft(space_dims_kv, modes=modes, mode_select_method=mode_select_method)
@@ -271,6 +301,46 @@ class FourierCrossAttentionN(nn.Module):
         self.scale = (1 / (in_channels * out_channels))
         self.weights1 = nn.Parameter(
             self.scale * torch.rand(head_num, in_channels // head_num, out_channels // head_num, self.mask_q.sum(), dtype=torch.cfloat))
+        if self.activation == 'tanh':
+            self.complex_nonlinear = nn.Tanh()
+        elif self.activation == 'modReLU':
+            self.complex_nonlinear = nn.Tanh()
+    def normal_atttention(self,xq_ft_,xk_ft_):
+        
+        xqk_ft = (torch.einsum("...ex,...ey->...xy", xq_ft_, xk_ft_))
+        #[Batch, head_num, in_channels, modes1] 
+        #                       |                  --> [Batch, head_num, modes1, modes2] 
+        #[Batch, head_num, in_channels, modes2] 
+        xqk_ft = self.complex_nonlinear(xqk_ft)
+        if self.activation == 'tanh':
+            xqk_ft = xqk_ft.tanh()
+        elif self.activation == 'softmax':
+            xqk_ft = torch.softmax(abs(xqk_ft), dim=-1)
+            xqk_ft = torch.complex(xqk_ft, torch.zeros_like(xqk_ft))
+        else:
+            raise Exception('{} actiation function is not implemented'.format(self.activation))
+                
+        xqkv_ft = torch.einsum("...xy,...ey ->...ex", xqk_ft, xk_ft_)# <-- notice here is xk_ft rather than xv_ft
+        ##[Batch, head_num,    modes1,   modes2]  
+        #                                  |       --> [Batch, head_num, in_channels, modes1] 
+        ##[Batch, head_num, in_channels, modes2] 
+        return xqkv_ft
+
+    def hydra_atttention(self,xq_ft_,xk_ft_):
+        
+        q = self.complex_nonlinear(xq_ft_).flatten(1,2)#--> [Batch, head_num, in_channels, modes1] 
+        k = self.complex_nonlinear(xk_ft_).flatten(1,2)#--> [Batch, head_num, in_channels, modes1] 
+        v = xk_ft_.flatten(1,2)
+        kv = torch.einsum("biy,bjy ->bij", k, v)
+        ##[Batch, head_num*in_channels, modes2]  
+        #                                  |       --> [Batch, head_num*in_channels, in_channels] 
+        ##[Batch, head_num*in_channels, modes2] 
+        qkv = (torch.einsum("bjy,bij->biy", q, kv))
+        #[Batch, head_num*in_channels, in_channels] 
+        #                       |                  --> [Batch, in_channels, modes1] 
+        #[Batch, head_num*in_channels, modes1]
+        qkv = qkv.reshape(xq_ft_.shape)
+        return qkv
 
     def forward(self, q, k, v=None, mask=None):
         # the input must be [Batch, head_num, in_channels, *space_dims]
@@ -288,40 +358,39 @@ class FourierCrossAttentionN(nn.Module):
         xk_ft_ = torch.fft.rfftn(k, dim=fft_dim, norm='ortho')
         xk_ft_shape    = list(xk_ft_.shape)
         xk_ft_ = xk_ft_[...,self.mask_kv]
+
+        # xq_ft_ --> [Batch, head_num, in_channels, modes2] 
+        # xk_ft_ --> [Batch, head_num, in_channels, modes2] 
+        # usually the mode1/mode2 is very large, so that the attention between them is quite consuming
         
-        # the whole space dims are used to compute attention
-        # how every, follow the FNO spirit, attention in the space region is same as 
-        # do conolution 
-        xqk_ft = (torch.einsum("...ex,...ey->...xy", xq_ft_, xk_ft_))
-        #[Batch, head_num, in_channels, modes1] 
-        #                       |                  --> [Batch, head_num, modes1, modes2] 
-        #[Batch, head_num, in_channels, modes2] 
+        # <(Batch, modes1, head_num, in_channels) | 
+        #                               | 
+        # (Batch, modes2, head_num, in_channels) >  
+        #           |
+        # (Batch, modes2, head_num, in_channels)
 
-        if self.activation == 'tanh':
-            xqk_ft = xqk_ft.tanh()
-        elif self.activation == 'softmax':
-            xqk_ft = torch.softmax(abs(xqk_ft), dim=-1)
-            xqk_ft = torch.complex(xqk_ft, torch.zeros_like(xqk_ft))
+
+        if self.attention_stratagy == 'normal':
+            xqkv_ft = self.normal_atttention(xq_ft_,xk_ft_)
+        elif self.attention_stratagy == 'hydra':
+            xqkv_ft = self.hydra_atttention(xq_ft_,xk_ft_)
+        elif self.attention_stratagy == 'inflow':
+            xqkv_ft = self.inflow_atttention(xq_ft_,xk_ft_)
         else:
-            raise Exception('{} actiation function is not implemented'.format(self.activation))
-
-        # attention should happen
-
-        xqkv_ft = torch.einsum("...xy,...ey ->...ex", xqk_ft, xk_ft_)# <-- notice here is xk_ft rather than xv_ft
-        #[Batch, head_num,    modes1,   modes2]  
-        #                                  |       --> [Batch, head_num, in_channels, modes1] 
-        #[Batch, head_num, in_channels, modes2] 
+            raise NotImplementedError("please assign correct attention stratagy")
+        # the whole space dims are used to compute attention
+        
         xqkvw   = torch.einsum("...ex,...eox->...ox", xqkv_ft, self.weights1)
-        #[Batch, head_num, in_channels, modes1]   
-        #                       |                 --> [Batch, head_num, out_channels, modes1] 
-        #[Batch, head_num, in_channels, out_channel, modes1]         
+        # #[Batch, head_num, in_channels, modes1]   
+        # #                       |                 --> [Batch, head_num, out_channels, modes1] 
+        # #[Batch, head_num, in_channels, out_channel, modes1]         
+        
         
         xq_ft_shape[2] = self.weights1.shape[2]
-
         out_ft         = torch.zeros(*xq_ft_shape, device=q.device, dtype=torch.cfloat)
         out_ft[...,self.mask_q] = xqkvw
         out_ft = canonical_fft_freq(out_ft,fft_dim,indexes=self.canonical_index1,indexes2=self.canonical_index2)
-        out    = torch.fft.irfftn(out_ft / self.in_channels / self.out_channels, dim=fft_dim, s=space_dims_q, norm='ortho')
+        out    = torch.fft.irfftn(out_ft, dim=fft_dim, s=space_dims_q, norm='ortho')
         return (out, None)
 
 class AutoCorrelationLayerN(nn.Module):
@@ -589,9 +658,11 @@ class FEDformer(nn.Module):
 
         dec_out                   = self.dec_embedding(seasonal_init, x_mark_dec)
         seasonal_part, trend_part = self.decoder(dec_out, enc_out,x_mask=dec_self_mask, cross_mask=dec_enc_mask,trend=trend_init)
-        # final
+        # # final
         dec_out = trend_part + seasonal_part
+        # dec_out = dec_out[..., -self.pred_len:, :]
         dec_out = dec_out[..., -self.pred_len:, :]
+        #dec_out  = F.pad(dec_out,(2,2))
         # [B, L, D]
         if not channel_last:
             permute_order= [0,-1]+list(range(1,len(dec_out.shape)-1))
