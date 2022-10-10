@@ -641,14 +641,14 @@ class FEDformer(nn.Module):
         
         if x_mark_dec.shape[1] == self.pred_len:
             # the input forget to cat the label len, then we do here
-            x_mark_dec = torch.cat([x_mark_enc[:,-self.label_len],x_mark_dec],1)
+            x_mark_dec = torch.cat([x_mark_enc[:,-self.label_len:],x_mark_dec],1)
 
         channel_last = 0
-        if x_enc.shape[1:]==tuple([self.in_chans]+list(img_size)+[self.seq_len]):
+        if x_enc.shape[1:]==tuple([self.in_chans]+list(self.img_size)+[self.seq_len]):
             channel_last = 1
             permute_order= [0]+list(range(2,len(x_enc.shape)))+[1]
             x_enc = x_enc.permute(*permute_order)
-        elif x_enc.shape[1:]==tuple([self.in_chans]+[self.seq_len]+list(img_size)):
+        elif x_enc.shape[1:]==tuple([self.in_chans]+[self.seq_len]+list(self.img_size)):
             channel_last = 2
             permute_order= [0]+list(range(3,len(x_enc.shape)))+[2,1]
             x_enc = x_enc.permute(*permute_order)
