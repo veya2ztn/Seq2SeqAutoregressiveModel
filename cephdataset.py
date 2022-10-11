@@ -705,10 +705,16 @@ class WeathBench71(WeathBench):
                  [ 6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 18]+ # Geopotential and the last one is ground Geopotential, should be replace later
                  [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 57] # Realitve humidity and the Realitve humidity at groud, should be modified by total precipitaiton later
                  )
+    volicity_idx = ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
+                 [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2] # v component of wind and the 10m v wind
+                )
     def config_pool_initial(self):
 
         _list = self._component_list
+        vector_scalar_mean = self.mean_std.copy()
+        vector_scalar_mean[:,self.volicity_idx] = 0
         config_pool={
+            '2D70V': (_list ,'gauss_norm'   , vector_scalar_mean[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
             '3D70N': (_list ,'gauss_norm_3D', self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), identity, identity ),
@@ -811,6 +817,7 @@ class WeathBench716(WeathBench71):
         mean = np.concatenate([mean,np.zeros(1).reshape(1,1,1)])
         std  = np.concatenate([ std, np.ones(1).reshape(1,1,1)])
         mean_std = np.stack([mean,std])
+        
         config_pool={
             '2D71N': (_list ,'gauss_norm'   , mean_std, identity, identity ),
             '2D71U': (_list ,'unit_norm'    , mean_std, identity, identity ),
@@ -849,7 +856,10 @@ class WeathBench7066(WeathBench71):
 
     def config_pool_initial(self):
         _list = self._component_list
+        vector_scalar_mean = self.mean_std.copy()
+        vector_scalar_mean[:,self.volicity_idx] = 0
         config_pool={
+            '2D70V': (_list ,'gauss_norm'   , vector_scalar_mean[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
             '3D70N': (_list ,'gauss_norm_3D', self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), identity, identity ),
