@@ -53,8 +53,10 @@ def get_args_parser():
     parser.add_argument('--checkpoint-activations', action='store_true')
     parser.add_argument('--autoresume', action='store_true')
 
-    parser.add_argument('--wrapper_model', default='', type=str, help='Name of model to train',choices=["",'DeltaModel','EulerEquationModel','ConVectionModel',
-                'EulerEquationModel3','Time_Sphere_Model','EulerEquationModel2','EulerEquationModel4','OnlineNormModel'])
+    parser.add_argument('--wrapper_model', default='', type=str, help='Name of model to train',
+          choices=["",'DeltaModel','EulerEquationModel','ConVectionModel',
+                'EulerEquationModel3','Time_Sphere_Model','EulerEquationModel2',
+                'EulerEquationModel4','OnlineNormModel','Time_Projection_Model'])
 
     # Dataset parameters
     parser.add_argument('--dataset_type', default='', type=str, help='Name of dataset to train',choices=["",

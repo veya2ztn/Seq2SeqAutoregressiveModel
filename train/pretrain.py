@@ -132,10 +132,10 @@ def once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode):
     #print([(s[0].shape,s[1].shape) for s in start])
     # start is data list [ [[B,P,h,w],[B,4]] , [[B,P,h,w],[B,4]], [[B,P,h,w],[B,4]], ...]
     normlized_Field_list = dataset.do_normlize_data([[t[0] for t in start]])[0]  #always use normlized input
-    normlized_Field    = normlized_Field_list[0] if len(normlized_Field_list)==1 else torch.stack(normlized_Field_list,2) #(B,P,T,w,h)
+    normlized_Field    = torch.stack(normlized_Field_list,2) #(B,P,T,w,h)
 
     target_list = dataset.do_normlize_data([[t[0] for t in end]])[0]  #always use normlized input
-    target   = target_list[0] if len(target_list)==1 else torch.stack(target_list,2) #(B,P,T,w,h)
+    target   = torch.stack(target_list,2) #(B,P,T,w,h)
     
     out  = model(normlized_Field,start_timestamp, end_timestamp)
     extra_loss = 0
@@ -144,9 +144,10 @@ def once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode):
         extra_loss                 = out[1]
         extra_info_from_model_list = out[2:]
         out = out[0]
-    ltmv_pred = dataset.inv_normlize_data([out])[0]
-
-    if ltmv_pred.shape[2]==1:ltmv_pred = ltmv_pred.squeeze(2)
+    if model.pred_len==1:
+        out=out.squeeze(2)
+        target=target.squeeze(2)
+    ltmv_pred  = dataset.inv_normlize_data([out])[0]
     end_timestamp= end_timestamp.squeeze(1)
     start = start[1:]+[[ltmv_pred,end_timestamp]]
     
