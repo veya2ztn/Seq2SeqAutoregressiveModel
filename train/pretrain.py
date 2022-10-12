@@ -8,7 +8,7 @@ idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
 hostname = socket.gethostname()
 if hostname in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185']:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 os.environ['WANDB_MODE'] = 'offline'
 os.environ['WANDB_CONSOLE']='off'
 force_big  = True
@@ -893,24 +893,18 @@ def main_worker(local_rank, ngpus_per_node, args,
     lr_scheduler, _ = create_scheduler(args, optimizer)
     criterion       = nn.MSELoss()
 
-    if args.mode == 'pretrain':
-        start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model,
-                                        optimizer, lr_scheduler, loss_scaler,
-                                        SAVE_PATH/'pretrain_latest.pt',loc = 'cuda:{}'.format(args.gpu))
-    else:
-        if (SAVE_PATH / 'finetune_latest.pt').exists():
-            start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, SAVE_PATH / 'finetune_latest.pt')
-        else:
-            #assert args.pretrain_weight != ""
-            #assert os.path.exists(args.pretrain_weight)
-            logsys.info(f"loading weight from {args.pretrain_weight}")
-            start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=args.pretrain_weight, only_model=True)
-            logsys.info("done!")
+
+    logsys.info(f"loading weight from {args.pretrain_weight}")
+    start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
+                        only_model= (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu))
+    logsys.info("done!")
 
 
     # =======================> start training <==========================
-    print(f"entering {args.mode} training")
-    now_best_path = SAVE_PATH / f'backbone.best.pt'
+    print(f"entering {args.mode} training in {next(model.parameters()).device}")
+    now_best_path = SAVE_PATH / 'backbone.best.pt'
+    latest_ckpt_p = SAVE_PATH / 'pretrain_latest.pt'
+
     if args.mode=='fourcast':
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,
                                       test_record_load=train_record_load)
@@ -938,7 +932,6 @@ def main_worker(local_rank, ngpus_per_node, args,
                 if use_wandb:wandb.log({"epoch":epoch,'train':train_loss,'valid':val_loss})
                 if val_loss < min_loss:
                     min_loss = val_loss
-                    now_best_path = SAVE_PATH / f'backbone.best.pt'
                     if epoch > args.epochs//10:
                         logsys.info(f"saving best model ....")
                         save_model(model, path=now_best_path, only_model=True)
@@ -949,7 +942,7 @@ def main_worker(local_rank, ngpus_per_node, args,
                 logsys.record('best_loss', min_loss, epoch)
                 if epoch>args.save_warm_up:
                     logsys.info(f"saving latest model ....")
-                    save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, SAVE_PATH / 'pretrain_latest.pt')
+                    save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, latest_ckpt_p)
                     logsys.info(f"done ....")
         
 
