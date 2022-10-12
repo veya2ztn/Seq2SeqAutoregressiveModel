@@ -53,6 +53,6 @@ class Time_Sphere_Model(BaseModel):
             output_direction = torch.stack([torch.cos(year_pos_y),
                              torch.sin(year_pos_y)*torch.cos(day_pos_y),
                              torch.cos(year_pos_y)*torch.sin(day_pos_y)],1)
-            extra_loss = torch.nn.functional.cosine_similarity(x,output_direction,dim=1).mean()
+            extra_loss = 1 - torch.nn.functional.cosine_similarity(x,output_direction,dim=1).mean()
         x = x.norm(dim=1)
         return x, extra_loss

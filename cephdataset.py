@@ -700,11 +700,11 @@ class WeathBench(BaseDataset):
 
 class WeathBench71(WeathBench):
     _component_list= ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
-                 [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+ # v component of wind and the 10m v wind
-                 [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,  0]+ # Temperature and the 2m_temperature
-                 [ 6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 18]+ # Geopotential and the last one is ground Geopotential, should be replace later
-                 [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 57] # Realitve humidity and the Realitve humidity at groud, should be modified by total precipitaiton later
-                 )
+                    [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+ # v component of wind and the 10m v wind
+                    [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,  0]+ # Temperature and the 2m_temperature
+                    [ 6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 18]+ # Geopotential and the last one is ground Geopotential, should be replace later
+                    [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 57] # Realitve humidity and the Realitve humidity at groud, should be modified by total precipitaiton later
+                    )
     volicity_idx = ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
                  [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2] # v component of wind and the 10m v wind
                 )

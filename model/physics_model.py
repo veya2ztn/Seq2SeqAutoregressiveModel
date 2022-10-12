@@ -238,7 +238,7 @@ class ConVectionModel(BaseModel):
             shape = Hdx.shape
             Hdy = torch.Tensor([6371000*np.pi/32])
             print(f"please notice we will using dt= 3600*1 as intertime")
-            self.DT = 3600*1
+            self.DT = 3600*1 # notice for weatherbench module we have 1 hour dataset and 6 hour dataset. 
             Hdx = Hdx/self.DT
             Hdy = Hdy/self.DT
             self.Hdx = Hdx
