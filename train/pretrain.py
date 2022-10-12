@@ -482,18 +482,18 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
             if model.use_amp:
                 loss_scaler.scale(loss).backward()
-                if (step+1) % accumulation_steps == 0:
-                    if model.clip_grad:nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
-                    loss_scaler.step(optimizer)
-                    loss_scaler.update()
-                    optimizer.zero_grad()
             else:
                 loss.backward()
-                if (step+1) % accumulation_steps == 0:
-                    if model.clip_grad:nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
-                    optimizer.step()
-                    optimizer.zero_grad()
+            
 
+            if (step+1) % accumulation_steps == 0:
+                if model.clip_grad:nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
+                if model.use_amp:
+                    loss_scaler.step(optimizer)
+                    loss_scaler.update()
+                else:
+                    optimizer.step()
+                optimizer.zero_grad()
         else:
             with torch.no_grad():
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
@@ -619,12 +619,15 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset):
         info_pool_list.append(info_pool)
     return info_pool_list
 
-def run_fourcast(args, model,logsys,test_dataloader):
+def run_fourcast(args, model,logsys,test_dataloader=None):
     import warnings
     warnings.filterwarnings("ignore")
     logsys.info_log_path = os.path.join(logsys.ckpt_root, 'fourcast.info')
+    
+    if test_dataloader is None:
+        test_dataset,  test_dataloader = get_test_dataset(args)
+
     test_dataset = test_dataloader.dataset
-    #test_dataset,  test_dataloader = get_test_dataset(args)
     
 
     #args.force_fourcast=True
@@ -883,7 +886,8 @@ def main_worker(local_rank, ngpus_per_node, args,
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,world_size=args.world_size, rank=args.rank)
 
     model           = build_model(args)
-    param_groups    = timm.optim.optim_factory.add_weight_decay(model, args.weight_decay)
+    #param_groups    = timm.optim.optim_factory.add_weight_decay(model, args.weight_decay)
+    param_groups    = timm.optim.optim_factory.param_groups_weight_decay(model, args.weight_decay)
     optimizer       = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
     loss_scaler     = torch.cuda.amp.GradScaler(enabled=True)
     lr_scheduler, _ = create_scheduler(args, optimizer)

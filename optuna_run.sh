@@ -1,7 +1,7 @@
 #!/bin/sh
-#SBATCH -J WB70JCA      # 作业在调度系统中的作业名为myFirstJob;
-#SBATCH -o log/%j-WB70JCA.out  # 脚本执行的输出将被保存在20210827-%j.out文件下，%j表示作业号;
-#SBATCH -e log/%j-WB70JCA.out  # 脚本执行的输出将被保存在20210827-%j.out文件下，%j表示作业号;
+#SBATCH -J 7066A3      # 作业在调度系统中的作业名为myFirstJob;
+#SBATCH -o log/%j-7066A3.out  # 脚本执行的输出将被保存在20210827-%j.out文件下，%j表示作业号;
+#SBATCH -e log/%j-7066A3.out  # 脚本执行的输出将被保存在20210827-%j.out文件下，%j表示作业号;
 
 # python optuna_run.py --train_set 4796ad --epoch 60 --mode pretrain --time_step 2 --patch_size 1,3,3 \
 #                      --img_size 3,51,96 --dataset_type ERA5Tiny12_47_96 --input_channel 4 --output_channel 4 \
@@ -22,14 +22,18 @@
 # --clip-grad 1e4
 
 
-### AFNONetJC
+####### ----------------> AFNONetJC-WeathBench7066 <--------------------------
 #python optuna_run.py --train_set 2D706N --dataset_type WeathBench7066 --model_type AFNONetJC --time_step 2 --epoch 100 --mode pretrain --dataset_flag 3D70U --save_warm_up 1000 --wrapper_model ConVectionModel --debug 0 --use_amp 0
-python optuna_run.py --train_set 2D706N --dataset_type WeathBench7066 --model_type AFNONetJC --time_step 2 --epoch 100 --mode pretrain --save_warm_up 1000 --debug 0 --use_amp 0
+#python optuna_run.py --train_set 2D706N --dataset_type WeathBench7066 --model_type AFNONetJC --time_step 2 --epoch 100 --mode pretrain --save_warm_up 1000 --debug 0 --use_amp 0
 
-# python optuna_run.py --train_set 2D706N --dataset_type WeathBench7066 --time_step 3 --epoch 100 --mode finetune \
-# --dataset_flag 3D70U --save_warm_up 1000 --wrapper_model ConVectionModel --use_amp 0 \
-# --pretrain_weight checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/10_07_00_19_40-seed_2641/backbone.best.pt 
 
-#python optuna_run.py --train_set 2D706N --dataset_type WeathBench7066 --time_step 3 --epoch 100 --mode pretrain --save_warm_up 1000
+####### ----------------> AFNONet-WeathBench7066 <--------------------------
+# python optuna_run.py --train_set 2D706N --dataset_type WeathBench7066 --time_step 2 --epoch 100 --mode pretrain \
+# --dataset_flag 3D70U --save_warm_up 1000 --wrapper_model ConVectionModel --use_amp 0 --patch_size 2 
+#\
+#--pretrain_weight checkpoints/WeathBench7066/ConVectionModel-AFNONet/time_step_2_pretrain-2D706N_every_1_step/10_07_00_19_40-seed_2641/backbone.best.pt 
+
+python optuna_run.py --train_set 2D706N --dataset_type WeathBench7066 --time_step 3 --epoch 100 --mode pretrain --save_warm_up 1000 --patch_size 2 
 # python optuna_run.py --train_set 2D706N --dataset_type WeathBench7066 --time_step 3 --epoch 100 --mode finetune --save_warm_up 1000 \
 # --pretrain_weight checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/10_08_21_16_55-seed_28356/backbone.best.pt
+

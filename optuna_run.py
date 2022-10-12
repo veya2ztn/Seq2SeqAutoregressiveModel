@@ -28,8 +28,10 @@ def optuna_high_level_main():
         args.lr             = args.hparam_dict['lr']         = trial.suggest_uniform(f"lr", *lr_range)
         if not gargs.batch_size:
             args.batch_size     = args.hparam_dict['batch_size'] = trial.suggest_categorical("batch_size", batchsize_list)
-        if not gargs.patch_size:
-            args.patch_size     = args.hparam_dict['patch_size'] = trial.suggest_categorical("patch_size", patchsize_list)
+        # if not gargs.patch_size:
+        #     args.patch_size     = args.hparam_dict['patch_size'] = trial.suggest_categorical("patch_size", patchsize_list)
+        args.patch_size  = 2 
+        print("notice we will fix patch size as 2")
         # if not gargs.input_noise_std:
         #     args.input_noise_std = args.hparam_dict['input_noise_std'] = trial.suggest_categorical("input_noise_std", input_noise_std_list)
         # #trial.set_user_attr('trial_name', TRIAL_NOW)
