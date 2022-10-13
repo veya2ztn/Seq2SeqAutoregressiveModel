@@ -66,6 +66,7 @@ class Time_Sphere_Model(Sphere_Model):
         return x, extra_loss
 
 class Time_Projection_Model(Sphere_Model):
+    extra_loss_coef =  1
     '''
     x_data is the Field data without time information as (B, T, h ,w,  P)
     x_timestamp is the stamp vector via time_features
@@ -84,6 +85,10 @@ class Time_Projection_Model(Sphere_Model):
     mean while the self projection is required also
     ---------------------------------------------------------------------------
     '''
+
+    def set_epoch(self,epoch,epoch_total):
+        self.extra_loss_coef = (np.exp(1) - np.exp(epoch/epoch_total))/(np.exp(1) - 1)
+
     def forward(self, x, x_timestamp, y_timestamp):
         # assume input is (B, P ,T, h ,w)
         assert self.pred_len == 1
@@ -102,4 +107,4 @@ class Time_Projection_Model(Sphere_Model):
         extra_loss   = F.mse_loss(self_projection,x)  
         
         target_projection = torch.einsum('bdp...,bdt->bpt...',y, y_direction)
-        return target_projection, extra_loss
+        return target_projection, self.extra_loss_coef*extra_loss

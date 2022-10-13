@@ -11,6 +11,7 @@ if hostname in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185']:
     os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 os.environ['WANDB_MODE'] = 'offline'
 os.environ['WANDB_CONSOLE']='off'
+experiment_hub_path = "./experiment_hub.json"
 force_big  = True
 use_wandb  = False
 accumulation_steps_global=4
@@ -449,8 +450,8 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         #if len(batch)==1:batch = batch[0] # for Field -> Field_Dt dataset
         data_cost.append(time.time() - now);now = time.time()
         if status == 'train':
-            if hasattr(model,'freeze_stratagy'):model.freeze_stratagy(step)
-            if hasattr(model,'module') and hasattr(model.module,'freeze_stratagy'):model.module.freeze_stratagy(step)
+            if hasattr(model,'set_step'):model.set_step(step=step,epoch=epoch)
+            if hasattr(model,'module') and hasattr(model.module,'set_step'):model.module.set_step(step=step,epoch=epoch)
             if model.train_mode =='pretrain':
                 time_truncate = max(min(epoch//3,data_loader.dataset.time_step),2)
                 batch=batch[:model.history_length -1 + time_truncate]
@@ -863,6 +864,20 @@ def build_model(args):
     model.clip_grad= args.clip_grad
     return model
 
+def update_experiment_info(experiment_hub_path,epoch,args):
+    if os.path.exists(experiment_hub_path):
+        with open(experiment_hub_path,'r') as f:
+            experiment_hub=json.load(f)
+    else:
+        experiment_hub={}
+    path = str(args.SAVE_PATH)
+    if path not in experiment_hub:
+        experiment_hub[path] = {"id":len(experiment_hub),'epoch_tot':args.epochs,"start_time":time.strftime("%m_%d_%H_%M_%S")}
+    experiment_hub[path]['epoch']  =epoch
+    experiment_hub[path]['endtime']=time.strftime("%m_%d_%H_%M_%S")
+    with open(experiment_hub_path,'w') as f:json.dump(experiment_hub, f)
+
+
 def main_worker(local_rank, ngpus_per_node, args,
         train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     print(f"we are at mode={args.mode}")
@@ -920,6 +935,8 @@ def main_worker(local_rank, ngpus_per_node, args,
         master_bar        = logsys.create_master_bar(args.epochs)
         for epoch in master_bar:
             if epoch < start_epoch:continue
+            if hasattr(model,'set_epoch'):model.set_epoch(epoch=epoch,epoch_total=args.epochs)
+            if hasattr(model,'module') and hasattr(model.module,'set_epoch'):model.module.set_epoch(epoch=epoch,epoch_total=args.epochs)
             train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
             lr_scheduler.step(epoch)
             #torch.cuda.empty_cache()
@@ -944,9 +961,9 @@ def main_worker(local_rank, ngpus_per_node, args,
                 if epoch>args.save_warm_up:
                     logsys.info(f"saving latest model ....")
                     save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, latest_ckpt_p)
+                    update_experiment_info(experiment_hub_path,epoch,args)
                     logsys.info(f"done ....")
         
-
         if os.path.exists(now_best_path) and args.do_final_fourcast:
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
             start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=now_best_path, only_model=True)

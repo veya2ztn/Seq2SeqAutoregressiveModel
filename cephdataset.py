@@ -14,21 +14,6 @@ import pandas as pd
 from utils.timefeatures import time_features
 import os
 import h5py
-# Years = range(1979, 2022)
-# # Years4Train = range(1979, 2016)
-# Years4Train = range(1979, 1987)
-# Years4Valid = range(2016, 2018)
-# Years4Test = range(2018, 2020)
-Years = {
-    'train': range(1979, 2016),
-    'valid': range(2016, 2018),
-    'test': range(2018, 2022),
-    'all': range(1979, 2022)
-
-}
-
-
-
 
 
 def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_coord=None,channel_last=True,vnames=[]):
@@ -159,48 +144,53 @@ class BaseDataset:
     
 
 class ERA5BaseDataset(BaseDataset):
-	full_vnames = [
-		'10m_u_component_of_wind', '10m_v_component_of_wind', '2m_temperature', 'surface_pressure', 'mean_sea_level_pressure',
-		'1000h_u_component_of_wind', '1000h_v_component_of_wind', '1000h_geopotential',
-		'850h_temperature', '850h_u_component_of_wind', '850h_v_component_of_wind', '850h_geopotential', '850h_relative_humidity',
-		'500h_temperature', '500h_u_component_of_wind', '500h_v_component_of_wind', '500h_geopotential', '500h_relative_humidity',
-		'50h_geopotential',
-		'total_column_water_vapour',
-	]
-	full_physics_index = [5, 9,14 , 6,10,15 ,7,11,16 ,2, 8,13]
-	volicity_idx = [0, 5, 9, 14 , 1, 6, 10, 15]
-	time_unit=6
-	full_vnames_short = [
-		'u10', 'v10', 't2m', 'sp', 'msl',
-		'u', 'v', 'z',
-		't', 'u', 'v', 'z', 'r',
-		't', 'u', 'v', 'z', 'r',
-		'z',
-		'tcwv'
+    full_vnames = [
+        '10m_u_component_of_wind', '10m_v_component_of_wind', '2m_temperature', 'surface_pressure', 'mean_sea_level_pressure',
+        '1000h_u_component_of_wind', '1000h_v_component_of_wind', '1000h_geopotential',
+        '850h_temperature', '850h_u_component_of_wind', '850h_v_component_of_wind', '850h_geopotential', '850h_relative_humidity',
+        '500h_temperature', '500h_u_component_of_wind', '500h_v_component_of_wind', '500h_geopotential', '500h_relative_humidity',
+        '50h_geopotential',
+        'total_column_water_vapour',
+    ]
+    full_physics_index = [5, 9,14 , 6,10,15 ,7,11,16 ,2, 8,13]
+    volicity_idx = [0, 5, 9, 14 , 1, 6, 10, 15]
+    time_unit=6
+    full_vnames_short = [
+        'u10', 'v10', 't2m', 'sp', 'msl',
+        'u', 'v', 'z',
+        't', 'u', 'v', 'z', 'r',
+        't', 'u', 'v', 'z', 'r',
+        'z',
+        'tcwv'
 
-	]
-	mean_std_ERA5_20={
-	 '10m_u_component_of_wind': {'mean': -0.08244494681317033, 'std': 5.522365507485557},
-	 '10m_v_component_of_wind': {'mean': 0.1878750926415015,'std': 4.753310696543225},
-	 '2m_temperature': {'mean': 278.45956231728695, 'std': 21.364880588971882},
-	 'surface_pressure': {'mean': 96659.29942439323, 'std': 9576.018310416932},
-	 'mean_sea_level_pressure': {'mean': 100967.95123832714, 'std': 1317.7139732375715},
-	 '1000h_u_component_of_wind': {'mean': -0.07095991227445357,'std': 6.114047410072003},
-	 '1000h_v_component_of_wind': {'mean': 0.18681402351519094,'std': 5.2976192016365395},
-	 '1000h_geopotential': {'mean': 745.1660079545572, 'std': 1059.9845164332398},
-	 '850h_temperature': {'mean': 274.58180069739996, 'std': 15.676612264642246},
-	 '850h_u_component_of_wind': {'mean': 1.3814626339353238,'std': 8.15774947680599},
-	 '850h_v_component_of_wind': {'mean': 0.14620261110086222, 'std': 6.264685056755958},
-	 '850h_geopotential': {'mean': 13758.085881283701, 'std': 1459.716048599048},
-	 '850h_relative_humidity': {'mean': 69.10668451159029,'std': 26.372462450169042},
-	 '500h_temperature': {'mean': 253.0042938610095, 'std': 13.083165107000779},
-	 '500h_u_component_of_wind': {'mean': 6.544056434884079,'std': 11.968355707300768},
-	 '500h_v_component_of_wind': {'mean': -0.02533006083801716,'std': 9.185543423555893},
-	 '500h_geopotential': {'mean': 54130.677758771395, 'std': 3352.2513738740745},
-	 '500h_relative_humidity': {'mean': 50.39295631304117,'std': 33.51025992204092},
-	 '50h_geopotential': {'mean': 199408.6871957199, 'std': 5885.661841412361},
-	 'total_column_water_vapour': {'mean': 18.389728930352515,'std': 16.47164306296514}
-	 }
+    ]
+    mean_std_ERA5_20={
+     '10m_u_component_of_wind': {'mean': -0.08244494681317033, 'std': 5.522365507485557},
+     '10m_v_component_of_wind': {'mean': 0.1878750926415015,'std': 4.753310696543225},
+     '2m_temperature': {'mean': 278.45956231728695, 'std': 21.364880588971882},
+     'surface_pressure': {'mean': 96659.29942439323, 'std': 9576.018310416932},
+     'mean_sea_level_pressure': {'mean': 100967.95123832714, 'std': 1317.7139732375715},
+     '1000h_u_component_of_wind': {'mean': -0.07095991227445357,'std': 6.114047410072003},
+     '1000h_v_component_of_wind': {'mean': 0.18681402351519094,'std': 5.2976192016365395},
+     '1000h_geopotential': {'mean': 745.1660079545572, 'std': 1059.9845164332398},
+     '850h_temperature': {'mean': 274.58180069739996, 'std': 15.676612264642246},
+     '850h_u_component_of_wind': {'mean': 1.3814626339353238,'std': 8.15774947680599},
+     '850h_v_component_of_wind': {'mean': 0.14620261110086222, 'std': 6.264685056755958},
+     '850h_geopotential': {'mean': 13758.085881283701, 'std': 1459.716048599048},
+     '850h_relative_humidity': {'mean': 69.10668451159029,'std': 26.372462450169042},
+     '500h_temperature': {'mean': 253.0042938610095, 'std': 13.083165107000779},
+     '500h_u_component_of_wind': {'mean': 6.544056434884079,'std': 11.968355707300768},
+     '500h_v_component_of_wind': {'mean': -0.02533006083801716,'std': 9.185543423555893},
+     '500h_geopotential': {'mean': 54130.677758771395, 'std': 3352.2513738740745},
+     '500h_relative_humidity': {'mean': 50.39295631304117,'std': 33.51025992204092},
+     '50h_geopotential': {'mean': 199408.6871957199, 'std': 5885.661841412361},
+     'total_column_water_vapour': {'mean': 18.389728930352515,'std': 16.47164306296514}
+     }
+    Years = {
+    'train': range(1979, 2016),
+    'valid': range(2016, 2018),
+    'test': range(2018, 2022),
+    'all': range(1979, 2022)}
     
     
 class ERA5CephDataset(ERA5BaseDataset):
@@ -213,7 +203,7 @@ class ERA5CephDataset(ERA5BaseDataset):
             self.root = root 
         else:
             self.root = root =self.default_root
-        self.years = Years[split] if years is None else years
+        self.years = self.Years[split] if years is None else years
         self.crop_coord = crop_coord
         self.file_list = self.init_file_list()
         self.mode = mode
@@ -278,6 +268,7 @@ class ERA5CephDataset(ERA5BaseDataset):
         for name in self.vnames:
             url = f"{self.root}/{name}/{year}/{name}-{year}-{hour:04d}.npy"
             print(url)
+
 
 class ERA5CephSmallDataset(ERA5CephDataset):
     clim_path = "datasets/era5G32x64_set/time_means.npy"
@@ -878,7 +869,9 @@ if __name__ == "__main__":
     import time
     from tqdm import tqdm
     from multiprocessing import Pool
-
+    dataset = ERA5CephDataset(split='train')
+    print(len(dataset[0]))
+    raise
     def load_data_range(dataset, start, end):
         for i in tqdm(range(start, end)):
             _ = dataset[i]

@@ -323,7 +323,7 @@ class AFNONet(nn.Module):
         # print(x.shape)
 
         return x
-
+ 
     def forward(self, x):
         B = x.shape[0]
         ot_shape = x.shape[2:]

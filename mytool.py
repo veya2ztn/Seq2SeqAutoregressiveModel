@@ -221,6 +221,8 @@ def create_fourcast_table(ckpt_path,step = 4*24//6):
     for info_pool in info_pool_list:
         wandb.log(info_pool)
     wandb.finish()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('parse tf.event file to wandb', add_help=False)
     parser.add_argument('--path',type=str)
