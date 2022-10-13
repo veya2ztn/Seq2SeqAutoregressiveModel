@@ -75,9 +75,11 @@ from  torch.cuda.amp import custom_fwd,custom_bwd
 
 class BaseModel(nn.Module):
 
-    def freeze_stratagy(self,step):
+    def set_epoch(self,epoch,epoch_total):
         pass
-
+    def set_step(self,step,epoch):
+        pass
+    
 class AdaptiveFourierNeuralOperator(nn.Module):
     def __init__(self, dim, img_size, fno_blocks=4,fno_bias=True, fno_softshrink=False):
         super().__init__()
@@ -407,7 +409,7 @@ class AFNONet(BaseModel):
             # we only allow symmetry pad
             return (w_should - w_now)//2
 
-    def freeze_stratagy(self,step):
+    def set_step(self,step,epoch):
         if len(self.reduce_Field_coef)>1:
             if step%2 or step==0:
                 for p in self.parameters():p.requires_grad=True
