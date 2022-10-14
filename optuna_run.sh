@@ -38,3 +38,5 @@
 python optuna_run.py --train_set 2D706N --dataset_type WeathBench7066 --time_step 3 --epoch 100 --mode finetune --patch_size 2  \
 --pretrain_weight checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/10_08_21_16_55-seed_28356/backbone.best.pt
 
+python optuna_run.py --train_set 2D706N --dataset_type WeathBench7066 --time_step 2 --epoch 40 --mode pretrain \
+--dataset_flag 3D70U  --wrapper_model DirectSpace_Feature_Model --use_amp 0 --patch_size 2 
