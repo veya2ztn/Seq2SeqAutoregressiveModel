@@ -133,7 +133,9 @@ class Config(object):
 def run_fourcast(ckpt_path,step = 4*24//6):
     from train.pretrain import main
     args = get_args(ckpt_path,step = step)
-    main(args)
+    args.force_fourcast = False
+    if args.force_fourcast or 'rmse_table' not in os.listdir(ckpt_path):
+        main(args)
 
 def get_args(ckpt_path,step = 4*24//6):
     from train.pretrain import get_args
@@ -168,10 +170,10 @@ def get_args(ckpt_path,step = 4*24//6):
     #args.train_set = 'small'
     args.mode      = 'fourcast'
     args.fourcast  = True
-    args.batch_size= 8    
+    args.batch_size= 32   
     args.pretrain_weight = best_path
     args.time_step = step + args.time_step
-    args.force_fourcast = True
+    #
     # args.time_reverse_flag = 'only_backward'
     # args.img_size  = (3,51,96)
     # args.patch_size= (1,3,3)

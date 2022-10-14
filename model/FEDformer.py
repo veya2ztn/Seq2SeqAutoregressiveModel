@@ -85,7 +85,7 @@ def get_frequency_modes_mask_rfft(space_dims, modes=64, mode_select_method='',in
             indexes,indexes2 = get_symmetry_index_in_fft_pannel(space)
         
         advise_picked_mode_num = 1 + np.sum(space//2) + np.ceil(np.prod(space-1)/2)
-        totall_picked_mode_num = min(np.prod(modes[:-1]),advise_picked_mode_num) 
+        totall_picked_mode_num = np.prod(modes[:-1])
         print(f"for shape:{space} and pick modes:{modes[:-1]}, we pick {totall_picked_mode_num} modes, the baseline modes is {advise_picked_mode_num}")
         picked_indexes=[]
         for i1,i2 in zip(indexes,indexes2):
@@ -109,6 +109,7 @@ class TLayernorm(nn.Module):
         self.layernorm = nn.LayerNorm(channels)
 
     def forward(self, x):
+        print(x.shape)
         # x_hat = self.layernorm(x)
         # bias  = torch.mean(x_hat, dim=-2).unsqueeze(-2).repeat(1, x.shape[1], 1)
         shape = x.shape
@@ -565,8 +566,8 @@ class Encoder(nn.Module):
                 x, attn = attn_layer(x, attn_mask=attn_mask)
                 attns.append(attn)
         #timer.record(f'layers_encoder','encoder',1)
-        # if self.norm is not None:
-        #     x = self.norm(x) # 发散的元凶
+        if self.norm is not None:
+            x = self.norm(x) # 发散的元凶
 
         return x, attns
 
