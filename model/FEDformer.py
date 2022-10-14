@@ -109,7 +109,7 @@ class TLayernorm(nn.Module):
         self.layernorm = nn.LayerNorm(channels)
 
     def forward(self, x):
-        print(x.shape)
+        #print(x.shape)
         # x_hat = self.layernorm(x)
         # bias  = torch.mean(x_hat, dim=-2).unsqueeze(-2).repeat(1, x.shape[1], 1)
         shape = x.shape
@@ -646,7 +646,7 @@ class FEDformer(nn.Module):
                 ) 
                 for l in range(self.depth)
             ],
-            norm_layer=TLayernorm(embed_dim)
+            norm_layer=None#TLayernorm(embed_dim)
         )
         # Decoder
         self.decoder = Decoder(
@@ -660,7 +660,7 @@ class FEDformer(nn.Module):
                 )
                 for l in range(self.depth)
             ],
-            norm_layer=TLayernorm(embed_dim),
+            norm_layer=None,#TLayernorm(embed_dim),
             projection=nn.Linear(embed_dim, self.out_chans, bias=True)
         )
 
