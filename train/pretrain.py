@@ -184,6 +184,7 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     if model.training and model.input_noise_std and i==1:
         normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
 
+    #print(normlized_Field.shape,torch.std_mean(normlized_Field))
     out   = model(normlized_Field)
 
     extra_loss = 0
@@ -206,7 +207,8 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
         start = start[1:]+[[ltmv_pred, 0 , end[-1]]]
     else:
         start     = start[1:] + [ltmv_pred]
-    
+    #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
+    #print(target.shape,torch.std_mean(target))
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 
@@ -238,7 +240,9 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
         for extra_info_from_model in extra_info_from_model_list:
             for name, value in extra_info_from_model.items():
                 iter_info_pool[f'valid_on_{status}_{name}_timestep{i}'] = value
+        
         ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
+        
         abs_loss = criterion(ltmv_pred,target)
         iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
         pred_step+=1
