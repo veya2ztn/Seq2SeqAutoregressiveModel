@@ -939,7 +939,7 @@ def main_worker(local_rank, ngpus_per_node, args,
 
     logsys.info(f"loading weight from {args.pretrain_weight}")
     start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
-                        only_model= (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu))
+                        only_model= (args.mode=='fourcast') or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu))
     logsys.info("done!")
 
 
