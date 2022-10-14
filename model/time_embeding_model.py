@@ -5,7 +5,7 @@ import torch
 import numpy as np
 from .afnonet import BaseModel
 
-
+from .physics_model import First_Derivative_Layer
 class Sphere_Model(BaseModel):
     def __init__(self, args, backbone):
         super().__init__()
@@ -108,3 +108,5 @@ class Time_Projection_Model(Sphere_Model):
         
         target_projection = torch.einsum('bdp...,bdt->bpt...',y, y_direction)
         return target_projection, self.extra_loss_coef*extra_loss
+
+

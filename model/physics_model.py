@@ -13,6 +13,20 @@ from .afnonet import BaseModel
 # $$
 
 class First_Derivative_Layer(torch.nn.Module):
+    '''
+    use high dimenstion conv is faster
+        B=2
+        P=4
+        a=torch.randn(B,P,3,32,64).cuda()
+        layer=  First_Derivative_Layer(dim=3).cuda()
+        runtime_weight=layer.runtime_weight
+
+        x = torch.conv3d(a.flatten(0,1).unsqueeze(1),runtime_weight).reshape(*a.shape[:-1],-1)
+        --> 34.8 µs ± 130 ns per loop (mean ± std. dev. of 7 runs, 10,000 loops each)
+
+        x2 = torch.conv1d(a.flatten(0,-2).unsqueeze(1),runtime_weight[0,0]).reshape(*a.shape[:-1],-1)
+        --> 43.1 µs ± 1.63 µs per loop (mean ± std. dev. of 7 runs, 10,000 loops each)
+    '''
     def __init__(self,position=-1,dim=2,mode='five-point-stencil',pad_mode='circular',intervel=torch.Tensor([1])):
         super().__init__()
         self.postion=position
@@ -57,6 +71,39 @@ class First_Derivative_Layer(torch.nn.Module):
         x = x/self.intervel.to(x.device)
 
         return x.squeeze(1) if expandQ else x
+
+class Second_Derivative_Layer(torch.nn.Module):
+    def __init__(self,position=(-2,-1),mode='nine-point-stencil',pad_mode='circular',intervel=torch.Tensor([1])):
+        super().__init__()
+        self.postion=position
+        self.mode   =mode
+        self.pad_mode=pad_mode
+        self.intervel= intervel
+        if self.mode=='nine-point-stencil':
+            self.weight = torch.nn.Parameter(torch.Tensor([[1/3, 1/3,1/3],
+                                                           [1/3,-8/3,1/3],
+                                                           [1/3, 1/3,1/3]]),requires_grad=False)
+            self.pad_num = 1
+        else:
+            raise NotImplementedError(f"the self.mode must be nine-point-stencil")
+
+    @property
+    def runtime_weight(self):
+        return self.weight[None,None] #(1,1,3,3)
+    def forward(self, x):
+        x = x.transpose(-2,self.postion[0])
+        x = x.transpose(-1,self.postion[1])
+        
+        oshape = x.shape
+        x = x.flatten(0,-3).unsqueeze(1)
+        x = F.pad(x, (self.pad_num,self.pad_num,self.pad_num,self.pad_num), mode=self.pad_mode)
+        x = torch.conv2d(x,self.runtime_weight)
+        x = x/self.intervel.to(x.device)
+        x = x.reshape(*oshape)
+        x = x.transpose(-1,self.postion[1])
+        x = x.transpose(-2,self.postion[0])
+        return x
+
 
 class OnlineNormModel(BaseModel):
     def __init__(self, args, backbone):
@@ -263,3 +310,65 @@ class ConVectionModel(BaseModel):
     def forward(self, normlized_Field):
         normlized_Dt = self.backbone(normlized_Field) #(B,P,z,y,x)
         return normlized_Dt
+
+class DirectSpace_Feature_Model(BaseModel):
+    def __init__(self, args, backbone):
+        super().__init__()
+        h, w = backbone.img_size[-2:]
+        print(f'h intervel: {h} , w intervel: {w}')
+        if h in [51,49,47]:
+            Hdx = 6371000*torch.sin(torch.linspace(0,720,49)/720*np.pi)*2*np.pi/w
+            Hdx = Hdx.reshape(1,1,1,49,1)[...,1:-1,:] # (1,1,1,47,1)
+            shape = Hdx.shape
+            # the input will be (1,1,1,47,1)
+            # if h == 51:Hdx = F.pad(Hdx.flatten(0,1),(0,0,2,2),mode='replicate').reshape(*shape[:-2],-1,shape[-1])# (1,1,1,51,1)
+            # if h == 49:Hdx = F.pad(Hdx.flatten(0,1),(0,0,1,1),mode='replicate').reshape(*shape[:-2],-1,shape[-1])# (1,1,1,49,1)
+
+            Hdy = torch.Tensor([6371000*np.pi/48])
+            print(f"please notice we will using dt= 3600*6 as intertime")
+            self.DT = 3600*6
+            Hdx = Hdx/self.DT
+            Hdy = Hdy/self.DT
+            self.Hdx = Hdx
+            self.Hdy = Hdy
+        elif h in [32]:
+            Hdx = 6371000*torch.sin(torch.linspace(0,1,34)*np.pi)*2*np.pi/w
+            Hdx = Hdx[1:-1].reshape(1,1,1,32,1)
+            shape = Hdx.shape
+            Hdy = torch.Tensor([6371000*np.pi/32])
+            print(f"please notice we will using dt= 3600*1 as intertime")
+            self.DT = 3600*1 # notice for weatherbench module we have 1 hour dataset and 6 hour dataset. 
+            Hdx = Hdx/self.DT
+            Hdy = Hdy/self.DT
+            self.Hdx = Hdx
+            self.Hdy = Hdy
+        else:
+            raise NotImplementedError(f"for h not in [47,49,51], TODO.......")
+        
+        self.Dx= First_Derivative_Layer(position=-1, dim=2, mode='three-point-stencil', pad_mode='replicate', intervel=self.Hdx)
+        self.Dy= First_Derivative_Layer(position=-2, dim=2, mode='three-point-stencil', pad_mode='replicate', intervel=self.Hdy)
+        self.Dxy= Second_Derivative_Layer(position=(-2,-1), mode= 'nine-point-stencil', pad_mode='replicate', intervel=self.Hdy*self.Hdx)
+        self.backbone    =  backbone
+        self.physics_num = args.physics_num
+
+
+    def forward(self, Field):
+        # --> [Batch, z, P,  y, x] or --> [Batch, z, T, P, y, x]
+        assert Field.shape[1]==self.physics_num
+        u  = Field[:,0:1] # --> [Batch, 1 ,P, y, x]
+        v  = Field[:,1:2] # --> [Batch, 1 ,P, y, x]
+        with torch.no_grad():
+            Field_dx   =  self.Dx(Field.flatten(0,-3).unsqueeze(1)).reshape(Field.shape) # --> [Batch, z, P,  y, x]
+            Field_dy   =  self.Dy(Field.flatten(0,-3).unsqueeze(1)).reshape(Field.shape) # --> [Batch, z, P,  y, x]
+            Field_dxy  = self.Dxy(Field.flatten(0,-3).unsqueeze(1)).reshape(Field.shape) # --> [Batch, z, P,  y, x]
+            
+            Field = torch.cat([
+                1*Field,u*v,
+                1*Field_dx,  1*Field_dy,  1*Field_dxy, 
+                u*Field_dx,  u*Field_dy,  u*Field_dxy, 
+                v*Field_dx,  v*Field_dy,  v*Field_dxy, 
+                u*v*Field_dx,u*v*Field_dy,u*v*Field_dxy, 
+            ],dim=1)
+
+        return self.backbone(Field)
+
