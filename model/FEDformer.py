@@ -4,6 +4,21 @@ import torch.nn.functional as F
 import numpy as np
 import math
 from .Embedding import *
+from .afnonet import timer
+#timer = #timer(True)
+
+def get_symmetry_index_in_fft_pannel(shape):
+    shape    = np.array(shape)
+    indexes  = np.stack([t.flatten() for t in np.meshgrid(*[range(s) for s in shape])])
+    indexes2 = (- indexes)%(shape[:,None])
+    fftshift_index = (indexes + shape[:,None]//2)%shape[:,None]
+    center   = (shape[:,None]-1)/2
+    order    = np.argsort(np.linalg.norm(fftshift_index- center,axis=0))#sort by the distance to zero frequency
+    indexes  = indexes[:,order]
+    indexes2 =indexes2[:,order]
+    indexes  = np.ravel_multi_index(indexes,(shape))
+    indexes2 = np.ravel_multi_index(indexes2,(shape))
+    return indexes,indexes2
 
 def canonical_fft_freq(rfft_freq,freq_dim, mode='rfft', indexes=None,indexes2=None):
     '''
@@ -34,10 +49,7 @@ def canonical_fft_freq(rfft_freq,freq_dim, mode='rfft', indexes=None,indexes2=No
     freq_dim=list(freq_dim)
     if indexes is None:
         shape    = np.array(oshape)[freq_dim]
-        indexes  = np.stack([t.flatten() for t in np.meshgrid(*[range(s) for s in shape])])
-        indexes2 = (- indexes)%(shape.reshape(2,1))
-        indexes  = np.ravel_multi_index(indexes,(shape))
-        indexes2 = np.ravel_multi_index(indexes2,(shape))
+        indexes,indexes2 = get_symmetry_index_in_fft_pannel(shape)
     
     rfft_freq = rfft_freq.flatten(*freq_dim)
     if mode == 'rfft':
@@ -47,13 +59,13 @@ def canonical_fft_freq(rfft_freq,freq_dim, mode='rfft', indexes=None,indexes2=No
     rfft_freq = rfft_freq.reshape(oshape)    
     return rfft_freq
 
-def get_frequency_modes_mask_rfft(space_dims, modes=64, mode_select_method='random'):
+def get_frequency_modes_mask_rfft(space_dims, modes=64, mode_select_method='',indexes=None,indexes2=None):
     """
     get modes on frequency domain:
     'random' means sampling randomly;
     'else' means sampling the lowest modes;
     """
-    
+    #print(space_dims)
     rfft_freq_dim = list(space_dims)
     rfft_freq_dim[-1] = rfft_freq_dim[-1]//2 + 1
     if isinstance(modes,int):
@@ -68,12 +80,23 @@ def get_frequency_modes_mask_rfft(space_dims, modes=64, mode_select_method='rand
         mask[mask_index]=1
         mask = torch.BoolTensor(mask)
     else:
-        mask       = np.zeros(rfft_freq_dim)
-        if   len(modes)==1:mask[:modes[0]] = 1
-        elif len(modes)==2:mask[:modes[0],:modes[1]] = 1
-        elif len(modes)==3:mask[:modes[0],:modes[1],:modes[2]] = 1
-        elif len(modes)==4:mask[:modes[0],:modes[1],:modes[2],:modes[3]] = 1
-        else:raise NotImplementedError
+        space = np.array(space_dims[:-1])
+        if indexes is None:
+            indexes,indexes2 = get_symmetry_index_in_fft_pannel(space)
+        
+        advise_picked_mode_num = 1 + np.sum(space//2) + np.ceil(np.prod(space-1)/2)
+        totall_picked_mode_num = min(np.prod(modes[:-1]),advise_picked_mode_num) 
+        print(f"for shape:{space} and pick modes:{modes[:-1]}, we pick {totall_picked_mode_num} modes, the baseline modes is {advise_picked_mode_num}")
+        picked_indexes=[]
+        for i1,i2 in zip(indexes,indexes2):
+            if i1 in picked_indexes:continue
+            if i2 in picked_indexes:continue
+            picked_indexes.append(i1)
+            if len(picked_indexes)== totall_picked_mode_num:break
+
+        mask = np.zeros((np.prod(rfft_freq_dim[:-1]),rfft_freq_dim[-1]))
+        mask[picked_indexes,:modes[-1]]=1
+        mask = mask.reshape(rfft_freq_dim)
         mask = torch.BoolTensor(mask)
     return mask
 
@@ -183,6 +206,7 @@ class FourierBlockN(nn.Module):
         - the 2D Fourier Block is [Batch, head_num, in_channels,  w,  h]
         """
         # get modes on frequency domain
+
         self.mask = get_frequency_modes_mask_rfft(space_dims, modes=modes, mode_select_method=mode_select_method)
         print(f"create a mode filter shape={self.mask.shape} with {self.mask.sum()} mode activate")
         # Notice in the original implement, authors project the picked mode to a dense frequency space 
@@ -199,10 +223,8 @@ class FourierBlockN(nn.Module):
         self.in_channels  = in_channels
         self.out_channels = out_channels
         shape    = np.array(space_dims[:-1]) #omit the last one, which is half length from rfftn
-        indexes  = np.stack([t.flatten() for t in np.meshgrid(*[range(s) for s in shape])])
-        indexes2 = (- indexes)%(shape.reshape(2,1))
-        indexes  = np.ravel_multi_index(indexes,(shape))
-        indexes2 = np.ravel_multi_index(indexes2,(shape))
+
+        indexes,indexes2 = get_symmetry_index_in_fft_pannel(shape)
         self.canonical_index1=indexes
         self.canonical_index2=indexes2
 
@@ -283,6 +305,7 @@ class FourierCrossAttentionN(nn.Module):
         self.space_dims_kv=space_dims_kv
         self.attention_stratagy = attention_stratagy
         # get modes for queries and keys (& values) on frequency domain
+        
         self.mask_q  = get_frequency_modes_mask_rfft(space_dims_q, modes=modes, mode_select_method=mode_select_method)
         self.mask_kv = get_frequency_modes_mask_rfft(space_dims_kv, modes=modes, mode_select_method=mode_select_method)
 
@@ -290,10 +313,7 @@ class FourierCrossAttentionN(nn.Module):
         print('modes_kv={}, shape_kv={}'.format(self.mask_kv.sum(),self.mask_kv.shape))
 
         shape    = np.array(space_dims_kv[:-1]) #omit the last one, which is half length from rfftn
-        indexes  = np.stack([t.flatten() for t in np.meshgrid(*[range(s) for s in shape])])
-        indexes2 = (- indexes)%(shape.reshape(2,1))
-        indexes  = np.ravel_multi_index(indexes,(shape))
-        indexes2 = np.ravel_multi_index(indexes2,(shape))
+        indexes,indexes2 = get_symmetry_index_in_fft_pannel(shape)
         self.canonical_index1=indexes
         self.canonical_index2=indexes2
         
@@ -328,17 +348,17 @@ class FourierCrossAttentionN(nn.Module):
 
     def hydra_atttention(self,xq_ft_,xk_ft_):
         
-        q = self.complex_nonlinear(xq_ft_).flatten(1,2)#--> [Batch, head_num, in_channels, modes1] 
-        k = self.complex_nonlinear(xk_ft_).flatten(1,2)#--> [Batch, head_num, in_channels, modes1] 
-        v = xk_ft_.flatten(1,2)
-        kv = torch.einsum("biy,bjy ->bij", k, v)
-        ##[Batch, head_num*in_channels, modes2]  
-        #                                  |       --> [Batch, head_num*in_channels, in_channels] 
-        ##[Batch, head_num*in_channels, modes2] 
-        qkv = (torch.einsum("bjy,bij->biy", q, kv))
-        #[Batch, head_num*in_channels, in_channels] 
-        #                       |                  --> [Batch, in_channels, modes1] 
-        #[Batch, head_num*in_channels, modes1]
+        q = self.complex_nonlinear(xq_ft_)#--> [Batch, head_num,in_channels, modes1] 
+        k = self.complex_nonlinear(xk_ft_)#--> [Batch, head_num,in_channels, modes1] 
+        v = xk_ft_
+        kv = torch.einsum("bhiy,bhjy ->bhij", k, v)
+        ##[Batch, head_num, in_channels, modes2]  
+        #                                  |       --> [Batch, head_num,in_channels, in_channels] 
+        ##[Batch, head_num, in_channels, modes2] 
+        qkv = (torch.einsum("bhjy,bhji->bhiy", q, kv))
+        #[Batch, head_num, in_channels, modes1] 
+        #                     |             --> [Batch, head_num*in_channels, modes1] 
+        #[Batch, head_num, in_channels, in_channels] 
         qkv = qkv.reshape(xq_ft_.shape)
         return qkv
 
@@ -348,7 +368,7 @@ class FourierCrossAttentionN(nn.Module):
         assert space_dims_q == self.space_dims_q
         space_dims_kv= k.shape[3:]
         assert space_dims_kv == self.space_dims_kv
-        
+        #timer.restart(2)
         fft_dim = tuple(range(3, 3 + len(space_dims_q)))
         xq_ft_ = torch.fft.rfftn(q, dim=fft_dim, norm='ortho')
         xq_ft_shape    = list(xq_ft_.shape)
@@ -358,7 +378,7 @@ class FourierCrossAttentionN(nn.Module):
         xk_ft_ = torch.fft.rfftn(k, dim=fft_dim, norm='ortho')
         xk_ft_shape    = list(xk_ft_.shape)
         xk_ft_ = xk_ft_[...,self.mask_kv]
-
+        #timer.record(f'fft','cross_attention',2)
         # xq_ft_ --> [Batch, head_num, in_channels, modes2] 
         # xk_ft_ --> [Batch, head_num, in_channels, modes2] 
         # usually the mode1/mode2 is very large, so that the attention between them is quite consuming
@@ -379,8 +399,9 @@ class FourierCrossAttentionN(nn.Module):
         else:
             raise NotImplementedError("please assign correct attention stratagy")
         # the whole space dims are used to compute attention
-        
+        #timer.record(f'qkv','cross_attention',2)
         xqkvw   = torch.einsum("...ex,...eox->...ox", xqkv_ft, self.weights1)
+        #timer.record(f'qkvw','cross_attention',2)
         # #[Batch, head_num, in_channels, modes1]   
         # #                       |                 --> [Batch, head_num, out_channels, modes1] 
         # #[Batch, head_num, in_channels, out_channel, modes1]         
@@ -390,7 +411,9 @@ class FourierCrossAttentionN(nn.Module):
         out_ft         = torch.zeros(*xq_ft_shape, device=q.device, dtype=torch.cfloat)
         out_ft[...,self.mask_q] = xqkvw
         out_ft = canonical_fft_freq(out_ft,fft_dim,indexes=self.canonical_index1,indexes2=self.canonical_index2)
+        #print(torch.abs(out_ft).min(),torch.abs(out_ft).max(),torch.std_mean(torch.abs(out_ft)))
         out    = torch.fft.irfftn(out_ft, dim=fft_dim, s=space_dims_q, norm='ortho')
+        #timer.record(f'ifft','cross_attention',2)
         return (out, None)
 
 class AutoCorrelationLayerN(nn.Module):
@@ -467,24 +490,25 @@ class DecoderLayerN(nn.Module):
     def forward(self, x, cross, x_mask=None, cross_mask=None):
         # x     [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T1, in_channels]
         # cross [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T2, in_channels]
+        #timer.restart(3)
         space_dims = x.shape[1:-1]
         B = x.shape[0]
         C = x.shape[-1]
         x = x + self.dropout(self.self_attention(x, x, x,attn_mask=x_mask)[0])
         x, trend1 = self.decomp1(x)# --> [Batch, z, h ,w, T1, in_channels]
-        
+        #timer.record(f'self_attention','layers_decoder',3)
         x = x + self.dropout(self.cross_attention(x, cross, cross,attn_mask=cross_mask)[0])
         x, trend2 = self.decomp2(x)# --> [Batch, z, h ,w, T1, in_channels]
-        
+        #timer.record(f'cross_attention','layers_decoder',3)
         x = x + self.dropout(self.distill_layer(x))  
         x, trend3 = self.decomp3(x)
-
+        #timer.record(f'decomp3','layers_decoder',3)
         residual_trend = trend1 + trend2 + trend3 #-->[Batch, z, h ,w, T1, in_channels]
         
         # do time
         residual_trend = residual_trend.transpose(-1, -2).flatten(0,-3)#-->[Batch*SpaceProd, in_channels, T1]
         residual_trend = self.projection(residual_trend).transpose(-1, -2).view(B,*space_dims,-1)
-        
+        #timer.record(f'projection','layers_decoder',3)
         return x, residual_trend
 
 class EncoderLayerN(nn.Module):
@@ -527,6 +551,7 @@ class Encoder(nn.Module):
         self.norm = norm_layer
 
     def forward(self, x, attn_mask=None):
+        #timer.restart(1)
         attns = []
         if self.conv_layers is not None:
             for attn_layer, conv_layer in zip(self.attn_layers, self.conv_layers):
@@ -539,9 +564,9 @@ class Encoder(nn.Module):
             for attn_layer in self.attn_layers:
                 x, attn = attn_layer(x, attn_mask=attn_mask)
                 attns.append(attn)
-
-        if self.norm is not None:
-            x = self.norm(x)
+        #timer.record(f'layers_encoder','encoder',1)
+        # if self.norm is not None:
+        #     x = self.norm(x) # 发散的元凶
 
         return x, attns
 
@@ -556,10 +581,11 @@ class Decoder(nn.Module):
         self.projection = projection
 
     def forward(self, x, cross, x_mask=None, cross_mask=None, trend=0):
-        for layer in self.layers:
+        #timer.restart(1)
+        for i,layer in enumerate(self.layers):
             x, residual_trend = layer(x, cross, x_mask=x_mask, cross_mask=cross_mask)
             trend = trend + residual_trend
-
+        #timer.record(f'layers_decoder','decoder',1)
         if self.norm is not None:
             x = self.norm(x)
 
@@ -600,8 +626,9 @@ class FEDformer(nn.Module):
         # Embedding
         # The series-wise connection inherently contains the sequential information.
         # Thus, we can discard the position embedding of transformers.
-        self.enc_embedding = DataEmbedding_SLSDTD(in_chans, embed_dim, len(self.space_dims_encoder) - 1, freq=time_unit, dropout=dropout)
-        self.dec_embedding = DataEmbedding_SLSDTD(in_chans, embed_dim, len(self.space_dims_encoder) - 1, freq=time_unit, dropout=dropout)
+        embedding_type = DataEmbedding_SpaceTimeCombine#DataEmbedding_SLSDTD
+        self.enc_embedding = embedding_type(in_chans, embed_dim, len(self.space_dims_encoder) - 1, freq=time_unit, dropout=dropout)
+        self.dec_embedding = embedding_type(in_chans, embed_dim, len(self.space_dims_encoder) - 1, freq=time_unit, dropout=dropout)
         
         Block_kargs={'in_channels':embed_dim,'out_channels':embed_dim,'modes':modes,'mode_select_method':mode_select}
         
@@ -637,8 +664,21 @@ class FEDformer(nn.Module):
         )
 
     def forward(self, x_enc, x_mark_enc, x_mark_dec, enc_self_mask=None, dec_self_mask=None, dec_enc_mask=None):
-        # decomp init
-        
+        # >[decomp1]:cost 3.8e-04 ± 5.3e-04
+        # >[enc_embedding]:cost 9.8e-04 ± 3.5e-04
+        # >[encoder]:cost 8.5e-03 ± 5.2e-03
+        # --[layers_encoder]:cost 8.3e-03 ± 5.1e-03
+        # >[dec_embedding]:cost 1.2e-03 ± 1.1e-03
+        # >[decoder]:cost 1.6e-02 ± 6.2e-03
+        # --[layers_decoder]:cost 1.5e-02 ± 6.2e-03
+        # ----[self_attention]:cost 3.3e-03 ± 2.5e-03
+        # ----[cross_attention]:cost 3.9e-03 ± 4.2e-03
+        # ------[fft_encoder]:cost 1.5e-03 ± 1.6e-03
+        # ------[qkv]:cost 2.2e-04 ± 1.3e-04
+        # ------[qkvw]:cost 1.2e-04 ± 3.6e-04
+        # ------[ifft]:cost 1.3e-03 ± 1.7e-03
+        # ----[decomp3]:cost 5.6e-04 ± 1.3e-03
+        # ----[projection]:cost 3.8e-04 ± 4.5e-04
         if x_mark_dec.shape[1] == self.pred_len:
             # the input forget to cat the label len, then we do here
             x_mark_dec = torch.cat([x_mark_enc[:,-self.label_len:],x_mark_dec],1)
@@ -652,22 +692,31 @@ class FEDformer(nn.Module):
             channel_last = 2
             permute_order= [0]+list(range(3,len(x_enc.shape)))+[2,1]
             x_enc = x_enc.permute(*permute_order)
-        
+        #timer.restart(0)
         ## x_enc      -->  [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T1, in_channels]
         ## x_mark_enc -->  [Batch,  T1]
         ## x_dec      -->  [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T2, in_channels]
         ## x_mark_dec -->  [Batch,  T2]
+        
         seasonal_init, trend_init = self.decomp(x_enc)
+        #timer.record('decomp1',level=0)
         # decoder input
         mean           = torch.mean(x_enc, dim=-2,keepdim=True)
         trend_init     = torch.cat([trend_init[..., -self.label_len:, :]]+[mean]*self.pred_len, dim=-2)
         seasonal_init  = F.pad(seasonal_init[..., -self.label_len:, :], (0, 0, 0, self.pred_len))
+        
         enc_out        = self.enc_embedding(x_enc, x_mark_enc)
+        #timer.record('enc_embedding',level=0)
+        
         enc_out, attns = self.encoder(enc_out, attn_mask=enc_self_mask)
+        #timer.record('encoder',level=0)
         # dec
-
+        
         dec_out                   = self.dec_embedding(seasonal_init, x_mark_dec)
+        #timer.record('dec_embedding',level=0)
+        
         seasonal_part, trend_part = self.decoder(dec_out, enc_out,x_mask=dec_self_mask, cross_mask=dec_enc_mask,trend=trend_init)
+        #timer.record('decoder',level=0)
         # # final
         dec_out = trend_part + seasonal_part
         # dec_out = dec_out[..., -self.pred_len:, :]
@@ -680,4 +729,5 @@ class FEDformer(nn.Module):
         elif channel_last == 2:
             permute_order= [0,-1,-2]+list(range(1,len(dec_out.shape)-2)) # from (B,h,W,T,P) take [0,-1,-2,1,2] to (B,P,T,H,W)
             dec_out = dec_out.permute(*permute_order)
+        
         return dec_out

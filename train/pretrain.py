@@ -8,7 +8,7 @@ idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
 hostname = socket.gethostname()
 if hostname in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185']:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "7"
 os.environ['WANDB_MODE'] = 'offline'
 os.environ['WANDB_CONSOLE']='off'
 experiment_hub_path = "./experiment_hub.json"
@@ -404,6 +404,47 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
     
     return fourcastresult
 
+def nan_diagnose_weight(model,loss, nan_count):
+    skip = False
+    if torch.isnan(loss):
+        # we will check whether weight has nan 
+        bad_weight_name = []
+        bad_check = False
+        for name, p in model.named_parameters():
+            if torch.isnan(p).any():
+                bad_check    = True
+                bad_weight_name.append(name)
+        if bad_check:
+            print(f"the value is nan in weight:{bad_weight_name}")
+            raise
+        else:
+            nan_count+=1
+            if nan_count>10:
+                print("too many nan happened")
+                raise
+            print(f"detect nan, now at {nan_count}/10 warning level, pass....")   
+            skip = True
+    return loss, nan_count, skip
+
+def nan_diagnose_grad(model,nan_count):
+    skip = False
+    # we will check whether weight has nan 
+    bad_weight_name = []
+    bad_check = False
+    for name, p in model.named_parameters():
+        if p.grad is None:continue
+        if torch.isnan(p.grad).any():
+            bad_check    = True
+            bad_weight_name.append(name)
+    if bad_check:
+        print(f"the value is nan in weight.grad:{bad_weight_name}")
+        nan_count+=1
+        if nan_count>10:
+            print("too many nan happened")
+            raise
+        print(f"detect nan, now at {nan_count}/10 warning level, pass....")   
+        skip = True
+    return nan_count, skip
 
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
 
@@ -461,24 +502,8 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
             else:
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
-            if torch.isnan(loss):
-                # we will check whether weight has nan 
-                bad_weight_name = []
-                bad_check = False
-                for name, p in model.named_parameters():
-                    if torch.isnan(p).any():
-                        bad_check    = True
-                        bad_weight_name.append(name)
-                if bad_check:
-                    print(f"the value is nan in weight:{bad_weight_name}")
-                    raise
-                else:
-                    nan_count+=1
-                    if nan_count>10:
-                        print("too many nan happened")
-                        raise
-                    print(f"detect nan, now at {nan_count}/10 warning level, pass....")   
-                    continue
+            loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count)
+            if skip:continue
             loss /= accumulation_steps
             iter_info_pool[f'train_loss_gpu{gpu}'] =  loss.item()
 
@@ -486,10 +511,12 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 loss_scaler.scale(loss).backward()
             else:
                 loss.backward()
-            
-
+            nan_count, skip = nan_diagnose_grad(model,nan_count)
+            if skip:
+                optimizer.zero_grad()
+                continue
+            if model.clip_grad:nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
             if (step+1) % accumulation_steps == 0:
-                if model.clip_grad:nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
                 if model.use_amp:
                     loss_scaler.step(optimizer)
                     loss_scaler.update()
