@@ -354,7 +354,9 @@ class DirectSpace_Feature_Model(BaseModel):
 
     def forward(self, Field):
         # --> [Batch, z, P,  y, x] or --> [Batch, z, T, P, y, x]
-        assert Field.shape[1]==self.physics_num
+        oshape = Field.shape
+        if  Field.shape[1]!=self.physics_num:
+            Field = Field.reshape(Field.shape[0],self.physics_num,-1,*Field.shape[2:])
         u  = Field[:,0:1] # --> [Batch, 1 ,P, y, x]
         v  = Field[:,1:2] # --> [Batch, 1 ,P, y, x]
         with torch.no_grad():
@@ -369,6 +371,6 @@ class DirectSpace_Feature_Model(BaseModel):
                 v*Field_dx,  v*Field_dy,  v*Field_dxy, 
                 u*v*Field_dx,u*v*Field_dy,u*v*Field_dxy, 
             ],dim=1)
-
-        return self.backbone(Field)
+        Field = self.backbone(Field)
+        return Field.reshape(oshape)
 
