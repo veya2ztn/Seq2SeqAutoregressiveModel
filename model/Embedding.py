@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm
 import math
+import numpy as np
+
 
 class SpaceLEmbedding(nn.Module):
     def __init__(self, c_in, d_model, space_num=2):
@@ -122,4 +124,28 @@ class DataEmbedding_SLSDTD(nn.Module):
         x = self.embedding_agg(torch.cat([a,b,c],dim=-1)) + d.reshape(len(d),*self.TV_shape)
         return self.dropout(x)
 
+class DataEmbedding_SpaceTimeCombine(nn.Module):
+    def __init__(self, c_in, d_model, space_num, freq='h', dropout=0.1):
+        super().__init__()
+
+        self.embedding_agg = nn.Linear(3*c_in,d_model)
+        self.dropout       = nn.Dropout(p=dropout)
+    
+    def get_direction_from_time_stamp(self,x_timestamp):
+        x_timestamp = x_timestamp*np.pi # the input is in [-1,1]
+        if x_timestamp.shape[-1]==4:x_timestamp = x_timestamp[...,[0,-1]] # if the time feature is 4 then only the first and last is needed
+        year_pos_x = x_timestamp[...,0]
+        day_pos_x  = x_timestamp[...,1]
+        x_direction = torch.stack([torch.cos(year_pos_x),
+                       torch.sin(year_pos_x)*torch.cos(day_pos_x),
+                       torch.cos(year_pos_x)*torch.sin(day_pos_x)],1) # (B, 3 ,T)
+        return x_direction
+
+    def forward(self, x, x_timestamp):
+        # x  [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T1, in_channels]
+        # x_timestamp [Batch, T1, 4]
+        x_direction = self.get_direction_from_time_stamp(x_timestamp)# [Batch, 3, T1]
+        x = torch.einsum('b...tp,bdt->b...tdp',x,x_direction).flatten(-2,-1)
+        x = self.embedding_agg(x)
+        return self.dropout(x)
         

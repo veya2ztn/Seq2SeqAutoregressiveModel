@@ -55,7 +55,7 @@ class Timer:
         self.last_time[level] = time.time()
 
     def show_stat_per_key(self,key, level=0):
-        print("--"*level+f"[{self.real_name[key]}]:cost {np.mean(self.recorder[key]):.1e} ± {np.std(self.recorder[key]):.1e}")
+        print("--"*level+f"[{self.real_name[key]}]:cost {np.mean(self.recorder[key][1:]):.1e} ± {np.std(self.recorder[key][1:]):.1e}")
         if key not in self.child:return
         level=level+1
         for child in self.child[key]:
@@ -65,7 +65,7 @@ class Timer:
         if not self.active:return
         for key in self.recorder.keys():
             if key in self.father:continue
-            print(">"+f"[{key}]:cost {np.mean(self.recorder[key]):.1e} ± {np.std(self.recorder[key]):.1e}")
+            print(">"+f"[{key}]:cost {np.mean(self.recorder[key][1:]):.1e} ± {np.std(self.recorder[key][1:]):.1e}")
             if key not in self.child:continue
             for child in self.child[key]:
                 self.show_stat_per_key(child,1)
