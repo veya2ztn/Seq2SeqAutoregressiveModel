@@ -989,10 +989,10 @@ def main_worker(local_rank, ngpus_per_node, args,
                     #last_best_path= now_best_path
                     logsys.info(f"The best accu is {val_loss}")
                 logsys.record('best_loss', min_loss, epoch)
+                update_experiment_info(experiment_hub_path,epoch,args)
                 if epoch>args.save_warm_up:
                     logsys.info(f"saving latest model ....")
                     save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, latest_ckpt_p)
-                    update_experiment_info(experiment_hub_path,epoch,args)
                     logsys.info(f"done ....")
         
         if os.path.exists(now_best_path) and args.do_final_fourcast:

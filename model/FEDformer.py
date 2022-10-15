@@ -121,6 +121,25 @@ class TLayernorm(nn.Module):
         x = x.reshape(*BSpace_shape, -1, C )
         return x
 
+class SpaceTBatchNorm(nn.Module):
+    """
+    Special designed layernorm for the seasonal part
+    """
+    def __init__(self, channels):
+        super().__init__()
+        self.batchnorm = nn.BatchNorm3d()(channels)
+
+    def forward(self, x):
+        assert len(x.shape)==5
+        shape = x.shape
+        BSpace_shape = shape[:-2]
+        C = shape[-1]
+        permute_order = [0,-1] + list(range(1,len(shape)-1))
+        x = x.permute(*permute_order)#-->(B, *Space,T, C)-->(B, C, *Space,T)
+        x = self.batchnorm(x)
+        permute_order = [0] + list(range(2,len(shape))) + [1]
+        x = x.permute(*permute_order)
+        return x
 
 class moving_avg(nn.Module):
     """
@@ -145,6 +164,35 @@ class moving_avg(nn.Module):
         x = self.avg(F.pad(x,(self.pad_front,self.pad_end),mode='replicate'))
         x = x.permute(0, 2, 1).reshape(*BSpace_shape, -1, C )
         return x
+
+class moving_avg_spacetime(nn.Module):
+    """
+    Moving average block to highlight the trend of time series
+    """
+    def __init__(self, kernel_size, stride):
+        super().__init__()
+        assert len(kernel_size)==3
+        self.kernel_size = np.array(kernel_size)
+        self.avg         = nn.AvgPool3d(kernel_size=kernel_size, stride=stride, padding=0)
+        self.pad_front   = self.kernel_size - 1-np.floor((self.kernel_size - 1) // 2)
+        self.pad_end     = np.floor((self.kernel_size - 1) // 2)
+        self.pad         = np.stack([self.pad_front,self.pad_end],1)[::-1].flatten().astype('int').tolist()
+        print(self.pad)
+    
+    def forward(self, x):
+        # padding on the both ends of time series
+        # the input must be (B,h,w,T,C)， the -1 dim is embed channel, the -2 dim is time channel
+        assert len(x.shape)==5
+        shape = x.shape
+        BSpace_shape = shape[:-2]
+        C = shape[-1]
+        permute_order = [0,-1] + list(range(1,len(shape)-1))
+        x = x.permute(*permute_order)#-->(B, *Space,T, C)-->(B, C, *Space,T)
+        x = self.avg(F.pad(x,self.pad, mode='replicate'))
+        permute_order = [0] + list(range(2,len(shape))) + [1]
+        x = x.permute(*permute_order)
+        return x
+
 
 
 class series_decomp(nn.Module):
@@ -479,9 +527,7 @@ class DecoderLayerN(nn.Module):
             nn.Linear(in_features=d_ff, out_features=d_model, bias=False)
         )
 
-        self.decomp1 = series_decomp_along_time(moving_avg)
-        self.decomp2 = series_decomp_along_time(moving_avg)
-        self.decomp3 = series_decomp_along_time(moving_avg)
+        self.decomp = moving_avg_spacetime(moving_avg)
         self.dropout = nn.Dropout(dropout)
         self.projection = nn.Conv1d(in_channels=d_model, out_channels=c_out, kernel_size=3, stride=1, padding=1,
                                     padding_mode='circular', 
@@ -496,13 +542,13 @@ class DecoderLayerN(nn.Module):
         B = x.shape[0]
         C = x.shape[-1]
         x = x + self.dropout(self.self_attention(x, x, x,attn_mask=x_mask)[0])
-        x, trend1 = self.decomp1(x)# --> [Batch, z, h ,w, T1, in_channels]
+        x, trend1 = self.decomp(x)# --> [Batch, z, h ,w, T1, in_channels]
         #timer.record(f'self_attention','layers_decoder',3)
         x = x + self.dropout(self.cross_attention(x, cross, cross,attn_mask=cross_mask)[0])
-        x, trend2 = self.decomp2(x)# --> [Batch, z, h ,w, T1, in_channels]
+        x, trend2 = self.decomp(x)# --> [Batch, z, h ,w, T1, in_channels]
         #timer.record(f'cross_attention','layers_decoder',3)
         x = x + self.dropout(self.distill_layer(x))  
-        x, trend3 = self.decomp3(x)
+        x, trend3 = self.decomp(x)
         #timer.record(f'decomp3','layers_decoder',3)
         residual_trend = trend1 + trend2 + trend3 #-->[Batch, z, h ,w, T1, in_channels]
         
@@ -527,17 +573,16 @@ class EncoderLayerN(nn.Module):
             nn.Linear(in_features=d_ff, out_features=d_model, bias=False)
         )
 
-        self.decomp1 = series_decomp_along_time(moving_avg)
-        self.decomp2 = series_decomp_along_time(moving_avg)
+        self.decomp = moving_avg_spacetime(moving_avg)
         self.dropout = nn.Dropout(dropout)
   
     def forward(self, x, attn_mask=None):
         # x     [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T1, in_channels]
         x, attn = self.attention(x, x, x,attn_mask=attn_mask)
         x       = x + self.dropout(x)
-        x, _    = self.decomp1(x)
+        x, _    = self.decomp(x)
         x       = x + self.distill_layer(x)
-        x, _    = self.decomp2(x)
+        x, _    = self.decomp(x)
         return x, attn
 
 
@@ -600,14 +645,14 @@ class FEDformer(nn.Module):
     FEDformer performs the attention mechanism on frequency domain and achieved O(N) complexity
     """
     def __init__(self, img_size=None, in_chans=None, out_chans=None,embed_dim=None, depth=2,
-               history_length=6, modes=(17,33,6), mode_select='',label_len=3,pred_len=1,moving_avg=None,
+               history_length=6, modes=(17,33,6), mode_select='',label_len=3,pred_len=1,moving_avg=(5,5,3),
                dropout=0,time_unit='h',n_heads=8,**kargs):
         super(FEDformer, self).__init__()
         self.mode_select    = mode_select
         self.modes       = modes
         self.label_len     = label_len
         self.pred_len      = pred_len
-        self.moving_avg     = [history_length//2] if moving_avg is None else moving_avg
+        self.moving_avg     = (5,5,history_length//2) if moving_avg is None else moving_avg
         self.seq_len = seq_len = history_length
         seq_len_dec = label_len + pred_len
         self.space_dims_encoder     = tuple(list(img_size)+[seq_len])
@@ -622,7 +667,7 @@ class FEDformer(nn.Module):
         self.depth = depth
         self.time_unit = time_unit
         # Decomp
-        self.decomp = series_decomp_along_time(self.moving_avg)
+        self.decomp = moving_avg_spacetime(self.moving_avg)
 
         # Embedding
         # The series-wise connection inherently contains the sequential information.
@@ -646,7 +691,7 @@ class FEDformer(nn.Module):
                 ) 
                 for l in range(self.depth)
             ],
-            norm_layer=None#TLayernorm(embed_dim)
+            norm_layer=SpaceTBatchNorm#TLayernorm(embed_dim)
         )
         # Decoder
         self.decoder = Decoder(
@@ -660,7 +705,7 @@ class FEDformer(nn.Module):
                 )
                 for l in range(self.depth)
             ],
-            norm_layer=None,#TLayernorm(embed_dim),
+            norm_layer=SpaceTBatchNorm,#TLayernorm(embed_dim),
             projection=nn.Linear(embed_dim, self.out_chans, bias=True)
         )
 
