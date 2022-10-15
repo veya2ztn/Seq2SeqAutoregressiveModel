@@ -127,7 +127,7 @@ class SpaceTBatchNorm(nn.Module):
     """
     def __init__(self, channels):
         super().__init__()
-        self.batchnorm = nn.BatchNorm3d()(channels)
+        self.batchnorm = nn.BatchNorm3d(channels)
 
     def forward(self, x):
         assert len(x.shape)==5
@@ -193,21 +193,18 @@ class moving_avg_spacetime(nn.Module):
         x = x.permute(*permute_order)
         return x
 
-
-
 class series_decomp(nn.Module):
     """
     Series decomposition block
     """
     def __init__(self, kernel_size):
         super(series_decomp, self).__init__()
-        self.moving_avg = moving_avg(kernel_size, stride=1)
+        self.moving_avg = moving_avg_spacetime(kernel_size, stride=1)
 
     def forward(self, x):
         moving_mean = self.moving_avg(x)
         res = x - moving_mean
         return res, moving_mean
-
 
 class series_decomp_multi(nn.Module):
     """
@@ -527,7 +524,7 @@ class DecoderLayerN(nn.Module):
             nn.Linear(in_features=d_ff, out_features=d_model, bias=False)
         )
 
-        self.decomp = moving_avg_spacetime(moving_avg)
+        self.decomp = series_decomp(moving_avg)
         self.dropout = nn.Dropout(dropout)
         self.projection = nn.Conv1d(in_channels=d_model, out_channels=c_out, kernel_size=3, stride=1, padding=1,
                                     padding_mode='circular', 
@@ -573,7 +570,7 @@ class EncoderLayerN(nn.Module):
             nn.Linear(in_features=d_ff, out_features=d_model, bias=False)
         )
 
-        self.decomp = moving_avg_spacetime(moving_avg)
+        self.decomp = series_decomp(moving_avg)
         self.dropout = nn.Dropout(dropout)
   
     def forward(self, x, attn_mask=None):
@@ -667,7 +664,7 @@ class FEDformer(nn.Module):
         self.depth = depth
         self.time_unit = time_unit
         # Decomp
-        self.decomp = moving_avg_spacetime(self.moving_avg)
+        self.decomp = series_decomp(self.moving_avg)
 
         # Embedding
         # The series-wise connection inherently contains the sequential information.
@@ -691,7 +688,7 @@ class FEDformer(nn.Module):
                 ) 
                 for l in range(self.depth)
             ],
-            norm_layer=SpaceTBatchNorm#TLayernorm(embed_dim)
+            norm_layer=SpaceTBatchNorm(embed_dim)#TLayernorm(embed_dim)
         )
         # Decoder
         self.decoder = Decoder(
@@ -705,7 +702,7 @@ class FEDformer(nn.Module):
                 )
                 for l in range(self.depth)
             ],
-            norm_layer=SpaceTBatchNorm,#TLayernorm(embed_dim),
+            norm_layer=SpaceTBatchNorm(embed_dim),#TLayernorm(embed_dim),
             projection=nn.Linear(embed_dim, self.out_chans, bias=True)
         )
 
