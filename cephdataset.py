@@ -277,14 +277,15 @@ class ERA5CephSmallDataset(ERA5CephDataset):
             'valid': "./datasets/era5G32x64_set/valid_data.npy",
             'test':  "./datasets/era5G32x64_set/test_data.npy"
         }
-    
+    img_shape = (32,64)
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,
                 class_name='ERA5CephSmallDataset', ispretrain=True,
                 crop_coord=None,root=None,
                 dataset_tensor=None,record_load_tensor=None,time_step=None,with_idx=False,random_time_step=False,dataset_flag=False,
-                time_reverse_flag='only_forward',time_intervel=1,use_time_stamp=False):
+                time_reverse_flag='only_forward',time_intervel=1,use_time_stamp=False,**kargs):
         self.crop_coord   = crop_coord
         self.mode      = mode
+        self.split=split
         if dataset_tensor is None:
             self.data,self.record_load_tensor = self.create_offline_dataset_templete(split)
         else:
@@ -338,6 +339,53 @@ class ERA5CephSmallDataset(ERA5CephDataset):
         if self.crop_coord is not None:
             l, r, u, b = self.crop_coord
             arrays = arrays[:, u:b, l:r]
+        #arrays = torch.from_numpy(arrays)
+        if self.channel_last:
+            if isinstance(arrays,np.ndarray):
+                arrays = arrays.transpose(1,2,0)
+            else:
+                arrays = arrays.permute(1,2,0)
+        if self.use_time_stamp:
+            return arrays, self.timestamp[idx]
+        else:
+            return arrays
+
+class ERA5CephSmallPatchDataset(ERA5CephSmallDataset):
+    def __init__(self,**kargs):
+        super().__init__(**kargs)
+        self.cross_sample = kargs.get('cross_sample', True) and self.split == 'train'
+        self.patch_range = kargs.get('patch_range', 3)
+
+    def get_patch_location_index(self,center):
+        # we want to get the patch index around center with the self.patch_range
+        # For example, 
+        #   (i-1,j-1) (i ,j-1) (i+1,j-1)
+        #   (i-1,j ) (i ,j ) (i+1,j )
+        #   (i-1,j+1) (i ,j+1) (i+1,j+1)
+        # notice our data is on the sphere, this mean the center in H should be in [-boundary+patch_range, boundary-patch_range]
+        # and the position in W is perodic.
+        assert center[-2] >= self.patch_range//2
+        assert center[-2] <= self.img_shape[-2] - (self.patch_range//2)
+        delta = [list(range(-(self.patch_range//2),self.patch_range//2+1))]*len(center)
+        delta = np.meshgrid(*delta)
+        pos  = [c+dc for c,dc in zip(center,delta)]
+        pos[-1]= pos[-1]%self.img_shape[-1] # perodic
+        return pos
+
+    def get_item(self, idx,reversed_part=False):
+        arrays = self.data[idx]
+        if reversed_part:
+            arrays = arrays.clone()#it is a torch.tensor
+            arrays[reversed_part] = -arrays[reversed_part]
+        arrays = arrays[self.channel_pick]
+        if self.cross_sample:
+            center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)) 
+            center_w = np.random.randint(self.img_shape[-1])
+            patch_idx_h,patch_idx_w = get_patch_location_index((center_h,center_w))
+            arrays = arrays[..., patch_idx_h, patch_idx_w]
+        # if self.crop_coord is not None:
+        #     l, r, u, b = self.crop_coord
+        #     arrays = arrays[:, u:b, l:r]
         #arrays = torch.from_numpy(arrays)
         if self.channel_last:
             if isinstance(arrays,np.ndarray):
@@ -531,6 +579,7 @@ class ERA5Tiny12_47_96(ERA5BaseDataset):
             pysics_part  = (u*Field_dx + v*Field_dy)*self.Dt
             Field_Dt     = Field_dt + pysics_part*self.reduce_Field_coef
             return [Field, Field_Dt, pysics_part] #(B,12,z,y,x)
+
 
 class WeathBench(BaseDataset):
     time_unit=1
