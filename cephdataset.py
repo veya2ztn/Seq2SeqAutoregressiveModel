@@ -593,11 +593,15 @@ class WeathBench(BaseDataset):
     constant_channel_pick = []
     one_single_data_shape = [110,32,64]
     reduce_Field_coef = np.array([1])
+    datatimelist_pool={'train':np.arange(np.datetime64("1979-01-02"), np.datetime64("2016-01-01"), np.timedelta64(1, "h")),
+                       'valid':np.arange(np.datetime64("2016-01-01"), np.datetime64("2018-01-01"), np.timedelta64(1, "h")),
+                        'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(1, "h"))}
+
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,
                  root=None, time_step=2,
                  with_idx=False,
                  years=None,dataset_tensor=None,record_load_tensor=None,
-                 dataset_flag='normal',time_reverse_flag='only_forward',time_intervel=1,
+                 dataset_flag='normal',time_reverse_flag='only_forward',time_intervel=1,use_time_stamp=False,
                  **kargs):
         if years is None:
             years = self.years_split[split]
@@ -609,7 +613,7 @@ class WeathBench(BaseDataset):
         print(f"use dataset in {self.root}")
         self.split            = split
         self.single_data_path_list = self.init_file_list(years) # [[year,idx],[year,idx],.....]
-
+        self.use_time_stamp = use_time_stamp
         # in memory dataset, if we activate the in memory procedure, please create shared tensor 
         # via Tensor.share_memory_() before call this module and pass the create tensor as args of this module
         # the self.dataset_tensor should be same shape as the otensor, for example (10000, 110, 32, 64)
@@ -649,7 +653,7 @@ class WeathBench(BaseDataset):
         self.set_time_reverse(time_reverse_flag)
         self.vnames= [self.all_vnames[i] for i in self.channel_choice]
         self.vnames= self.vnames + [self.cons_vnames[i] for i in self.constant_channel_pick]
-    
+        self.timestamp = time_features(pd.to_datetime(self.datatimelist_pool[split])).transpose(1, 0) 
     @staticmethod
     def init_file_list(years):
         file_list = []
@@ -734,6 +738,7 @@ class WeathBench71(WeathBench):
     volicity_idx = ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
                  [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2] # v component of wind and the 10m v wind
                 )
+                
     def config_pool_initial(self):
 
         _list = self._component_list
@@ -799,9 +804,12 @@ class WeathBench71(WeathBench):
             data[14*5-1]    = total_precipitaiton
         
         if 'gauss_norm' in self.normalize_type:
-            return (data - self.mean)/self.std
+            data=  (data - self.mean)/self.std
         elif 'unit_norm' in self.normalize_type:
-            return data/self.std
+            data = data/self.std
+
+        if self.use_time_stamp:
+            return data, self.timestamp[idx]
         else:
             return data
 
@@ -867,6 +875,9 @@ class WeathBench716(WeathBench71):
 
 class WeathBench7066(WeathBench71):
     default_root='datasets/weatherbench_6hour'
+    datatimelist_pool={'train':np.arange(np.datetime64("1979-01-02"), np.datetime64("2016-01-01"), np.timedelta64(6, "h")),
+                       'valid':np.arange(np.datetime64("2016-01-01"), np.datetime64("2018-01-01"), np.timedelta64(6, "h")),
+                        'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(6, "h"))}
     def __len__(self):
         return len(self.dataset_tensor) - self.time_step*self.time_intervel + 1
     @staticmethod
