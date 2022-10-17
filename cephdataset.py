@@ -353,7 +353,7 @@ class ERA5CephSmallDataset(ERA5CephDataset):
 class ERA5CephSmallPatchDataset(ERA5CephSmallDataset):
     def __init__(self,**kargs):
         super().__init__(**kargs)
-        self.cross_sample = kargs.get('cross_sample', True)# and (self.split == 'train')
+        self.cross_sample = kargs.get('cross_sample', True) and (self.split == 'train')
         self.patch_range = patch_range = kargs.get('patch_range', 5)
         self.center_index,self.around_index=get_center_around_indexes(self.patch_range,self.img_shape)
         self.channel_last = False
@@ -569,6 +569,7 @@ class ERA5Tiny12_47_96(ERA5BaseDataset):
 
 class WeathBench(BaseDataset):
     time_unit=1
+    img_shape=(32,64)
     years_split={'train':range(1979, 2016),
            'valid':range(2016, 2018),
            'test':range(2018,2019),
@@ -909,7 +910,49 @@ class WeathBench7066(WeathBench71):
         # config_pool['3D70O'] =(_list  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
         return config_pool
     
-
+class WeathBench7066PatchDataset(WeathBench7066):
+    def __init__(self,**kargs):
+        super().__init__(**kargs)
+        self.cross_sample = kargs.get('cross_sample', True) and (self.split == 'train')
+        self.patch_range = patch_range = kargs.get('patch_range', 5)
+        self.center_index,self.around_index=get_center_around_indexes(self.patch_range,self.img_shape)
+        self.channel_last = False
+    def get_item(self,idx,reversed_part=False):
+        odata=self.load_otensor(idx)
+        if reversed_part:
+            odata = odata.clone() if isinstance(odata,torch.Tensor) else odata.copy()
+            odata[reversed_part] = -odata[reversed_part]
+        data = odata[self.channel_choice]
+        
+        eg = torch if isinstance(data,torch.Tensor) else np
+        if '3D' in self.normalize_type:
+            # 3D should modify carefully
+            data[14*4-1] = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
+            total_precipitaiton = odata[4]
+            newdata = data[14*5-1].clone() if isinstance(data,torch.Tensor) else data[14*5-1].copy()
+            newdata[total_precipitaiton>0] = 100
+            newdata[data[14*5-1]>100]=data[14*5-1][data[14*5-1]>100]
+            data[14*5-1] = newdata
+            shape= data.shape
+            data = data.reshape(5,14,*shape[-2:])
+        else:
+            data[14*4-1]    = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
+            total_precipitaiton = odata[4]
+            data[14*5-1]    = total_precipitaiton
+        
+        if 'gauss_norm' in self.normalize_type:
+            data=  (data - self.mean)/self.std
+        elif 'unit_norm' in self.normalize_type:
+            data = data/self.std
+        if self.cross_sample:
+            center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)*2) 
+            center_w = np.random.randint(self.img_shape[-1])
+            patch_idx_h,patch_idx_w = self.around_index[center_h,center_w]
+            data = data[..., patch_idx_h, patch_idx_w]
+        if self.use_time_stamp:
+            return data, self.timestamp[idx]
+        else:
+            return data
 if __name__ == "__main__":
     import sys
     import time

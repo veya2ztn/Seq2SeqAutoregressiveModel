@@ -255,7 +255,7 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
     if hasattr(dataset,'use_time_stamp') and dataset.use_time_stamp:
         return once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode)
-    elif dataset.__class__.__name__=='ERA5CephSmallPatchDataset':
+    elif 'Patch' in dataset.__class__.__name__:
         return once_forward_patch(model,i,start,end,dataset,time_step_1_mode)
     else:
        return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
