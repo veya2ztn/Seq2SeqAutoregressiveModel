@@ -101,7 +101,7 @@ class NaiveConvModel2D(nn.Module):
     '''
     input is (B, P, patch_range_1,patch_range_2)
     output is (B,P)
-    '''
+    ''' 
     def __init__(self,img_size=None,patch_range=5,in_chans=20, out_chans=20, **kargs):
         super().__init__()
         self.img_size = img_size
