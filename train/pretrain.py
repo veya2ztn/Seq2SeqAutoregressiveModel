@@ -39,6 +39,7 @@ from model.afnonet import AFNONet
 from model.FEDformer import FEDformer
 from model.FEDformer1D import FEDformer1D
 from JCmodels.fourcastnet import AFNONet as AFNONetJC
+from model.patch_model import NaiveConvModel2D
 from model.time_embeding_model import *
 from model.physics_model import *
 from utils.params import get_args
@@ -50,7 +51,7 @@ from mltool.dataaccelerate import DataLoaderX,DataLoader,DataPrefetcher,DataSimf
 from mltool.loggingsystem import LoggingSystem
 
 
-from cephdataset import (ERA5CephDataset,WeathBench71_H5,ERA5CephSmallDataset,WeathBench706,WeathBench7066,SpeedTestDataset,ERA5Tiny12_47_96,WeathBench71,WeathBench716)
+from cephdataset import *
 #dataset_type = ERA5CephDataset
 # dataset_type  = SpeedTestDataset
 Datafetcher = DataSimfetcher
@@ -91,18 +92,26 @@ train_set={
 
 half_model = False
 
+def generate_latweight(w, device):
+    # steph = 180.0 / h
+    # latitude = np.arange(-90, 90, steph).astype(np.int)
+    tw =  w if w != 28 else 32
+    latitude = torch.linspace(-np.pi/2,np.pi/2,tw).to(device)
+    if w==28:latitude=latitude[2:-2]
+    cos_lat   = torch.cos(latitude)
+    latweight = cos_lat/cos_lat.mean()
+    latweight = latweight.reshape(1, w, 1,1)
+    return latweight
+
 def compute_accu(ltmsv_pred, ltmsv_true):
+    wlist = [28, 32,49, 720]
     if len(ltmsv_pred.shape)==5:ltmsv_pred = ltmsv_pred.flatten(1,2)
     if len(ltmsv_true.shape)==5:ltmsv_true = ltmsv_true.flatten(1,2)
-    if ltmsv_pred.shape[1] not in [32,720]: ltmsv_pred = ltmsv_pred.permute(0,2,3,1)
-    if ltmsv_true.shape[1] not in [32,720]: ltmsv_true = ltmsv_true.permute(0,2,3,1)
+    if ltmsv_pred.shape[1] not in wlist: ltmsv_pred = ltmsv_pred.permute(0,2,3,1)
+    if ltmsv_true.shape[1] not in wlist: ltmsv_true = ltmsv_true.permute(0,2,3,1)
     # ltmsv_pred --> (B, w,h, property)
     # ltmsv_true --> (B, w,h, property)
-    w = ltmsv_pred.shape[1]
-    latitude = torch.linspace(-np.pi/2,np.pi/2,w).to(ltmsv_pred.device)
-    cos_lat  = torch.cos(latitude)
-    latweight= cos_lat/cos_lat.mean()
-    latweight = latweight.reshape(1, w, 1,1)
+    latweight = generate_latweight(ltmsv_pred.shape[1],ltmsv_pred.device)
     # history_record <-- (B, w,h, property)
     fenzi = (latweight*ltmsv_pred*ltmsv_true).sum(dim=(1, 2))
     fenmu = torch.sqrt((latweight*ltmsv_pred**2).sum(dim=(1,2)) *
@@ -111,17 +120,12 @@ def compute_accu(ltmsv_pred, ltmsv_true):
     return torch.clamp(fenzi/(fenmu+1e-10),0,10)
 
 def compute_rmse(pred, true):
+    wlist = [28, 32,49, 720]
     if len(pred.shape)==5:pred = pred.flatten(1,2)
     if len(true.shape)==5:true = true.flatten(1,2)
-    if pred.shape[1] not in [32,720]: pred = pred.permute(0,2,3,1)
-    if true.shape[1] not in [32,720]: true = true.permute(0,2,3,1)
-    # pred <-- (B,w,h,p)
-    # true <-- (B,w,h,p)
-    w         = pred.shape[1]
-    latitude  = torch.linspace(-np.pi/2, np.pi/2, w).to(pred.device)
-    cos_lat   = torch.cos(latitude)
-    latweight = cos_lat/cos_lat.mean()
-    latweight = latweight.reshape(1, w, 1,1)
+    if pred.shape[1] not in wlist: pred = pred.permute(0,2,3,1)
+    if true.shape[1] not in wlist: true = true.permute(0,2,3,1)
+    latweight = generate_latweight(pred.shape[1],pred.device)
     return  torch.clamp(torch.sqrt((latweight*(pred - true)**2).mean(dim=(1,2) )),0,1000)
 
 
@@ -211,10 +215,47 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     #print(target.shape,torch.std_mean(target))
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
+def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
+    
+    Field  = start[-1]
+    
+    normlized_Field_list = dataset.do_normlize_data([start])[0]  #always use normlized input
+    normlized_Field      = normlized_Field_list[0] if len(normlized_Field_list)==1 else torch.stack(normlized_Field_list,2)
+    target               = dataset.do_normlize_data([end])[0] #always use normlized target
+
+    if model.training and model.input_noise_std and i==1:
+        normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
+
+    out   = model(normlized_Field)
+
+    extra_loss = 0
+    extra_info_from_model_list = []
+    if isinstance(out,(list,tuple)):
+        extra_loss                 = out[1]
+        extra_info_from_model_list = out[2:]
+        out = out[0]
+
+    ltmv_pred = dataset.inv_normlize_data([out])[0]
+
+    if isinstance(start[0],(list,tuple)):
+        start = start[1:]+[[ltmv_pred, 0 , end[-1]]]
+    else:
+        start     = start[1:] + [ltmv_pred]
+    #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
+    #print(target.shape,torch.std_mean(target))
+    if len(ltmv_pred.shape)>2:
+        target = target[...,model.center_index[0],model.center_index[1]]
+    else:
+        B,P,W,H=target.shape
+        target = target[...,W//2,H//2]
+    return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
+
 
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
     if hasattr(dataset,'use_time_stamp') and dataset.use_time_stamp:
         return once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode)
+    elif dataset.__class__.__name__=='ERA5CephSmallPatchDataset':
+        return once_forward_patch(model,i,start,end,dataset,time_step_1_mode)
     else:
        return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
 
@@ -242,7 +283,7 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
                 iter_info_pool[f'valid_on_{status}_{name}_timestep{i}'] = value
         
         ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
-        
+
         abs_loss = criterion(ltmv_pred,target)
         iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
         pred_step+=1
@@ -785,6 +826,7 @@ def parse_default_args(args):
     dataset_kargs['time_reverse_flag'] = 'only_forward' if not hasattr(args,'time_reverse_flag') else args.time_reverse_flag
     if hasattr(args,'dataset_flag') and args.dataset_flag:dataset_kargs['dataset_flag']= args.dataset_flag
     if hasattr(args,'time_intervel'):dataset_kargs['time_intervel']= args.time_intervel
+    if hasattr(args,'cross_sample'):dataset_kargs['cross_sample']= args.cross_sample
     if hasattr(args,'use_time_stamp') and args.use_time_stamp:dataset_kargs['use_time_stamp']= args.use_time_stamp
     
     
