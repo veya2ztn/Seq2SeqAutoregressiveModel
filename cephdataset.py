@@ -381,7 +381,7 @@ class ERA5CephSmallPatchDataset(ERA5CephSmallDataset):
         if self.cross_sample:
             center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)) 
             center_w = np.random.randint(self.img_shape[-1])
-            patch_idx_h,patch_idx_w = get_patch_location_index((center_h,center_w))
+            patch_idx_h,patch_idx_w = self.get_patch_location_index((center_h,center_w))
             arrays = arrays[..., patch_idx_h, patch_idx_w]
         # if self.crop_coord is not None:
         #     l, r, u, b = self.crop_coord
