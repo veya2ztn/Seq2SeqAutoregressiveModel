@@ -23,17 +23,23 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
 
     start_epoch, start_step = 0, 0
     min_loss = np.inf
-    if os.path.exists(path):
+    if os.path.exists(path) and path != "":
         print(f"loading model from {path}...........")
         ckpt = torch.load(path, map_location='cpu')
 
         if only_model:
+            
             model.load_state_dict(ckpt['model'])
+            print("loading model weight success...........")
         else:
             model.load_state_dict(ckpt['model'])
+            print("loading model weight success...........")
             optimizer.load_state_dict(ckpt['optimizer'])
+            print("loading optimizer weight success...........")
             lr_scheduler.load_state_dict(ckpt['lr_scheduler'])
+            print("loading lr_scheduler weight success...........")
             loss_scaler.load_state_dict(ckpt['loss_scaler'])
+            print("loading loss_scaler weight success...........")
             start_epoch = ckpt["epoch"]
             start_step = ckpt["step"]
             min_loss = ckpt["min_loss"]

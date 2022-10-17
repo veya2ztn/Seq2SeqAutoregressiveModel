@@ -817,6 +817,7 @@ def parse_default_args(args):
         "physics_num":args.physics_num,
         "pred_len":args.pred_len,
         "label_len":args.label_len,
+        "canonical_fft":args.canonical_fft
     }
     args.model_kargs = model_kargs
     return args
@@ -893,6 +894,7 @@ def build_model(args):
     model.history_length=args.history_length
     model.use_amp = args.use_amp
     model.clip_grad= args.clip_grad
+    model.pred_len = args.pred_len
     return model
 
 def update_experiment_info(experiment_hub_path,epoch,args):
@@ -934,13 +936,22 @@ def main_worker(local_rank, ngpus_per_node, args,
 
     model           = build_model(args)
     #param_groups    = timm.optim.optim_factory.add_weight_decay(model, args.weight_decay)
-    param_groups    = timm.optim.optim_factory.param_groups_weight_decay(model, args.weight_decay)
-    optimizer       = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
+    
+    if args.opt == 'adamw':
+        param_groups    = timm.optim.optim_factory.param_groups_weight_decay(model, args.weight_decay)
+        optimizer       = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
+    elif args.opt == 'adam':
+        optimizer       = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.95))
+    elif args.opt == 'sgd':
+        optimizer       = torch.optim.SGD(model.parameters(), lr=args.lr)
+    else:
+        raise NotImplementedError
     loss_scaler     = torch.cuda.amp.GradScaler(enabled=True)
     lr_scheduler, _ = create_scheduler(args, optimizer)
     criterion       = nn.MSELoss()
 
-
+    args.pretrain_weight = args.pretrain_weight.strip()
+    
     logsys.info(f"loading weight from {args.pretrain_weight}")
     start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
                         only_model= (args.mode=='fourcast') or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu))
@@ -968,6 +979,7 @@ def main_worker(local_rank, ngpus_per_node, args,
             if epoch < start_epoch:continue
             if hasattr(model,'set_epoch'):model.set_epoch(epoch=epoch,epoch_total=args.epochs)
             if hasattr(model,'module') and hasattr(model.module,'set_epoch'):model.module.set_epoch(epoch=epoch,epoch_total=args.epochs)
+            logsys.record('learning rate',optimizer.param_groups[0]['lr'],epoch)
             train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
             lr_scheduler.step(epoch)
             #torch.cuda.empty_cache()
