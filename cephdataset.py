@@ -14,7 +14,7 @@ import pandas as pd
 from utils.timefeatures import time_features
 import os
 import h5py
-
+from utils.tools import get_center_around_indexes
 
 def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_coord=None,channel_last=True,vnames=[]):
     client = None
@@ -353,25 +353,10 @@ class ERA5CephSmallDataset(ERA5CephDataset):
 class ERA5CephSmallPatchDataset(ERA5CephSmallDataset):
     def __init__(self,**kargs):
         super().__init__(**kargs)
-        self.cross_sample = kargs.get('cross_sample', True) and self.split == 'train'
-        self.patch_range = kargs.get('patch_range', 3)
-
-    def get_patch_location_index(self,center):
-        # we want to get the patch index around center with the self.patch_range
-        # For example, 
-        #   (i-1,j-1) (i ,j-1) (i+1,j-1)
-        #   (i-1,j ) (i ,j ) (i+1,j )
-        #   (i-1,j+1) (i ,j+1) (i+1,j+1)
-        # notice our data is on the sphere, this mean the center in H should be in [-boundary+patch_range, boundary-patch_range]
-        # and the position in W is perodic.
-        assert center[-2] >= self.patch_range//2
-        assert center[-2] <= self.img_shape[-2] - (self.patch_range//2)
-        delta = [list(range(-(self.patch_range//2),self.patch_range//2+1))]*len(center)
-        delta = np.meshgrid(*delta)
-        pos  = [c+dc for c,dc in zip(center,delta)]
-        pos[-1]= pos[-1]%self.img_shape[-1] # perodic
-        return pos
-
+        self.cross_sample = kargs.get('cross_sample', True)# and (self.split == 'train')
+        self.patch_range = patch_range = kargs.get('patch_range', 5)
+        self.center_index,self.around_index=get_center_around_indexes(self.patch_range,self.img_shape)
+        self.channel_last = False
     def get_item(self, idx,reversed_part=False):
         arrays = self.data[idx]
         if reversed_part:
@@ -379,10 +364,11 @@ class ERA5CephSmallPatchDataset(ERA5CephSmallDataset):
             arrays[reversed_part] = -arrays[reversed_part]
         arrays = arrays[self.channel_pick]
         if self.cross_sample:
-            center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)) 
+            center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)*2) 
             center_w = np.random.randint(self.img_shape[-1])
-            patch_idx_h,patch_idx_w = self.get_patch_location_index((center_h,center_w))
+            patch_idx_h,patch_idx_w = self.around_index[center_h,center_w]
             arrays = arrays[..., patch_idx_h, patch_idx_w]
+
         # if self.crop_coord is not None:
         #     l, r, u, b = self.crop_coord
         #     arrays = arrays[:, u:b, l:r]

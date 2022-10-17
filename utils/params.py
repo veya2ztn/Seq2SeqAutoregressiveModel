@@ -21,7 +21,7 @@ def get_args_parser():
 
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
-                        choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC'])
+                        choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC','NaiveConvModel2D'])
     parser.add_argument('--patch_size', default="", type=str)
     parser.add_argument('--img_size'  , default="", type=str)
     parser.add_argument('--modes'  , default="17,33,6", type=str)
@@ -61,15 +61,16 @@ def get_args_parser():
 
     # Dataset parameters
     parser.add_argument('--dataset_type', default='', type=str, help='Name of dataset to train',choices=["",
-    'WeathBench71','ERA5Tiny12_47_96_Normal','ERA5CephDataset','ERA5CephSmallDataset','ERA5Tiny12_47_96','WeathBench7066'])
+    'WeathBench71','ERA5Tiny12_47_96_Normal','ERA5CephDataset','ERA5CephSmallPatchDataset','ERA5CephSmallDataset','ERA5Tiny12_47_96','WeathBench7066'])
     parser.add_argument('--dataset_flag', default="", type=str)
     parser.add_argument('--time_reverse_flag', default='only_forward', type=str)
     parser.add_argument('--time_intervel', type=int, default=1)
     parser.add_argument('--time_step', type=int, default=-1)
     parser.add_argument('--data_root', type=str, default="")
     parser.add_argument('--use_time_stamp', type=int, default=0)
+    parser.add_argument('--cross_sample', type=int, default=1)
     parser.add_argument('--use_inmemory_dataset',type=int,default=0)
-
+    
     # Fourcast Parameter
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
     parser.add_argument('--fourcast_randn_initial', default=0, type=int)
