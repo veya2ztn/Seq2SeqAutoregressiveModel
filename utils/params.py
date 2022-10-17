@@ -33,6 +33,7 @@ def get_args_parser():
     parser.add_argument('--model_depth', type=int, default=12)
     parser.add_argument('--history_length', default=1, type=int)
     parser.add_argument('--block_target_timestamp', default=0, type=int)
+    parser.add_argument('--canonical_fft', default=1, type=int)
     
     parser.add_argument('--pred_len', type=int, default=1)
     parser.add_argument('--label_len', type=int, default=3)
@@ -73,7 +74,7 @@ def get_args_parser():
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
     parser.add_argument('--fourcast_randn_initial', default=0, type=int)
     parser.add_argument('--force_fourcast', default=0, type=int)
-
+ 
     # Optimizer parameters # feed into timm
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER', help='Optimizer (default: "adamw"')
     parser.add_argument('--opt-eps', default=1e-8, type=float, metavar='EPSILON', help='Optimizer Epsilon (default: 1e-8)')

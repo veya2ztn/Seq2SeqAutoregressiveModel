@@ -71,6 +71,10 @@ def get_frequency_modes_mask_rfft(space_dims, modes=64, mode_select_method='',in
     if isinstance(modes,int):
         modes = [min(modes,dim) for dim in rfft_freq_dim]
     assert isinstance(modes,(list,tuple))
+    space = np.array(space_dims[:-1])
+    advise_picked_mode_num = 1 + np.sum(space//2) + np.ceil(np.prod(space-1)/2)
+    totall_picked_mode_num = np.prod(modes[:-1])
+    full_picked_mode_num = np.prod(space_dims)
     if mode_select_method == 'random':
         select_num = np.prod(rfft_freq_dim)
         needs_num  = np.prod(modes)
@@ -79,14 +83,14 @@ def get_frequency_modes_mask_rfft(space_dims, modes=64, mode_select_method='',in
         mask = np.zeros(rfft_freq_dim)
         mask[mask_index]=1
         mask = torch.BoolTensor(mask)
-    else:
-        space = np.array(space_dims[:-1])
+    elif totall_picked_mode_num<full_picked_mode_num:
+        totall_picked_mode_num  = min(totall_picked_mode_num,advise_picked_mode_num)
         if indexes is None:
             indexes,indexes2 = get_symmetry_index_in_fft_pannel(space)
-        
-        advise_picked_mode_num = 1 + np.sum(space//2) + np.ceil(np.prod(space-1)/2)
-        totall_picked_mode_num = np.prod(modes[:-1])
-        print(f"for shape:{space} and pick modes:{modes[:-1]}, we pick {totall_picked_mode_num} modes, the baseline modes is {advise_picked_mode_num}")
+        if totall_picked_mode_num < advise_picked_mode_num:
+            print(f"for shape:{space} and pick modes:{modes[:-1]}<{advise_picked_mode_num}, we pick {totall_picked_mode_num} modes, the baseline modes is {advise_picked_mode_num}")
+        else:
+            print(f"for shape:{space} and pick modes:{modes[:-1]}>={advise_picked_mode_num}, we pick {totall_picked_mode_num} modes, the baseline modes is {advise_picked_mode_num}")
         picked_indexes=[]
         for i1,i2 in zip(indexes,indexes2):
             if i1 in picked_indexes:continue
@@ -97,6 +101,11 @@ def get_frequency_modes_mask_rfft(space_dims, modes=64, mode_select_method='',in
         mask = np.zeros((np.prod(rfft_freq_dim[:-1]),rfft_freq_dim[-1]))
         mask[picked_indexes,:modes[-1]]=1
         mask = mask.reshape(rfft_freq_dim)
+        mask = torch.BoolTensor(mask)
+    else:
+        print(f"for shape:{space} and pick modes:{modes[:-1]}, we pick {totall_picked_mode_num} > total_modes {full_picked_mode_num}")
+        print(f"in this case, we will use all modes!")
+        mask = np.ones(rfft_freq_dim)
         mask = torch.BoolTensor(mask)
     return mask
 
@@ -177,7 +186,7 @@ class moving_avg_spacetime(nn.Module):
         self.pad_front   = self.kernel_size - 1-np.floor((self.kernel_size - 1) // 2)
         self.pad_end     = np.floor((self.kernel_size - 1) // 2)
         self.pad         = np.stack([self.pad_front,self.pad_end],1)[::-1].flatten().astype('int').tolist()
-        print(self.pad)
+        #print(self.pad)
     
     def forward(self, x):
         # padding on the both ends of time series
@@ -240,7 +249,7 @@ class series_decomp_along_time(nn.Module):
 class FourierBlockN(nn.Module):
     def __init__(self, in_channels=None, out_channels=None, space_dims=None, modes=None, 
                mode_select_method='random',
-               head_num = 8):
+               head_num = 8,canonical_fft=True):
         super().__init__()
         print('fourier enhanced block used!')
         """
@@ -280,7 +289,7 @@ class FourierBlockN(nn.Module):
             self.scale * torch.rand(head_num, in_channels // head_num, out_channels // head_num,
                                     self.mask.sum(), 
                                     dtype=torch.cfloat))
-        
+        self.canonical_fft=canonical_fft
     def forward(self, x, k=None, v=None, mask=None):
         # the input must be [Batch, head_num, in_channels, *space_dims]
         
@@ -294,7 +303,7 @@ class FourierBlockN(nn.Module):
         # the x_ft[...,self.index] will convert 
         #[Batch, head_num, in_channels, *space_dims] --> [Batch, head_num, in_channels, L]
         out_ft[...,self.mask] = torch.einsum('bhil,hiol->bhol',x_ft[...,self.mask],self.weights1)
-        out_ft = canonical_fft_freq(out_ft,fft_dim,indexes=self.canonical_index1,indexes2=self.canonical_index2)
+        if self.canonical_fft:out_ft = canonical_fft_freq(out_ft,fft_dim,indexes=self.canonical_index1,indexes2=self.canonical_index2)
         x = torch.fft.irfftn(out_ft, dim=fft_dim, s=space_dims, norm='ortho')
         return (x, None)
 
@@ -330,7 +339,7 @@ class CplxAdaptiveModReLU(nn.Module):
 class FourierCrossAttentionN(nn.Module):
     def __init__(self, in_channels=None, out_channels=None, space_dims_q=None, space_dims_kv=None, 
                  modes=64, mode_select_method='random', attention_stratagy='hydra',
-                 activation='tanh', policy=0,head_num=8):
+                 activation='tanh', policy=0,head_num=8,canonical_fft=True):
         super().__init__()
         print(' fourier enhanced cross attention used!')
         """
@@ -350,6 +359,7 @@ class FourierCrossAttentionN(nn.Module):
         self.space_dims_q =space_dims_q
         self.space_dims_kv=space_dims_kv
         self.attention_stratagy = attention_stratagy
+        self.canonical_fft=canonical_fft
         # get modes for queries and keys (& values) on frequency domain
         
         self.mask_q  = get_frequency_modes_mask_rfft(space_dims_q, modes=modes, mode_select_method=mode_select_method)
@@ -456,7 +466,7 @@ class FourierCrossAttentionN(nn.Module):
         xq_ft_shape[2] = self.weights1.shape[2]
         out_ft         = torch.zeros(*xq_ft_shape, device=q.device, dtype=torch.cfloat)
         out_ft[...,self.mask_q] = xqkvw
-        out_ft = canonical_fft_freq(out_ft,fft_dim,indexes=self.canonical_index1,indexes2=self.canonical_index2)
+        if self.canonical_fft:out_ft = canonical_fft_freq(out_ft,fft_dim,indexes=self.canonical_index1,indexes2=self.canonical_index2)
         #print(torch.abs(out_ft).min(),torch.abs(out_ft).max(),torch.std_mean(torch.abs(out_ft)))
         out    = torch.fft.irfftn(out_ft, dim=fft_dim, s=space_dims_q, norm='ortho')
         #timer.record(f'ifft','cross_attention',2)
@@ -643,7 +653,7 @@ class FEDformer(nn.Module):
     """
     def __init__(self, img_size=None, in_chans=None, out_chans=None,embed_dim=None, depth=2,
                history_length=6, modes=(17,33,6), mode_select='',label_len=3,pred_len=1,moving_avg=(5,5,3),
-               dropout=0,time_unit='h',n_heads=8,**kargs):
+               dropout=0,time_unit='h',n_heads=8,canonical_fft=True,**kargs):
         super(FEDformer, self).__init__()
         self.mode_select    = mode_select
         self.modes       = modes
@@ -673,7 +683,7 @@ class FEDformer(nn.Module):
         self.enc_embedding = embedding_type(in_chans, embed_dim, len(self.space_dims_encoder) - 1, freq=time_unit, dropout=dropout)
         self.dec_embedding = embedding_type(in_chans, embed_dim, len(self.space_dims_encoder) - 1, freq=time_unit, dropout=dropout)
         
-        Block_kargs={'in_channels':embed_dim,'out_channels':embed_dim,'modes':modes,'mode_select_method':mode_select}
+        Block_kargs={'in_channels':embed_dim,'out_channels':embed_dim,'modes':modes,'mode_select_method':mode_select,'canonical_fft':canonical_fft}
         
         encoder_self_att = FourierBlockN(space_dims=self.space_dims_encoder,**Block_kargs)
         decoder_self_att = FourierBlockN(space_dims=self.space_dims_decoder,**Block_kargs)
