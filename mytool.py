@@ -25,11 +25,16 @@ def remove_weight(trial_path):
 def assign_trail_job(trial_path):
     from tbparse import SummaryReader
     import wandb
-    dirname = summary_dir= trial_path
+    dirname = summary_dir= trial_path.strip("/")
+    print(trial_path)
     dirname,name     = os.path.split(dirname)
     dirname,job_type = os.path.split(dirname)
     dirname,group    = os.path.split(dirname)
     dirname,project  = os.path.split(dirname)
+    print(f"project:{project}")
+    print(f"group:{group}")
+    print(f"job_type:{job_type}")
+    print(f"name:{name}")
     # if 'rmse_table_unit' not in os.listdir(trial_path):
     #     return
     job_type = job_type.replace("random_step_","")
@@ -133,7 +138,7 @@ class Config(object):
 def run_fourcast(ckpt_path,step = 4*24//6):
     from train.pretrain import main
     args = get_args(ckpt_path,step = step)
-    args.force_fourcast = False
+    args.force_fourcast = True
     if args.force_fourcast or 'rmse_table' not in os.listdir(ckpt_path):
         main(args)
 

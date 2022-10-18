@@ -10,6 +10,7 @@ def get_args_parser():
     parser.add_argument('--valid_batch_size', default=-1, type=int)
     parser.add_argument('--epochs', default=-1, type=int)
     parser.add_argument('--save_warm_up', default=5, type=int)
+    parser.add_argument('--more_epoch_train', default=0, type=int)
     
     parser.add_argument('--seed', default=-1, type=int)
     parser.add_argument('--input_noise_std', type=float, default=0.0, help='input_noise_std')
@@ -83,8 +84,10 @@ def get_args_parser():
     parser.add_argument('--clip-grad', type=float, default=0, metavar='NORM', help='Clip gradient norm (default: None, no clipping)')
     parser.add_argument('--momentum', type=float, default=0.9, metavar='M', help='SGD momentum (default: 0.9)')
     parser.add_argument('--weight-decay', type=float, default=0.05, help='weight decay (default: 0.05)')
-    parser.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER', help='LR scheduler (default: "cosine"')
     parser.add_argument('--lr', type=float, default=-1, metavar='LR', help='learning rate (default: 5e-4)')
+
+    # scheduler parameters # feed into timm
+    parser.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER', help='LR scheduler (default: "cosine"')
     parser.add_argument('--lr-noise', type=float, nargs='+', default=None, metavar='pct, pct', help='learning rate noise on/off epoch percentages')
     parser.add_argument('--lr-noise-pct', type=float, default=0.67, metavar='PERCENT', help='learning rate noise limit percent (default: 0.67)')
     parser.add_argument('--lr-noise-std', type=float, default=1.0, metavar='STDDEV', help='learning rate noise std-dev (default: 1.0)')
