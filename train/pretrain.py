@@ -620,7 +620,7 @@ def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
     test_dataset = dataset_type(split="test", with_idx=True,dataset_tensor=test_dataset_tensor,record_load_tensor=test_record_load,**dataset_kargs)
     assert hasattr(test_dataset,'clim_tensor')
     test_datasampler  = DistributedSampler(test_dataset,  shuffle=False) if args.distributed else None
-    test_dataloader   = DataLoader(test_dataset, args.batch_size, sampler=test_datasampler, num_workers=8, pin_memory=False)
+    test_dataloader   = DataLoader(test_dataset, args.valid_batch_size, sampler=test_datasampler, num_workers=8, pin_memory=False)
     return   test_dataset,   test_dataloader
 
 def create_fourcast_metric_table(fourcastresult, logsys,test_dataset):
@@ -990,7 +990,10 @@ def main_worker(local_rank, ngpus_per_node, args,
     else:
         raise NotImplementedError
     loss_scaler     = torch.cuda.amp.GradScaler(enabled=True)
-    lr_scheduler, _ = create_scheduler(args, optimizer)
+    lr_scheduler = None
+    if args.sched:
+        lr_scheduler, _ = create_scheduler(args, optimizer)
+    logsys.info(f'use lr_scheduler:{lr_scheduler}')
     criterion       = nn.MSELoss()
 
     args.pretrain_weight = args.pretrain_weight.strip()
@@ -1028,7 +1031,7 @@ def main_worker(local_rank, ngpus_per_node, args,
             if hasattr(model,'module') and hasattr(model.module,'set_epoch'):model.module.set_epoch(epoch=epoch,epoch_total=args.epochs)
             logsys.record('learning rate',optimizer.param_groups[0]['lr'],epoch)
             train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
-            if not args.more_epoch_train:lr_scheduler.step(epoch)
+            if (not args.more_epoch_train) and (lr_scheduler is not None):lr_scheduler.step(epoch)
             #torch.cuda.empty_cache()
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys,status='train') if 'small' in args.train_set else -1
             val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
