@@ -998,6 +998,10 @@ def main_worker(local_rank, ngpus_per_node, args,
     logsys.info(f"loading weight from {args.pretrain_weight}")
     start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
                         only_model= (args.mode=='fourcast') or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu))
+    if args.more_epoch_train:
+        assert args.pretrain_weight
+        print(f"detect more epoch training, we will do a copy processing for {args.pretrain_weight}")
+        os.system(f'cp {args.pretrain_weight} {args.pretrain_weight}-epoch{start_epoch}')
     logsys.info("done!")
 
 
