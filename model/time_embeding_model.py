@@ -102,8 +102,8 @@ class Time_Projection_Model(Sphere_Model):
         y = self.backbone(y)
         y = y.reshape(B, 3, P, *self.space_shape) 
         # should be (B, 3, P,self.pred_len,  *self.space_shape). omit self.pred_len since it is set 1
-        
         self_projection = torch.einsum('bdp...,bdt->bpt...',y, x_direction)
+
         extra_loss   = F.mse_loss(self_projection,x)  
         
         target_projection = torch.einsum('bdp...,bdt->bpt...',y, y_direction)
