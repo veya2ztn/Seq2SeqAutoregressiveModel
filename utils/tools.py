@@ -36,7 +36,7 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
             print("loading model weight success...........")
             optimizer.load_state_dict(ckpt['optimizer'])
             print("loading optimizer weight success...........")
-            lr_scheduler.load_state_dict(ckpt['lr_scheduler'])
+            if lr_scheduler is not None:lr_scheduler.load_state_dict(ckpt['lr_scheduler'])
             print("loading lr_scheduler weight success...........")
             loss_scaler.load_state_dict(ckpt['loss_scaler'])
             print("loading loss_scaler weight success...........")
@@ -59,7 +59,7 @@ def save_model(model, epoch=0, step=0, optimizer=None, lr_scheduler=None, loss_s
         states = {
             'model': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
             'optimizer': optimizer.state_dict(),
-            'lr_scheduler': lr_scheduler.state_dict(),
+            'lr_scheduler': lr_scheduler.state_dict() if lr_scheduler is not None else None,
             'loss_scaler': loss_scaler.state_dict(),
             'epoch': epoch,
             'step': step,
