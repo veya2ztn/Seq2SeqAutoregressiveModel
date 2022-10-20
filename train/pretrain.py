@@ -859,9 +859,11 @@ def parse_default_args(args):
         "mode_select":args.mode_select,
         "physics_num":args.physics_num,
         "pred_len":args.pred_len,
+        "n_heads":args.n_heads,
         "label_len":args.label_len,
         "canonical_fft":args.canonical_fft,
-        "unique_up_sample_channel":args.unique_up_sample_channel
+        "unique_up_sample_channel":args.unique_up_sample_channel,
+        "share_memory":args.share_memory
     }
     args.model_kargs = model_kargs
     return args
@@ -954,6 +956,25 @@ def update_experiment_info(experiment_hub_path,epoch,args):
     experiment_hub[path]['endtime']=time.strftime("%m_%d_%H_%M_%S")
     with open(experiment_hub_path,'w') as f:json.dump(experiment_hub, f)
 
+def build_optimizer(args,model):
+    if args.opt == 'adamw':
+        param_groups    = timm.optim.optim_factory.param_groups_weight_decay(model, args.weight_decay)
+        optimizer       = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
+    elif args.opt == 'adam':
+        optimizer       = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.95))
+    elif args.opt == 'sgd':
+        optimizer       = torch.optim.SGD(model.parameters(), lr=args.lr)
+    else:
+        raise NotImplementedError
+    
+    lr_scheduler = None
+    if args.sched:
+        lr_scheduler, _ = create_scheduler(args, optimizer)
+
+    criterion       = nn.MSELoss()
+
+    return optimizer,lr_scheduler,criterion
+
 
 def main_worker(local_rank, ngpus_per_node, args,
         train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
@@ -980,25 +1001,11 @@ def main_worker(local_rank, ngpus_per_node, args,
 
     model           = build_model(args)
     #param_groups    = timm.optim.optim_factory.add_weight_decay(model, args.weight_decay)
-    
-    if args.opt == 'adamw':
-        param_groups    = timm.optim.optim_factory.param_groups_weight_decay(model, args.weight_decay)
-        optimizer       = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
-    elif args.opt == 'adam':
-        optimizer       = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.95))
-    elif args.opt == 'sgd':
-        optimizer       = torch.optim.SGD(model.parameters(), lr=args.lr)
-    else:
-        raise NotImplementedError
+    optimizer,lr_scheduler,criterion = build_optimizer(args,model)
     loss_scaler     = torch.cuda.amp.GradScaler(enabled=True)
-    lr_scheduler = None
-    if args.sched:
-        lr_scheduler, _ = create_scheduler(args, optimizer)
     logsys.info(f'use lr_scheduler:{lr_scheduler}')
-    criterion       = nn.MSELoss()
 
     args.pretrain_weight = args.pretrain_weight.strip()
-    
     logsys.info(f"loading weight from {args.pretrain_weight}")
     start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
                         only_model= (args.mode=='fourcast') or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu))

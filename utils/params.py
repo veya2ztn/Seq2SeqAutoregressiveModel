@@ -18,8 +18,8 @@ def get_args_parser():
     parser.add_argument('--debug', type=int, default=0, help='debug mode')
     parser.add_argument('--distributed', type=int, default=0, help='distributed')
     parser.add_argument('--rank', type=int, default=0, help='rank')
+    parser.add_argument('--share_memory', type=int, default=1, help='share_memory_flag')
     parser.add_argument('--continue_train', type=int, default=0, help='continue_train')
-
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
                         choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC','NaiveConvModel2D'])
@@ -36,6 +36,7 @@ def get_args_parser():
     parser.add_argument('--block_target_timestamp', default=0, type=int)
     parser.add_argument('--canonical_fft', default=1, type=int)
     parser.add_argument('--unique_up_sample_channel', default=0, type=int)
+    parser.add_argument('--n_heads', default=8, type=int)
     
     parser.add_argument('--pred_len', type=int, default=1)
     parser.add_argument('--label_len', type=int, default=3)

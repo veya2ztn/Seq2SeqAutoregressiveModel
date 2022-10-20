@@ -6,7 +6,7 @@ import math
 from .Embedding import *
 from .afnonet import timer
 #timer = #timer(True)
-
+import copy
 def get_symmetry_index_in_fft_pannel(shape):
     shape    = np.array(shape)
     indexes  = np.stack([t.flatten() for t in np.meshgrid(*[range(s) for s in shape])])
@@ -474,14 +474,14 @@ class FourierCrossAttentionN(nn.Module):
 
 class AutoCorrelationLayerN(nn.Module):
     def __init__(self, correlation, d_model, n_heads, d_keys=None,
-                 d_values=None):
+                 d_values=None,share_memory=True):
         super().__init__()
 
         self.d_model  = d_model
         self.d_keys   = d_keys   = d_keys or (d_model // n_heads)
         self.d_values = d_values = d_values or (d_model // n_heads)
 
-        self.inner_correlation = correlation
+        self.inner_correlation = correlation if share_memory else copy.deepcopy(correlation)
         self.query_projection  = nn.Linear(d_model, d_keys * n_heads)
         self.key_projection    = nn.Linear(d_model, d_keys * n_heads)
         self.value_projection  = nn.Linear(d_model, d_values * n_heads)
@@ -653,7 +653,7 @@ class FEDformer(nn.Module):
     """
     def __init__(self, img_size=None, in_chans=None, out_chans=None,embed_dim=None, depth=2,
                history_length=6, modes=(17,33,6), mode_select='',label_len=3,pred_len=1,moving_avg=(5,5,3),
-               dropout=0,time_unit='h',n_heads=8,canonical_fft=True,**kargs):
+               dropout=0,time_unit='h',n_heads=8,canonical_fft=True,share_memory=True,**kargs):
         super(FEDformer, self).__init__()
         self.mode_select    = mode_select
         self.modes       = modes
@@ -675,7 +675,7 @@ class FEDformer(nn.Module):
         self.time_unit = time_unit
         # Decomp
         self.decomp = series_decomp(self.moving_avg)
-
+        self.share_memory = share_memory
         # Embedding
         # The series-wise connection inherently contains the sequential information.
         # Thus, we can discard the position embedding of transformers.
@@ -683,15 +683,17 @@ class FEDformer(nn.Module):
         self.enc_embedding = embedding_type(in_chans, embed_dim, len(self.space_dims_encoder) - 1, freq=time_unit, dropout=dropout)
         self.dec_embedding = embedding_type(in_chans, embed_dim, len(self.space_dims_encoder) - 1, freq=time_unit, dropout=dropout)
         
-        Block_kargs={'in_channels':embed_dim,'out_channels':embed_dim,'modes':modes,'mode_select_method':mode_select,'canonical_fft':canonical_fft}
+        Block_kargs={'in_channels':embed_dim,'out_channels':embed_dim,'modes':modes,
+                     'mode_select_method':mode_select,'canonical_fft':canonical_fft,
+                     'head_num':self.n_heads}
         
         encoder_self_att = FourierBlockN(space_dims=self.space_dims_encoder,**Block_kargs)
         decoder_self_att = FourierBlockN(space_dims=self.space_dims_decoder,**Block_kargs)
         decoder_cross_att= FourierCrossAttentionN(space_dims_q=self.space_dims_decoder,space_dims_kv=self.space_dims_encoder,**Block_kargs)
-
+        
         self.encoder = Encoder(
             [
-                EncoderLayerN(AutoCorrelationLayerN(encoder_self_att,embed_dim, self.n_heads),
+                EncoderLayerN(AutoCorrelationLayerN(encoder_self_att,embed_dim, self.n_heads,share_memory=self.share_memory),
                               embed_dim, 
                               moving_avg=self.moving_avg,dropout=self.dropout,
                               activation=self.activation
@@ -704,8 +706,8 @@ class FEDformer(nn.Module):
         self.decoder = Decoder(
             [
                 DecoderLayerN(
-                    AutoCorrelationLayerN(decoder_self_att,embed_dim, self.n_heads),
-                    AutoCorrelationLayerN(decoder_cross_att,embed_dim, self.n_heads),
+                    AutoCorrelationLayerN(decoder_self_att,embed_dim, self.n_heads,share_memory=self.share_memory),
+                    AutoCorrelationLayerN(decoder_cross_att,embed_dim, self.n_heads,share_memory=self.share_memory),
                     embed_dim,self.out_chans,
                     moving_avg=self.moving_avg,dropout=self.dropout,
                     activation=self.activation,
