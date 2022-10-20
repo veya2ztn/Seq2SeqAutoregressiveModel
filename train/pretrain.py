@@ -860,7 +860,8 @@ def parse_default_args(args):
         "physics_num":args.physics_num,
         "pred_len":args.pred_len,
         "label_len":args.label_len,
-        "canonical_fft":args.canonical_fft
+        "canonical_fft":args.canonical_fft,
+        "unique_up_sample_channel":args.unique_up_sample_channel
     }
     args.model_kargs = model_kargs
     return args
