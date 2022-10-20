@@ -276,7 +276,7 @@ class PatchEmbed(nn.Module):
 
 class AFNONet(BaseModel):
     def __init__(self, img_size, patch_size=8, in_chans=20, out_chans=20, embed_dim=768, depth=12, mlp_ratio=4.,
-                 uniform_drop=False, drop_rate=0., drop_path_rate=0., 
+                 uniform_drop=False, drop_rate=0., drop_path_rate=0., unique_up_sample_channel=None,
                  dropcls=0, checkpoint_activations=False, fno_blocks=3,double_skip=False,
                  fno_bias=False, fno_softshrink=False,debug_mode=False,history_length=1,reduce_Field_coef=False,**kargs):
         super().__init__()
@@ -302,7 +302,7 @@ class AFNONet(BaseModel):
         patch_size       = self.patch_embed.patch_size
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
-
+        self.unique_up_sample_channel = out_chans if unique_up_sample_channel is None else unique_up_sample_channel
         self.final_shape = self.patch_embed.out_size
 
         if uniform_drop:
@@ -345,15 +345,15 @@ class AFNONet(BaseModel):
         #transposeconv_engine = [nn.ConvTranspose1d,nn.ConvTranspose2d,nn.ConvTranspose3d][len(img_size)-1]
         transposeconv_engine = transposeconv_engines(len(img_size))
         self.pre_logits = nn.Sequential(OrderedDict([
-            ('conv1', transposeconv_engine(embed_dim, out_chans*16, **conf_list[0])),
+            ('conv1', transposeconv_engine(embed_dim, unique_up_sample_channel*16, **conf_list[0])),
             ('act1', nn.Tanh()),
-            ('conv2', transposeconv_engine(out_chans*16, out_chans*4, **conf_list[1])),
+            ('conv2', transposeconv_engine(unique_up_sample_channel*16, unique_up_sample_channel*4, **conf_list[1])),
             ('act2', nn.Tanh())
         ]))
 
         # Generator head
         # self.head = nn.Linear(self.representation_size, self.num_features)
-        self.head = transposeconv_engine(out_chans*4, out_chans, **conf_list[2])
+        self.head = transposeconv_engine(unique_up_sample_channel*4, out_chans, **conf_list[2])
 
         if dropcls > 0:
             print('dropout %.2f before classifier' % dropcls)
