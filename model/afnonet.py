@@ -276,7 +276,7 @@ class PatchEmbed(nn.Module):
 
 class AFNONet(BaseModel):
     def __init__(self, img_size, patch_size=8, in_chans=20, out_chans=20, embed_dim=768, depth=12, mlp_ratio=4.,
-                 uniform_drop=False, drop_rate=0., drop_path_rate=0., unique_up_sample_channel=None,
+                 uniform_drop=False, drop_rate=0., drop_path_rate=0., unique_up_sample_channel=0,
                  dropcls=0, checkpoint_activations=False, fno_blocks=3,double_skip=False,
                  fno_bias=False, fno_softshrink=False,debug_mode=False,history_length=1,reduce_Field_coef=False,**kargs):
         super().__init__()
@@ -302,7 +302,7 @@ class AFNONet(BaseModel):
         patch_size       = self.patch_embed.patch_size
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
-        self.unique_up_sample_channel = out_chans if unique_up_sample_channel is None else unique_up_sample_channel
+        self.unique_up_sample_channel = out_chans if unique_up_sample_channel == 0 else unique_up_sample_channel
         self.final_shape = self.patch_embed.out_size
 
         if uniform_drop:

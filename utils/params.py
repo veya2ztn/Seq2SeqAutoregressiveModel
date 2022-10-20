@@ -35,6 +35,7 @@ def get_args_parser():
     parser.add_argument('--history_length', default=1, type=int)
     parser.add_argument('--block_target_timestamp', default=0, type=int)
     parser.add_argument('--canonical_fft', default=1, type=int)
+    parser.add_argument('--unique_up_sample_channel', default=0, type=int)
     
     parser.add_argument('--pred_len', type=int, default=1)
     parser.add_argument('--label_len', type=int, default=3)
