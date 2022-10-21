@@ -960,9 +960,11 @@ if __name__ == "__main__":
     import time
     from tqdm import tqdm
     from multiprocessing import Pool
+    from petrel_client.client import Client
+    import petrel_client
     dataset = ERA5CephDataset(split='train')
     print(len(dataset[0]))
-    raise
+  
     def load_data_range(dataset, start, end):
         for i in tqdm(range(start, end)):
             _ = dataset[i]
@@ -998,11 +1000,16 @@ if __name__ == "__main__":
         return fail_list
     dataset = ERA5CephDataset(split='train')
     print(ERA5CephDataset.__name__)
+    print(dataset[0])
+    
+    print(len(dataset[0]))
+    print(len(dataset[1]))
+
+
     raise
-    print(len(dataset))
     dataset = ERA5CephDataset(split='valid')
     print(len(dataset))
-    raise
+  
     for idx in range(len(dataset)):
         print(dataset.get_url(idx))
     exit()
