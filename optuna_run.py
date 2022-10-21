@@ -8,7 +8,7 @@ import torch
 import numpy as np
 import random
 
-batchsize_list      = [16,32,64]
+batchsize_list      = [16,32,64,128]
 lr_range            = [1e-4,1e-3]
 patchsize_list      = [2,4,8]
 input_noise_std_list= [0, 0.0001, 0.001, 0.01]
@@ -17,8 +17,8 @@ error_time=0
 
 def optuna_high_level_main():
     gargs = get_args()
+    train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load = create_memory_templete(gargs)
     def objective(trial):
-
         args = copy.deepcopy(gargs)
         args.distributed= False
         args.rank=0
@@ -37,32 +37,23 @@ def optuna_high_level_main():
         # #trial.set_user_attr('trial_name', TRIAL_NOW)
 
         #################################################################################
-        train_dataset_tensor=valid_dataset_tensor=train_record_load=valid_record_load=None
-        if args.use_inmemory_dataset:
-            assert args.dataset_type
-            print("======== loading data as shared memory==========")
-            if not args.mode=='fourcast':
-                print(f"create training dataset template, .....")
-                train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='train',root=args.data_root)
-                train_dataset_tensor = train_dataset_tensor.share_memory_()
-                train_record_load  = train_record_load.share_memory_()
-                print(f"done! -> train template shape={train_dataset_tensor.shape}")
-                
-                print(f"create validing dataset template, .....")
-                valid_dataset_tensor, valid_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='valid',root=args.data_root)
-                valid_dataset_tensor = valid_dataset_tensor.share_memory_()
-                valid_record_load  = valid_record_load.share_memory_()
-                print(f"done! -> train template shape={valid_dataset_tensor.shape}")
-            else:
-                print(f"create testing dataset template, .....")
-                train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='test',root=args.data_root)
-                train_dataset_tensor = train_dataset_tensor.share_memory_()
-                train_record_load  = train_record_load.share_memory_()
-                print(f"done! -> test template shape={train_dataset_tensor.shape}")          
-                valid_dataset_tensor = valid_record_load = None
-            print("========      done        ==========")
+        #result=main(args)
+        
+        args = distributed_initial(args)
+        
+        result_tensor = torch.zeros(1).share_memory_()
+        if args.multiprocessing_distributed:
+            print("======== entering  multiprocessing train ==========")
+            args.world_size = args.ngpus_per_node * args.world_size
+            torch.multiprocessing.spawn(main_worker, nprocs=args.ngpus_per_node, args=(args.ngpus_per_node, args,result_tensor,
+                                        train_dataset_tensor,train_record_load,
+                                        valid_dataset_tensor,valid_record_load))
+        else:
+            print("======== entering  single gpu train ==========")
+            main_worker(0, args.ngpus_per_node, args,result_tensor,
+            train_dataset_tensor,train_record_load,valid_dataset_tensor,valid_record_load)
 
-        result=main_worker(0, 1, args,train_dataset_tensor,valid_dataset_tensor)
+        result = {'valid_loss':result_tensor.mean().item()}
         torch.cuda.empty_cache()
         #################################################################################
         timenow     = time.asctime( time.localtime(time.time()))
@@ -86,6 +77,6 @@ def optuna_high_level_main():
     # if len([t.state for t in study.trials if t.state== TrialState.COMPLETE])>optuna_limit_trials:
     #     return 'up tp optuna setted limit'
     #study.optimize(objective, n_trials=50, timeout=600,pruner=optuna.pruners.MedianPruner())
-    study.optimize(objective, n_trials=5,gc_after_trial=True)
+    study.optimize(objective, n_trials=20,  gc_after_trial=True)
 if __name__ == '__main__':
     optuna_high_level_main()

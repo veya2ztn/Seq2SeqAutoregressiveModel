@@ -1,7 +1,7 @@
 
 import os, sys,time,json,copy
-from gpu_use_setting import *
 sys.path.append(os.getcwd())
+from gpu_use_setting import *
 idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
 
@@ -778,6 +778,7 @@ def get_ckpt_path(args):
     if args.debug: return Path('./debug')
     TIME_NOW  = time.strftime("%m_%d_%H_%M") if args.distributed else time.strftime("%m_%d_%H_%M_%S")
     if args.seed == -1:args.seed = 42;#random.randint(1, 100000)
+    if args.seed == -2:args.seed = random.randint(1, 100000)
     TIME_NOW  = f"{TIME_NOW}-seed_{args.seed}"
     args.trail_name = TIME_NOW
     if not hasattr(args,'train_set'):args.train_set='large'
@@ -793,6 +794,7 @@ def get_ckpt_path(args):
 
 def parse_default_args(args):
     if args.seed == -1:args.seed = 42
+    if args.seed == -2:args.seed = random.randint(1, 100000)
     args.half_model = half_model
     args.accumulation_steps_global=accumulation_steps_global
     args.batch_size = bs_for_mode[args.mode] if args.batch_size == -1 else args.batch_size
@@ -972,9 +974,9 @@ def build_optimizer(args,model):
     return optimizer,lr_scheduler,criterion
 
 
-def main_worker(local_rank, ngpus_per_node, args,
+def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
-    print(f"we are at mode={args.mode}")
+    if local_rank==0:print(f"we are at mode={args.mode}")
     ##### locate the checkpoint dir ###########
     args.gpu = args.local_rank = gpu  = local_rank
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
@@ -1013,7 +1015,7 @@ def main_worker(local_rank, ngpus_per_node, args,
 
 
     # =======================> start training <==========================
-    print(f"entering {args.mode} training in {next(model.parameters()).device}")
+    logsys.info(f"entering {args.mode} training in {next(model.parameters()).device}")
     now_best_path = SAVE_PATH / 'backbone.best.pt'
     latest_ckpt_p = SAVE_PATH / 'pretrain_latest.pt'
 
@@ -1066,7 +1068,9 @@ def main_worker(local_rank, ngpus_per_node, args,
             start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=now_best_path, only_model=True)
             run_fourcast(args, model,logsys)
         if use_wandb:wandb.finish()
-        return {'valid_loss':min_loss}
+        if result_tensor is not None and local_rank==0:
+            result_tensor[local_rank] = min_loss
+    logsys.close()
 
 
 def create_memory_templete(args):
@@ -1144,17 +1148,18 @@ def main(args=None):
     if args is None:args = get_args()
     args = distributed_initial(args)
     train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load = create_memory_templete(args)
+    result_tensor = torch.zeros(1).share_memory_()
     if args.multiprocessing_distributed:
         print("======== entering  multiprocessing train ==========")
         args.world_size = args.ngpus_per_node * args.world_size
-        torch.multiprocessing.spawn(main_worker, nprocs=args.ngpus_per_node, args=(args.ngpus_per_node, args,
+        torch.multiprocessing.spawn(main_worker, nprocs=args.ngpus_per_node, args=(args.ngpus_per_node, args,result_tensor,
                                     train_dataset_tensor,train_record_load,
                                     valid_dataset_tensor,valid_record_load))
     else:
         print("======== entering  single gpu train ==========")
-        main_worker(0, args.ngpus_per_node, args,
+        main_worker(0, args.ngpus_per_node, args,result_tensor,
         train_dataset_tensor,train_record_load,valid_dataset_tensor,valid_record_load)
-    return 
+    return result_tensor
 
 if __name__ == '__main__':
     main()
