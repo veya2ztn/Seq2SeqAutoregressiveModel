@@ -829,7 +829,7 @@ def parse_default_args(args):
     if hasattr(args,'time_intervel'):dataset_kargs['time_intervel']= args.time_intervel
     if hasattr(args,'cross_sample'):dataset_kargs['cross_sample']= args.cross_sample
     if hasattr(args,'use_time_stamp') and args.use_time_stamp:dataset_kargs['use_time_stamp']= args.use_time_stamp
-    
+    args.unique_up_sample_channel = args.unique_up_sample_channel if args.unique_up_sample_channel >0 else args.output_channel
     
 
     args.dataset_type = dataset_type if not args.dataset_type else args.dataset_type
@@ -1065,7 +1065,7 @@ def main_worker(local_rank, ngpus_per_node, args,
                     save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, latest_ckpt_p)
                     logsys.info(f"done ....")
         
-        if os.path.exists(now_best_path) and args.do_final_fourcast:
+        if os.path.exists(now_best_path) and args.do_final_fourcast and not args.distributed:
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
             start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=now_best_path, only_model=True)
             run_fourcast(args, model,logsys)
