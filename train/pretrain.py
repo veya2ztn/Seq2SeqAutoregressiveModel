@@ -1,14 +1,10 @@
 
-from cmath import isnan
 import os, sys,time,json,copy
-import socket
-from tkinter.messagebox import NO
+from gpu_use_setting import *
 sys.path.append(os.getcwd())
 idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
-hostname = socket.gethostname()
-if hostname in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185']:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+
 os.environ['WANDB_MODE'] = 'offline'
 os.environ['WANDB_CONSOLE']='off'
 experiment_hub_path = "./experiment_hub.json"
