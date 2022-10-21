@@ -1069,16 +1069,42 @@ def main_worker(local_rank, ngpus_per_node, args,
         return {'valid_loss':min_loss}
 
 
-def main(args=None):
+def create_memory_templete(args):
+    train_dataset_tensor=valid_dataset_tensor=train_record_load=valid_record_load=None
+    if args.use_inmemory_dataset:
+        assert args.dataset_type
+        print("======== loading data as shared memory==========")
+        if not args.mode=='fourcast':
+            print(f"create training dataset template, .....")
+            train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='train' if not args.debug else 'test',root=args.data_root)
+            train_dataset_tensor = train_dataset_tensor.share_memory_()
+            train_record_load  = train_record_load.share_memory_()
+            print(f"done! -> train template shape={train_dataset_tensor.shape}")
+            
+            print(f"create validing dataset template, .....")
+            valid_dataset_tensor, valid_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='valid' if not args.debug else 'test',root=args.data_root)
+            valid_dataset_tensor = valid_dataset_tensor.share_memory_()
+            valid_record_load  = valid_record_load.share_memory_()
+            print(f"done! -> train template shape={valid_dataset_tensor.shape}")
+        else:
+            print(f"create testing dataset template, .....")
+            train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='test',root=args.data_root)
+            train_dataset_tensor = train_dataset_tensor.share_memory_()
+            train_record_load  = train_record_load.share_memory_()
+            print(f"done! -> test template shape={train_dataset_tensor.shape}")          
+            valid_dataset_tensor = valid_record_load = None
+        print("========      done        ==========")
+    return train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load
+
+def distributed_initial(args):
     import os
-    if args is None:
-        args = get_args()
     ngpus = ngpus_per_node = torch.cuda.device_count()
     args.world_size = -1
     args.dist_file  = None
     args.rank       = 0
     args.dist_backend = "nccl"
     args.multiprocessing_distributed = ngpus>1
+    args.ngpus_per_node = ngpus_per_node
     if not hasattr(args,'train_set'):args.train_set='large'
     ip = os.environ.get("MASTER_ADDR", "127.0.0.1")
     port = os.environ.get("MASTER_PORT", "54247")
@@ -1111,42 +1137,24 @@ def main(args=None):
     else:
         args.world_size = 1
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
-    
-    train_dataset_tensor=valid_dataset_tensor=train_record_load=valid_record_load=None
-    if args.use_inmemory_dataset:
-        assert args.dataset_type
-        print("======== loading data as shared memory==========")
-        if not args.mode=='fourcast':
-            print(f"create training dataset template, .....")
-            train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='train' if not args.debug else 'test',root=args.data_root)
-            train_dataset_tensor = train_dataset_tensor.share_memory_()
-            train_record_load  = train_record_load.share_memory_()
-            print(f"done! -> train template shape={train_dataset_tensor.shape}")
-            
-            print(f"create validing dataset template, .....")
-            valid_dataset_tensor, valid_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='valid' if not args.debug else 'test',root=args.data_root)
-            valid_dataset_tensor = valid_dataset_tensor.share_memory_()
-            valid_record_load  = valid_record_load.share_memory_()
-            print(f"done! -> train template shape={valid_dataset_tensor.shape}")
-        else:
-            print(f"create testing dataset template, .....")
-            train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='test',root=args.data_root)
-            train_dataset_tensor = train_dataset_tensor.share_memory_()
-            train_record_load  = train_record_load.share_memory_()
-            print(f"done! -> test template shape={train_dataset_tensor.shape}")          
-            valid_dataset_tensor = valid_record_load = None
-        print("========      done        ==========")
+    return args
 
+def main(args=None):
+    
+    if args is None:args = get_args()
+    args = distributed_initial(args)
+    train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load = create_memory_templete(args)
     if args.multiprocessing_distributed:
         print("======== entering  multiprocessing train ==========")
-        args.world_size = ngpus_per_node * args.world_size
-        torch.multiprocessing.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args,
+        args.world_size = args.ngpus_per_node * args.world_size
+        torch.multiprocessing.spawn(main_worker, nprocs=args.ngpus_per_node, args=(args.ngpus_per_node, args,
                                     train_dataset_tensor,train_record_load,
                                     valid_dataset_tensor,valid_record_load))
     else:
         print("======== entering  single gpu train ==========")
-        main_worker(0, ngpus_per_node, args,train_dataset_tensor,train_record_load,
-                            valid_dataset_tensor,valid_record_load)
+        main_worker(0, args.ngpus_per_node, args,
+        train_dataset_tensor,train_record_load,valid_dataset_tensor,valid_record_load)
+    return 
 
 if __name__ == '__main__':
     main()
