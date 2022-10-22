@@ -1,4 +1,5 @@
 
+import optuna
 import os, sys,time,json,copy
 sys.path.append(os.getcwd())
 from gpu_use_setting import *
@@ -458,12 +459,12 @@ def nan_diagnose_weight(model,loss, nan_count):
                 bad_weight_name.append(name)
         if bad_check:
             print(f"the value is nan in weight:{bad_weight_name}")
-            raise
+            raise optuna.TrialPruned()
         else:
             nan_count+=1
             if nan_count>10:
                 print("too many nan happened")
-                raise
+                raise optuna.TrialPruned()
             print(f"detect nan, now at {nan_count}/10 warning level, pass....")   
             skip = True
     return loss, nan_count, skip
@@ -553,10 +554,10 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 loss_scaler.scale(loss).backward()
             else:
                 loss.backward()
-            nan_count, skip = nan_diagnose_grad(model,nan_count)
-            if skip:
-                optimizer.zero_grad()
-                continue
+            #nan_count, skip = nan_diagnose_grad(model,nan_count)
+            # if skip:
+            #     optimizer.zero_grad()
+            #     continue
             if model.clip_grad:nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
             if (step+1) % accumulation_steps == 0:
                 if model.use_amp:
@@ -755,6 +756,7 @@ def get_projectname(args):
     if hasattr(args,'history_length') and args.history_length !=1:project_name = f"history_{args.history_length}_"+project_name
     if hasattr(args,'time_reverse_flag') and args.time_reverse_flag !="only_forward":project_name = f"{args.time_reverse_flag}_"+project_name
     if hasattr(args,'time_intervel') and args.time_intervel:project_name = project_name + f"_every_{args.time_intervel}_step"
+    
     return model_name, datasetname,project_name
 
 def deal_with_tuple_string(patch_size,defult=None):
@@ -775,7 +777,8 @@ def deal_with_tuple_string(patch_size,defult=None):
     return patch_size
 
 def get_ckpt_path(args):
-    if args.debug: return Path('./debug')
+    if args.debug:
+        return Path('./debug')
     TIME_NOW  = time.strftime("%m_%d_%H_%M") if args.distributed else time.strftime("%m_%d_%H_%M_%S")
     if args.seed == -1:args.seed = 42;#random.randint(1, 100000)
     if args.seed == -2:args.seed = random.randint(1, 100000)
@@ -886,7 +889,7 @@ def create_logsys(args,save_config=True):
             #reinit=True
             )
     logsys   = LoggingSystem(local_rank==0 or not args.distributed,args.SAVE_PATH,seed=args.seed)
-    _        = logsys.create_recorder(hparam_dict={'patch_size':args.patch_size , 'lr':args.lr, 'batch_size':args.batch_size,
+    _     = logsys.create_recorder(hparam_dict={'patch_size':args.patch_size , 'lr':args.lr, 'batch_size':args.batch_size,
                                                    'model':args.model_type},
                                       metric_dict={'best_loss':None})
     # fix the seed for reproducibility
@@ -894,6 +897,7 @@ def create_logsys(args,save_config=True):
     # np.random.seed(args.seed)
     # cudnn.benchmark = True
     ## already done in logsys
+    
     
     if not args.debug and save_config:
         for key, val in vars(args).items():
@@ -982,7 +986,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
     args= parse_default_args(args)
     SAVE_PATH = get_ckpt_path(args)
-    args.SAVE_PATH = str(SAVE_PATH)
+    args.SAVE_PATH  = str(SAVE_PATH)
     ########## inital log ###################
     logsys = create_logsys(args)
     
@@ -1025,12 +1029,17 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         run_fourcast(args, model,logsys,test_dataloader)
         return 1
     else:
+
         train_dataset, val_dataset, train_dataloader,val_dataloader = get_train_and_valid_dataset(args,
                        train_dataset_tensor=train_dataset_tensor,train_record_load=train_record_load,
                        valid_dataset_tensor=valid_dataset_tensor,valid_record_load=valid_record_load)
         logsys.info(f"use dataset ==> {train_dataset.__class__.__name__}")
         logsys.info(f"Start training for {args.epochs} epochs")
-        master_bar        = logsys.create_master_bar(args.epochs)
+        master_bar = logsys.create_master_bar(args.epochs)
+        accu_list = ['valid_loss']
+        metric_dict = logsys.initial_metric_dict(accu_list)
+        banner = logsys.banner_initial(args.epochs, args.SAVE_PATH)
+        logsys.banner_show(0, args.SAVE_PATH)
         for epoch in master_bar:
             if epoch < start_epoch:continue
             if hasattr(model,'set_epoch'):model.set_epoch(epoch=epoch,epoch_total=args.epochs)
@@ -1041,27 +1050,28 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             #torch.cuda.empty_cache()
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys,status='train') if 'small' in args.train_set else -1
             val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
-
+            logsys.metric_dict.update({'valid_loss':val_loss},epoch)
+            logsys.banner_show(epoch,args.SAVE_PATH,train_losses=[train_loss])
             if (not args.distributed) or (args.rank == 0 and local_rank == 0) :
-                logsys.info(f"Epoch {epoch} | Train loss: {train_loss:.6f}, Val loss: {val_loss:.6f}")
+                logsys.info(f"Epoch {epoch} | Train loss: {train_loss:.6f}, Val loss: {val_loss:.6f}",show=False)
                 logsys.record('train', train_loss, epoch)
                 logsys.record('valid', val_loss, epoch)
                 if use_wandb:wandb.log({"epoch":epoch,'train':train_loss,'valid':val_loss})
                 if val_loss < min_loss:
                     min_loss = val_loss
                     if epoch > args.epochs//10:
-                        logsys.info(f"saving best model ....")
+                        logsys.info(f"saving best model ....",show=False)
                         save_model(model, path=now_best_path, only_model=True)
-                        logsys.info(f"done;")
+                        logsys.info(f"done;",show=False)
                     #if last_best_path is not None:os.system(f"rm {last_best_path}")
                     #last_best_path= now_best_path
-                    logsys.info(f"The best accu is {val_loss}")
+                    logsys.info(f"The best accu is {val_loss}", show=False)
                 logsys.record('best_loss', min_loss, epoch)
                 update_experiment_info(experiment_hub_path,epoch,args)
                 if epoch>args.save_warm_up:
-                    logsys.info(f"saving latest model ....")
+                    logsys.info(f"saving latest model ....", show=False)
                     save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, latest_ckpt_p)
-                    logsys.info(f"done ....")
+                    logsys.info(f"done ....",show=False)
         
         if os.path.exists(now_best_path) and args.do_final_fourcast and not args.distributed:
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
