@@ -8,9 +8,10 @@ import torch
 import numpy as np
 import random
 
-batchsize_list      = [16,32,64,128]
-lr_range            = [1e-4,1e-3]
+batchsize_list      = [32,64,128]
+lr_range            = [1e-4,1e-2]
 patchsize_list      = [2,4,8]
+grad_clip_list      = [1,1e2,1e4,None]
 input_noise_std_list= [0, 0.0001, 0.001, 0.01]
 OPTUNALIM           = 10
 error_time=0
@@ -20,14 +21,16 @@ def optuna_high_level_main():
     train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load = create_memory_templete(gargs)
     def objective(trial):
         args = copy.deepcopy(gargs)
-        args.distributed= False
-        args.rank=0
+        #args.distributed= False
+        #args.rank=0
         #random_seed= args.seed
         args.seed  = random_seed= random.randint(1, 100000)
         args.hparam_dict = {}
-        args.lr             = args.hparam_dict['lr']         = trial.suggest_uniform(f"lr", *lr_range)
+        args.lr        = args.hparam_dict['lr']         = trial.suggest_uniform(f"lr", *lr_range)
         if not gargs.batch_size:
-            args.batch_size     = args.hparam_dict['batch_size'] = trial.suggest_categorical("batch_size", batchsize_list)
+            args.batch_size = args.hparam_dict['batch_size'] = trial.suggest_categorical("batch_size", batchsize_list)
+        if not gargs.clip_grad:
+            args.clip_grad = args.hparam_dict['clip_grad'] = trial.suggest_categorical("clip_grad", grad_clip_list)
         # if not gargs.patch_size:
         #     args.patch_size     = args.hparam_dict['patch_size'] = trial.suggest_categorical("patch_size", patchsize_list)
         args.patch_size  = 2 
@@ -52,7 +55,7 @@ def optuna_high_level_main():
             print("======== entering  single gpu train ==========")
             main_worker(0, args.ngpus_per_node, args,result_tensor,
             train_dataset_tensor,train_record_load,valid_dataset_tensor,valid_record_load)
-
+        
         result = {'valid_loss':result_tensor.mean().item()}
         torch.cuda.empty_cache()
         #################################################################################
