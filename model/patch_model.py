@@ -130,7 +130,7 @@ class NaiveConvModel2D(nn.Module):
             B,W,H,P,_,_ = x.shape
             x = x.flatten(0,2) # (B* W-2 * H-2,Patch,Patch)
         x = self.backbone(x).squeeze(-1).squeeze(-1) + self.mlp(x.flatten(-2,-1)).squeeze(-1)
-        if input_is_full_image:
+        if input_is_full_image: 
             x = x.reshape(B,W,H,P).permute(0,3,1,2)
         return x
         
