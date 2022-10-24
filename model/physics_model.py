@@ -54,7 +54,7 @@ class First_Derivative_Layer(torch.nn.Module):
     @property
     def runtime_weight(self):
         if isinstance(self.mode, int):
-            weight = torch.cat([torch.flip(self.weight,(0,)),F.pad(self.weight,(1,0))])
+            weight = torch.cat([-torch.flip(self.weight,(0,)),F.pad(self.weight,(1,0))])
         else:
             weight = self.weight
         return weight[(None,)*(self.dim + 1)].transpose(self.postion,-1)
