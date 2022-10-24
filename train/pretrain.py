@@ -636,7 +636,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset):
             tmp = torch.load(save_path)
             for key,val in tmp.items():
                 fourcastresult[key] = val
-        
+    
     accu_list = torch.stack([p['accu'] for p in fourcastresult.values()]).mean(0)# (fourcast_num,property_num)
     accu_table= pd.DataFrame(accu_list.transpose(1,0),index=test_dataset.vnames)
     logsys.info("===>accu_table<===")
@@ -721,8 +721,6 @@ def run_fourcast(args, model,logsys,test_dataloader=None):
     
     return 1
 
-
- 
 
 def get_model_name(args):
     model_name = args.model_type
@@ -1155,9 +1153,11 @@ def distributed_initial(args):
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
     return args
 
+
 def main(args=None):
     
     if args is None:args = get_args()
+    
     args = distributed_initial(args)
     train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load = create_memory_templete(args)
     result_tensor = torch.zeros(1).share_memory_()

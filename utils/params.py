@@ -1,7 +1,8 @@
 import argparse
-
+import sys
 
 def get_args_parser():
+    
     parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
     parser.add_argument('--mode', type=str, default='pretrain')
     parser.add_argument('--train_set', type=str, default='physics_small')
@@ -124,9 +125,23 @@ def get_args_parser():
 
     return parser
 
-
-def get_args(**kargs):
+import json
+def get_args(argv=None):
+    if argv is None:argv = sys.argv
+    conf_parser = argparse.ArgumentParser(description=__doc__,formatter_class=argparse.RawDescriptionHelpFormatter,add_help=False)
+    conf_parser.add_argument("-c", "--conf_file",help="Specify config file", metavar="FILE")
+    args, remaining_argv = conf_parser.parse_known_args()
+ 
+    defaults = {}
+    if args.conf_file:
+        with open(args.conf_file,'r') as f:
+            defaults = json.load(f)
+    #parser = argparse.ArgumentParser(parents=[conf_parser])
     parser = argparse.ArgumentParser('GFNet training and evaluation script', parents=[get_args_parser()])
-    global _GLOBAL_ARGS
-    _GLOBAL_ARGS = parser.parse_args(**kargs)
-    return _GLOBAL_ARGS
+    parser.set_defaults(**defaults)
+    return parser.parse_args(remaining_argv)
+
+if __name__ == '__main__':
+    args = (get_args())
+    for key, val in vars(args).items():
+        print(f"{key:30s} ---> {val}")
