@@ -722,7 +722,7 @@ def run_fourcast(args, model,logsys,test_dataloader=None):
     return 1
 
 
-
+ 
 
 def get_model_name(args):
     model_name = args.model_type
@@ -1072,6 +1072,8 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                     logsys.info(f"saving latest model ....", show=False)
                     save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, latest_ckpt_p)
                     logsys.info(f"done ....",show=False)
+                    if epoch == 99:
+                        os.system(f'cp {latest_ckpt_p} {latest_ckpt_p}-epoch100')
         
         if os.path.exists(now_best_path) and args.do_final_fourcast and not args.distributed:
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")

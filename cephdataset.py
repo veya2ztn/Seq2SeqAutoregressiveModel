@@ -783,6 +783,9 @@ class WeathBench71(WeathBench):
             return odata
     
     def get_item(self,idx,reversed_part=False):
+        '''
+        Notice for 3D case, we return (5,14,32,64) data tensor
+        '''
         odata=self.load_otensor(idx)
         if reversed_part:
             odata = odata.clone() if isinstance(odata,torch.Tensor) else odata.copy()
@@ -917,7 +920,7 @@ class WeathBench7066PatchDataset(WeathBench7066):
         self.patch_range = patch_range = kargs.get('patch_range', 5)
         self.center_index,self.around_index=get_center_around_indexes(self.patch_range,self.img_shape)
         self.channel_last = False
-    def get_item(self,idx,reversed_part=False):
+    def get_item(self,idx,patch_idx_h=None, patch_idx_w=None,reversed_part=False):
         odata=self.load_otensor(idx)
         if reversed_part:
             odata = odata.clone() if isinstance(odata,torch.Tensor) else odata.copy()
@@ -944,16 +947,26 @@ class WeathBench7066PatchDataset(WeathBench7066):
             data=  (data - self.mean)/self.std
         elif 'unit_norm' in self.normalize_type:
             data = data/self.std
-        if self.cross_sample:
-            center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)*2) 
-            center_w = np.random.randint(self.img_shape[-1])
-            patch_idx_h,patch_idx_w = self.around_index[center_h,center_w]
+            
+        if patch_idx_h is not None:
             data = data[..., patch_idx_h, patch_idx_w]
         if self.use_time_stamp:
             return data, self.timestamp[idx]
         else:
             return data
 
+    def __getitem__(self,idx):
+        reversed_part = self.do_time_reverse(idx)
+        time_step_list= [idx+i*self.time_intervel for i in range(self.time_step)]
+        if reversed_part:time_step_list = time_step_list[::-1]
+        patch_idx_h, patch_idx_w = None,None
+        if self.cross_sample:
+            center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)*2) 
+            center_w = np.random.randint(self.img_shape[-1])
+            patch_idx_h, patch_idx_w = self.around_index[center_h, center_w]
+        batch = [self.get_item(i,patch_idx_h, patch_idx_w,reversed_part) for i in time_step_list]
+        self.error_path = []
+        return batch if not self.with_idx else (idx,batch)
 
 if __name__ == "__main__":
     import sys

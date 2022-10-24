@@ -9,7 +9,7 @@ import numpy as np
 import random
 
 batchsize_list      = [32,64,128]
-lr_range            = [1e-4,1e-2]
+lr_range            = [1e-3,1e-1]
 patchsize_list      = [2,4,8]
 grad_clip_list      = [1,1e2,1e4,None]
 input_noise_std_list= [0, 0.0001, 0.001, 0.01]
@@ -27,12 +27,13 @@ def optuna_high_level_main():
         args.seed  = random_seed= random.randint(1, 100000)
         args.hparam_dict = {}
         args.lr        = args.hparam_dict['lr']         = trial.suggest_uniform(f"lr", *lr_range)
-        if not gargs.batch_size:
+        if gargs.batch_size==-1:
             args.batch_size = args.hparam_dict['batch_size'] = trial.suggest_categorical("batch_size", batchsize_list)
-        if not gargs.clip_grad:
-            args.clip_grad = args.hparam_dict['clip_grad'] = trial.suggest_categorical("clip_grad", grad_clip_list)
+        # if not gargs.clip_grad:
+        #     args.clip_grad = args.hparam_dict['clip_grad'] = trial.suggest_categorical("clip_grad", grad_clip_list)
         # if not gargs.patch_size:
         #     args.patch_size     = args.hparam_dict['patch_size'] = trial.suggest_categorical("patch_size", patchsize_list)
+        args.valid_batch_size = args.batch_size
         args.patch_size  = 2 
         print("notice we will fix patch size as 2")
         # if not gargs.input_noise_std:
