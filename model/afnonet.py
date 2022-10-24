@@ -239,9 +239,13 @@ class Block(nn.Module):
         return x
 
 def transposeconv_engines(dim):
+    if dim in [1,2,3]:
+        return [nn.ConvTranspose1d,nn.ConvTranspose2d,nn.ConvTranspose3d][dim-1]
     return lambda *args,**kargs:convNd(*args,**kargs,num_dims=dim,is_transposed=True,use_bias=False)
 
 def conv_engines(dim):
+    if dim in [1,2,3]:
+        return [nn.Conv1d,nn.Conv2d,nn.Conv3d][dim-1]
     return lambda *args,**kargs:convNd(*args,**kargs,num_dims=dim,is_transposed=False,use_bias=False)
 
 class PatchEmbed(nn.Module):
@@ -302,7 +306,7 @@ class AFNONet(BaseModel):
         patch_size       = self.patch_embed.patch_size
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
-        self.unique_up_sample_channel = out_chans if unique_up_sample_channel == 0 else unique_up_sample_channel
+        self.unique_up_sample_channel =unique_up_sample_channel= out_chans if unique_up_sample_channel == 0 else unique_up_sample_channel
         self.final_shape = self.patch_embed.out_size
 
         if uniform_drop:
@@ -341,7 +345,6 @@ class AFNONet(BaseModel):
                 conf_list[slot]['kernel_size'].append(conv_set[patch][slot][0])
                 conf_list[slot]['stride'].append(conv_set[patch][slot][1])
                 conf_list[slot]['padding'].append(conv_set[patch][slot][2])
-
         #transposeconv_engine = [nn.ConvTranspose1d,nn.ConvTranspose2d,nn.ConvTranspose3d][len(img_size)-1]
         transposeconv_engine = transposeconv_engines(len(img_size))
         self.pre_logits = nn.Sequential(OrderedDict([
