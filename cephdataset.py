@@ -437,9 +437,11 @@ class SpeedTestDataset(BaseDataset):
 
 
 class ERA5Tiny12_47_96(ERA5BaseDataset):
+    default_root = 'datasets/ERA5/h5_set'
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,years=[2018],dataset_tensor=None,
-                class_name='ERA5Dataset', root='datasets/ERA5/h5_set', ispretrain=True, crop_coord=None,time_step=2,
+                class_name='ERA5Dataset', root=None, ispretrain=True, crop_coord=None,time_step=2,
                 with_idx=False,dataset_flag='normal',time_reverse_flag='only_forward',**kargs):
+        if root is None:root=self.default_root
         if dataset_tensor is None:
             self.Field_dx= h5py.File(os.path.join(root,f"Field_dx_{split}.h5"), 'r')['data']
             self.Field_dy= h5py.File(os.path.join(root,f"Field_dy_{split}.h5"), 'r')['data']
