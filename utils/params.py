@@ -139,7 +139,9 @@ def get_args(argv=None):
     #parser = argparse.ArgumentParser(parents=[conf_parser])
     parser = argparse.ArgumentParser('GFNet training and evaluation script', parents=[get_args_parser()])
     parser.set_defaults(**defaults)
-    return parser.parse_args(remaining_argv)
+    config = parser.parse_args(remaining_argv)
+    config.config_file = args.conf_file
+    return config
 
 if __name__ == '__main__':
     args = (get_args())
