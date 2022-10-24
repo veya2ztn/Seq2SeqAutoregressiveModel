@@ -204,9 +204,9 @@ def create_fourcast_table(ckpt_path,step = 4*24//6):
     args= parse_default_args(args)
     args.SAVE_PATH = ckpt_path
     ########## inital log ###################
-    
+    args.distributed = False
     test_dataset,   test_dataloader = get_test_dataset(args)
-    args.SAVE_PATH = './debug'
+    #args.SAVE_PATH = './debug'
     args.local_rank=1
     logsys = create_logsys(args,False)
     info_pool_list = create_fourcast_metric_table(ckpt_path, logsys,test_dataset)
