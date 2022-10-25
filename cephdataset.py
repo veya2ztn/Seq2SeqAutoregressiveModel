@@ -735,6 +735,7 @@ class WeathBench(BaseDataset):
 
 
 class WeathBench71(WeathBench):
+    default_root='datasets/weatherbench'
     _component_list= ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
                     [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+ # v component of wind and the 10m v wind
                     [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,  0]+ # Temperature and the 2m_temperature
