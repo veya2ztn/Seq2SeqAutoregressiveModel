@@ -137,16 +137,14 @@ class Config(object):
 
 def run_fourcast(ckpt_path,step = 4*24//6):
     from train.pretrain import main
-    args = get_args(ckpt_path,step = step)
+    args = get_the_args(ckpt_path,step = step)
     args.force_fourcast = True
     if args.force_fourcast or 'rmse_table' not in os.listdir(ckpt_path):
         main(args)
 
-def get_args(ckpt_path,step = 4*24//6):
+def get_the_args(ckpt_path,step = 4*24//6):
     from train.pretrain import get_args
-    args = get_args(args=[])
-        
-    
+    args = get_args(argv=[])
     if 'backbone.best.pt' in os.listdir(ckpt_path):
         best_path = os.path.join(ckpt_path,'backbone.best.pt')
     elif 'pretrain_latest.pt' in os.listdir(ckpt_path):
@@ -156,7 +154,6 @@ def get_args(ckpt_path,step = 4*24//6):
         return
     if 'rmse_unit_table' in os.listdir(ckpt_path):
         return
-    #args.train_set = "small"
     args.fourcast  = True
     args.mode      = 'fourcast'
     args.batch_size= 12
@@ -175,7 +172,7 @@ def get_args(ckpt_path,step = 4*24//6):
     #args.train_set = 'small'
     args.mode      = 'fourcast'
     args.fourcast  = True
-    args.batch_size= 32   
+    args.batch_size= 64   
     args.pretrain_weight = best_path
     args.time_step = step + args.time_step
     #
