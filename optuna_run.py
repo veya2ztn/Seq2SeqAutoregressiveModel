@@ -7,35 +7,65 @@ from train.pretrain import *
 import torch
 import numpy as np
 import random
-
+import argparse
 batchsize_list      = [32,64,128]
 lr_range            = [1e-3,1e-1]
 patchsize_list      = [2,4,8]
 grad_clip_list      = [1,1e2,1e4,None]
-input_noise_std_list= [0, 0.0001, 0.001, 0.01]
+#input_noise_std_list= [0, 0.0001, 0.001, 0.01]
 OPTUNALIM           = 10
 error_time=0
 
+def set_range_optuna_list(trials, args,range_string,flag):
+    if range_string is None:return
+    val_range = [float(t) for t in range_string.split(',')]
+    if len(val_range)==1:
+        val  = args.hparam_dict[flag] = val_range[0]
+    else:
+        assert len(val_range)==2
+        val  = args.hparam_dict[flag] = trial.suggest_uniform(flag, *val_range)
+    setattr(args,flag, val)
+
+def set_select_optuna_list(trials, args,range_string,flag):
+    if range_string is None:
+        return
+    val_range = [float(t) for t in range_string.split(',')]
+    if len(val_range)==1:
+        val  = args.hparam_dict[flag] = val_range[0]
+    else:
+        assert len(val_range)==2
+        val  = args.hparam_dict[flag] = trial.suggest_categorical(flag, val_range)
+    setattr(args,flag, val)
+
 def optuna_high_level_main():
+    conf_parser = argparse.ArgumentParser(description=__doc__,formatter_class=argparse.RawDescriptionHelpFormatter,add_help=False)
+    conf_parser.add_argument("--batchsize_list",  default="4,16,32")
+    conf_parser.add_argument("--lr_range",        default="0.0001,0.01")
+    conf_parser.add_argument("--patchsize_list",  default="2")
+    conf_parser.add_argument("--grad_clip_list",  default=None)
+    conf_parser.add_argument("--batchsize_list",  default="4,16,32")
+    conf_parser.add_argument("--optuna_trails",   default="3")
+    optuna_args, remaining_argv = conf_parser.parse_known_args()
     gargs = get_args()
-    train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load = create_memory_templete(gargs)
+    #train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load = create_memory_templete(gargs)
     def objective(trial):
         args = copy.deepcopy(gargs)
         #args.distributed= False
         #args.rank=0
         #random_seed= args.seed
         args.seed  = random_seed= random.randint(1, 100000)
+
         args.hparam_dict = {}
-        args.lr        = args.hparam_dict['lr']         = trial.suggest_uniform(f"lr", *lr_range)
+        set_range_optuna_list(trials, args,optuna_args.lr_range,'lr')
         if gargs.batch_size==-1:
-            args.batch_size = args.hparam_dict['batch_size'] = trial.suggest_categorical("batch_size", batchsize_list)
-        # if not gargs.clip_grad:
-        #     args.clip_grad = args.hparam_dict['clip_grad'] = trial.suggest_categorical("clip_grad", grad_clip_list)
-        # if not gargs.patch_size:
-        #     args.patch_size     = args.hparam_dict['patch_size'] = trial.suggest_categorical("patch_size", patchsize_list)
+            set_select_optuna_list(trials, args,optuna_args.batch_size_list,'batch_size')
+        if not gargs.clip_grad:
+            set_select_optuna_list(trials, args,optuna_args.grad_clip_list,'grad_clip')
+        if not gargs.patch_size:
+            set_select_optuna_list(trials, args,optuna_args.patch_size_list,'patch_size')
+
         args.valid_batch_size = args.batch_size
-        args.patch_size  = 2 
-        print("notice we will fix patch size as 2")
+        
         # if not gargs.input_noise_std:
         #     args.input_noise_std = args.hparam_dict['input_noise_std'] = trial.suggest_categorical("input_noise_std", input_noise_std_list)
         # #trial.set_user_attr('trial_name', TRIAL_NOW)
@@ -43,22 +73,25 @@ def optuna_high_level_main():
         #################################################################################
         #result=main(args)
         
-        args = distributed_initial(args)
+        # args = distributed_initial(args)
         
-        result_tensor = torch.zeros(1).share_memory_()
-        if args.multiprocessing_distributed:
-            print("======== entering  multiprocessing train ==========")
-            args.world_size = args.ngpus_per_node * args.world_size
-            torch.multiprocessing.spawn(main_worker, nprocs=args.ngpus_per_node, args=(args.ngpus_per_node, args,result_tensor,
-                                        train_dataset_tensor,train_record_load,
-                                        valid_dataset_tensor,valid_record_load))
-        else:
-            print("======== entering  single gpu train ==========")
-            main_worker(0, args.ngpus_per_node, args,result_tensor,
-            train_dataset_tensor,train_record_load,valid_dataset_tensor,valid_record_load)
+        # result_tensor = torch.zeros(1).share_memory_()
+        # if args.multiprocessing_distributed:
+        #     print("======== entering  multiprocessing train ==========")
+        #     args.world_size = args.ngpus_per_node * args.world_size
+        #     torch.multiprocessing.spawn(main_worker, nprocs=args.ngpus_per_node, args=(args.ngpus_per_node, args,result_tensor,
+        #                                 train_dataset_tensor,train_record_load,
+        #                                 valid_dataset_tensor,valid_record_load))
+        # else:
+        #     print("======== entering  single gpu train ==========")
+        #     main_worker(0, args.ngpus_per_node, args,result_tensor,
+        #     train_dataset_tensor,train_record_load,valid_dataset_tensor,valid_record_load)
         
-        result = {'valid_loss':result_tensor.mean().item()}
-        torch.cuda.empty_cache()
+        # result = {'valid_loss':result_tensor.mean().item()}
+        # torch.cuda.empty_cache()
+
+        print(args)
+        result = np.random.randn()
         #################################################################################
         timenow     = time.asctime( time.localtime(time.time()))
         result_string = " ".join([f"{key}:{np.mean(val)}" for key,val in result.items()])
@@ -81,6 +114,7 @@ def optuna_high_level_main():
     # if len([t.state for t in study.trials if t.state== TrialState.COMPLETE])>optuna_limit_trials:
     #     return 'up tp optuna setted limit'
     #study.optimize(objective, n_trials=50, timeout=600,pruner=optuna.pruners.MedianPruner())
-    study.optimize(objective, n_trials=20,  gc_after_trial=True)
+    study.optimize(objective, n_trials=optuna_args.optuna_trails,  gc_after_trial=True)
+
 if __name__ == '__main__':
     optuna_high_level_main()
