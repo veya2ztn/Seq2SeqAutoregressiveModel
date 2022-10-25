@@ -138,7 +138,7 @@ class Config(object):
 def run_fourcast(ckpt_path,step = 4*24//6):
     from train.pretrain import main
     args = get_the_args(ckpt_path,step = step)
-    args.force_fourcast = True
+    args.force_fourcast = False
     if args.force_fourcast or 'rmse_table' not in os.listdir(ckpt_path):
         main(args)
 
@@ -154,10 +154,6 @@ def get_the_args(ckpt_path,step = 4*24//6):
         return
     if 'rmse_unit_table' in os.listdir(ckpt_path):
         return
-    args.fourcast  = True
-    args.mode      = 'fourcast'
-    args.batch_size= 12
-    args.pretrain_weight = best_path
 
     if 'config.json' in os.listdir(ckpt_path):
         with open(os.path.join(ckpt_path,'config.json'),'r') as f:
@@ -172,10 +168,10 @@ def get_the_args(ckpt_path,step = 4*24//6):
     #args.train_set = 'small'
     args.mode      = 'fourcast'
     args.fourcast  = True
-    args.batch_size= 64   
+    args.batch_size=args.valid_batch_size= 64  
     args.pretrain_weight = best_path
     args.time_step = step + args.time_step
-    #
+    args.data_root = "datasets/weatherbench"
     # args.time_reverse_flag = 'only_backward'
     # args.img_size  = (3,51,96)
     # args.patch_size= (1,3,3)
@@ -235,7 +231,7 @@ if __name__ == "__main__":
     parser.add_argument('--divide', default=1, type=int)
     parser.add_argument('--part', default=0, type=int)
     parser.add_argument('--fourcast_step', default=4*24//6, type=int)
-    args = parser.parse_args()
+    args = parser.parse_known_args()[0]
 
     level = args.level
     root_path = args.path
