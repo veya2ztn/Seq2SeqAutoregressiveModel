@@ -438,6 +438,7 @@ class SpeedTestDataset(BaseDataset):
 
 class ERA5Tiny12_47_96(ERA5BaseDataset):
     default_root = 'datasets/ERA5/h5_set'
+    time_intervel =1
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,years=[2018],dataset_tensor=None,
                 class_name='ERA5Dataset', root=None, ispretrain=True, crop_coord=None,time_step=2,
                 with_idx=False,dataset_flag='normal',time_reverse_flag='only_forward',**kargs):
@@ -492,7 +493,9 @@ class ERA5Tiny12_47_96(ERA5BaseDataset):
         self.set_time_reverse(time_reverse_flag)
 
     def __len__(self):
-        return len(self.Field) - self.time_step + 1
+        # in h5 realization the last entry seem will exceed the limit
+        # so we omit the last +1
+        return len(self.Field) - self.time_step*self.time_intervel 
 
     def do_normlize_data(self, batch):
         assert isinstance(batch,(list,tuple))
