@@ -908,6 +908,9 @@ def create_logsys(args,save_config=True):
     return logsys
 
 def build_model(args):
+    cudnn.enabled         = True
+    cudnn.benchmark       = False # will search a best CNN realized way at beginning 
+    cudnn.deterministic   = True # the key for continue training.
     logsys = args.logsys
     logsys.info(f"model args: img_size= {args.img_size}")
     logsys.info(f"model args: patch_size= {args.patch_size}")
