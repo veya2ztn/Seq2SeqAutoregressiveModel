@@ -637,8 +637,10 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset):
             for key,val in tmp.items():
                 fourcastresult[key] = val
     
+    
     accu_list = torch.stack([p['accu'] for p in fourcastresult.values()]).mean(0)# (fourcast_num,property_num)
     accu_table= pd.DataFrame(accu_list.transpose(1,0),index=test_dataset.vnames)
+    
     logsys.info("===>accu_table<===")
     logsys.info(accu_table);
     accu_table.to_csv(os.path.join(logsys.ckpt_root,prefix+'accu_table'))
