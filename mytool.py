@@ -191,7 +191,8 @@ def create_fourcast_table(ckpt_path,step = 4*24//6):
     from train.pretrain import create_fourcast_metric_table,get_test_dataset,LoggingSystem,parse_default_args,create_logsys
     import wandb
     import re,torch
-    args = get_args(ckpt_path,step = step)
+    args = get_the_args(ckpt_path,step = 4*24//6)
+    args.mode = 'fourcast'
     args.gpu = args.local_rank = gpu  = local_rank = 0
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
     args= parse_default_args(args)
@@ -203,14 +204,13 @@ def create_fourcast_table(ckpt_path,step = 4*24//6):
     args.local_rank=1
     logsys = create_logsys(args,False)
     info_pool_list = create_fourcast_metric_table(ckpt_path, logsys,test_dataset)
-
     dirname = summary_dir= ckpt_path
     dirname,name     = os.path.split(dirname)
     dirname,job_type = os.path.split(dirname)
     dirname,group    = os.path.split(dirname)
     dirname,project  = os.path.split(dirname)
     torch.save( info_pool_list, os.path.join(args.SAVE_PATH,f'{project}_{job_type}_{name}'))
-
+    torch.save( info_pool_list, os.path.join("debug",f'{project}_{job_type}_{name}'))
     wandb.init(project = project,
             entity  = "szztn951357",
             group   = group,
