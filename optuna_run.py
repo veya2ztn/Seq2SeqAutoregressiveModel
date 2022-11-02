@@ -58,7 +58,7 @@ def optuna_high_level_main():
         if gargs.batch_size==-1:set_select_optuna_list(trial, args, optuna_args.batchsize_list, 'batch_size')
         if not gargs.clip_grad:set_select_optuna_list(trial, args,optuna_args.grad_clip_list,'grad_clip')
         if not gargs.patch_size:set_select_optuna_list(trial, args,optuna_args.patchsize_list,'patch_size')
-
+        args.batch_size = int(args.batch_size)
         args.valid_batch_size = args.batch_size
         
         # if not gargs.input_noise_std:
@@ -66,7 +66,7 @@ def optuna_high_level_main():
         #trial.set_user_attr('trial_name', TRIAL_NOW)
 
         ################################################################################
-        result=main(args)
+        #result=main(args)
         
         args = distributed_initial(args)
         

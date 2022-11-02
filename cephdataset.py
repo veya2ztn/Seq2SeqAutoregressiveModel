@@ -357,6 +357,7 @@ class ERA5CephSmallPatchDataset(ERA5CephSmallDataset):
         self.patch_range = patch_range = kargs.get('patch_range', 5)
         self.center_index,self.around_index=get_center_around_indexes(self.patch_range,self.img_shape)
         self.channel_last = False
+        
     def get_item(self, idx,reversed_part=False):
         arrays = self.data[idx]
         if reversed_part:
