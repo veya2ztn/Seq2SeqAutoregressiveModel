@@ -10,7 +10,6 @@ mltool
 __pycache__
 *.pyc
 logging*
-*.ipynb
 img
 petrel_pymc.so
 fail_data_path.txt

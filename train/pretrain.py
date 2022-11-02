@@ -489,6 +489,10 @@ def nan_diagnose_grad(model,nan_count):
         skip = True
     return nan_count, skip
 
+from model.GradientModifier import Nodal_GradientModifier
+
+GradientModifier = Nodal_GradientModifier()
+
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
 
     if status == 'train':
@@ -554,6 +558,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 loss_scaler.scale(loss).backward()
             else:
                 loss.backward()
+            GradientModifier().backward(model,x,y)
             #nan_count, skip = nan_diagnose_grad(model,nan_count)
             # if skip:
             #     optimizer.zero_grad()
