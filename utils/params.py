@@ -23,7 +23,8 @@ def get_args_parser():
     parser.add_argument('--continue_train', type=int, default=0, help='continue_train')
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
-                        choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC','NaiveConvModel2D'])
+                        #choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC','NaiveConvModel2D']
+                        )
     parser.add_argument('--patch_size', default="", type=str)
     parser.add_argument('--img_size'  , default="", type=str)
     parser.add_argument('--modes'  , default="17,33,6", type=str)
@@ -59,9 +60,10 @@ def get_args_parser():
     parser.add_argument('--autoresume', action='store_true')
 
     parser.add_argument('--wrapper_model', default='', type=str, help='Name of model to train',
-          choices=["",'DeltaModel','EulerEquationModel','ConVectionModel',
-                'EulerEquationModel3','Time_Sphere_Model','EulerEquationModel2',
-                'EulerEquationModel4','OnlineNormModel','Time_Projection_Model','DirectSpace_Feature_Model'])
+        #   choices=["",'DeltaModel','EulerEquationModel','ConVectionModel',
+        #         'EulerEquationModel3','Time_Sphere_Model','EulerEquationModel2',
+        #         'EulerEquationModel4','OnlineNormModel','Time_Projection_Model','DirectSpace_Feature_Model']
+                )
 
     # Dataset parameters
     parser.add_argument('--dataset_type', default='', type=str, help='Name of dataset to train',choices=["",

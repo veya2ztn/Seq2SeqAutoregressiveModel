@@ -36,7 +36,7 @@ from model.afnonet import AFNONet
 from model.FEDformer import FEDformer
 from model.FEDformer1D import FEDformer1D
 from JCmodels.fourcastnet import AFNONet as AFNONetJC
-from model.patch_model import NaiveConvModel2D
+from model.patch_model import NaiveConvModel2D,PatchWrapper
 from model.time_embeding_model import *
 from model.physics_model import *
 from utils.params import get_args
@@ -489,10 +489,6 @@ def nan_diagnose_grad(model,nan_count):
         skip = True
     return nan_count, skip
 
-from model.GradientModifier import Nodal_GradientModifier
-
-GradientModifier = Nodal_GradientModifier()
-
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
 
     if status == 'train':
@@ -558,7 +554,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 loss_scaler.scale(loss).backward()
             else:
                 loss.backward()
-            GradientModifier().backward(model,x,y)
+            #GradientModifier().backward(model,x,y)
             #nan_count, skip = nan_diagnose_grad(model,nan_count)
             # if skip:
             #     optimizer.zero_grad()

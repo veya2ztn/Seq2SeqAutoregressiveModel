@@ -256,7 +256,7 @@ class PatchEmbed(nn.Module):
         num_patches=1
         out_size=[]
         for i_size,p_size in zip(img_size,patch_size):
-            if p_size%i_size:
+            if not i_size%p_size:
                 num_patches*=i_size// p_size
                 out_size.append(i_size// p_size)
             else:

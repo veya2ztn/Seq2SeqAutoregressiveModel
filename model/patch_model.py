@@ -111,7 +111,7 @@ class NaiveConvModel2D(nn.Module):
             self.backbone = nn.Sequential(Bottleneck(in_chans,1024,1),
                                           Bottleneck(1024,out_chans,1)
                                          )
-            self.mlp = nn.Linear(patch_range**2,1)                            
+            self.mlp = nn.Linear(self.patch_range**2, 1)
         else:
             raise NotImplementedError
         self.center_index,self.around_index=get_center_around_indexes(self.patch_range,self.img_size)
@@ -125,12 +125,49 @@ class NaiveConvModel2D(nn.Module):
         input_is_full_image = False
         if x.shape[-2:] == self.img_size:
             input_is_full_image = True
-            x = x[...,self.around_index[:,:,0],self.around_index[:,:,1]] # (B,P,W-2,H-2,Patch,Patch)
+            x = x[...,self.around_index[:,:,0],self.around_index[:,:,1]] # (B,P,W-4,H,Patch,Patch)
             x = x.permute(0,2,3,1,4,5)
             B,W,H,P,_,_ = x.shape
-            x = x.flatten(0,2) # (B* W-2 * H-2,Patch,Patch)
+            x = x.flatten(0,2) # (B* W-4 * H,Patch,Patch)
         x = self.backbone(x).squeeze(-1).squeeze(-1) + self.mlp(x.flatten(-2,-1)).squeeze(-1)
         if input_is_full_image: 
             x = x.reshape(B,W,H,P).permute(0,3,1,2)
         return x
         
+
+class PatchWrapper(nn.Module):
+    '''
+    input is (B, P, patch_range_1,patch_range_2)
+    output is (B,P)
+    '''
+
+    def __init__(self, args, backbone):
+        super().__init__()
+        self.backbone = backbone
+        self.monitor = True
+        self.img_size = (32, 64)
+        self.patch_range = 5
+        self.center_index, self.around_index = get_center_around_indexes(
+            self.patch_range, self.img_size)
+        self.mlp = nn.Sequential(nn.Tanh(), nn.Linear(
+            args.output_channel*self.patch_range**2, args.output_channel))
+
+    def forward(self, x):
+        '''
+        The input either (B,P,patch_range,patch_range) or (B,P,w,h)
+        The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
+        '''
+        assert len(x.shape) == 4
+        input_is_full_image = False
+        if x.shape[-2:] == self.img_size:
+            input_is_full_image = True
+            x = x[..., self.around_index[:, :, 0],
+                  self.around_index[:, :, 1]]  # (B,P,W-2,H,Patch,Patch)
+            x = x.permute(0, 2, 3, 1, 4, 5)
+            B, W, H, P, _, _ = x.shape
+            x = x.flatten(0, 2)  # (B* W-2 * H, Property, Patch,Patch)
+        x = self.backbone(x)
+        x = self.mlp(x.reshape(x.size(0), -1))
+        if input_is_full_image:
+            x = x.reshape(B, W, H, P).permute(0, 3, 1, 2)
+        return x
