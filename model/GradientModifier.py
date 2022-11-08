@@ -59,24 +59,43 @@ class Nodal_GradientModifier:
     def get_TrvJOJv_times(self,params,x,cotangents_variables):
         return vmap(self.get_TrvJOJv, (None, None, 0 ))(params, x,cotangents_variables).mean()
     
-    def inference(self,model,x,y):
-        self.func_model, params =  make_functional(model,disable_autograd_tracking=True)
-        shape = y.shape
-        cotangents_variables = torch.randint(2,(self.sample_times,*shape)).cuda()*2-1
-        with torch.no_grad():
-            L1=self.Normlization_Term_1(params, x).item()
-            L2=self.Normlization_Term_2(params, x).item()
+    def inference(self,model,x,y, strict=False):
+        back_to_train_mode = model.training
+        model.eval()
+        buffers=[]
+        if not strict:buffers = list(model.buffers())
+        if len(buffers) > 0:
+            func_model,params, buffer = make_functional_with_buffers(model, disable_autograd_tracking=True)
+            self.func_model = lambda params, x: func_model(params, buffer, x)
+        else:
+            self.func_model, params = make_functional(model,disable_autograd_tracking=True)
+        #self.func_model, params = make_functional(model,disable_autograd_tracking=True)
+        self.output_shape = y.shape
+        #with torch.no_grad():  # may occur unknow error when using make ---> RuntimeError: Mask should be Bool Scalar TypeFloat
+        L1=self.Normlization_Term_1(params, x).item() if self.lambda1 != 0 else -1
+        L2=self.Normlization_Term_2(params, x).item() if self.lambda2 != 0 else -1
+        if back_to_train_mode:model.train()
         return L1,L2
     
+
     
-    def backward(self,model, x, y):
-        self.func_model, params = make_functional(model,disable_autograd_tracking=True)
+    def backward(self,model, x, y, strict=True):
+        #model.eval()
+        buffers=[]
+        if not strict:buffers = list(model.buffers())
+        if len(buffers) > 0:
+            func_model,params, buffer = make_functional_with_buffers(model, disable_autograd_tracking=True)
+            self.func_model = lambda params, x: func_model(params, buffer, x)
+        else:
+            self.func_model, params = make_functional(model,disable_autograd_tracking=True)
+
         self.output_shape       = y.shape[1:]
         with torch.no_grad():
             if self.lambda1 != 0:
                 Derivation_Term_1 = jacrev(self.Normlization_Term_1, argnums=0)(params, x)
             if self.lambda2 != 0:
                 Derivation_Term_2 = jacrev(self.Normlization_Term_2, argnums=0)(params, x)
+        model.train()
         for i, param in enumerate(model.parameters()):
             delta_p = 0
             if self.lambda1 != 0:delta_p += self.lambda1*Derivation_Term_1[i]
@@ -88,8 +107,8 @@ class Nodal_GradientModifier:
     
 
 class NGmod_absolute(Nodal_GradientModifier):
-    def Normlization_Term_2(self,params,x,cotangents_variables):
-        values = (((vmap(jacrev(self.func_model, argnums=1), (None, 0))(params, x)**2).sum(-1)-1)**2).mean()
+    def Normlization_Term_2(self,params,x):
+        values = (((vmap(jacrev(self.func_model, argnums=1), (None, 0),randomness='same')(params, x)**2).sum(-1)-1)**2).mean()
         N      = np.prod(x.shape[1:])
         if self.do_unit_renormalize: 
             coef = 8*np.power(N,3) + 24*np.power(N,2) + 24*N
@@ -100,6 +119,8 @@ class NGmod_absolute(Nodal_GradientModifier):
 class NGmod_absoluteNone(NGmod_absolute):
     def backward(self,model, x, y):
         pass
+
+
 
 class NGmod_delta_mean(Nodal_GradientModifier):
     
@@ -118,20 +139,45 @@ class NGmod_delta_mean(Nodal_GradientModifier):
 
 
 class NGmode_estimate(Nodal_GradientModifier):
-    def Normlization_Term_2(self,params,x):
-        Batch_size    = x.size(0)
-        work_index    = list(range(Batch_size))
-        good_estimate = torch.zeros(Batch_size).to(x.device)
-        while len(work_index)>0:
-            cotangents_variables = torch.randint(2,(self.sample_times,len(work_index),*self.output_shape)).cuda()*2-1
-            TrvJOJvs,ETrAATs = vmap(self.TrvJOJv_and_ETrAAT, (None, None, 0 ))(params, x[work_index],cotangents_variables)
-            CorrelationTerm  = ETrAATs.mean(0) - TrvJOJvs.var(0)/2 #(B,)
-            good_index = torch.where(CorrelationTerm>0)[0].cpu().numpy().tolist()
-            real_index = [work_index[idx] for idx in good_index]
-            good_estimate[real_index]=CorrelationTerm[good_index]
-            work_index = list(set(work_index) - set(real_index))
-        return good_estimate.mean()/np.sqrt(np.prod(list(self.output_shape)))
+    def Normlization_Term_2(self, params, x):
+        Batch_size = x.size(0)
+#         work_index    = list(range(Batch_size))
+#         good_estimate = torch.zeros(Batch_size).to(x.device)
+#         while len(work_index)>0:
+#             cotangents_variables = torch.randint(2,(self.sample_times,len(work_index),*self.output_shape)).cuda()*2-1
+#             TrvJOJvs,ETrAATs = vmap(self.TrvJOJv_and_ETrAAT, (None, None, 0 ))(params, x[work_index],cotangents_variables)
+#             CorrelationTerm  = ETrAATs.mean(0) - TrvJOJvs.var(0)/2 #(B,)
+#             good_index = np.where(CorrelationTerm.detach().cpu().numpy()>0)[0].tolist()
+#             real_index = [work_index[idx] for idx in good_index]
+#             good_estimate[real_index]=CorrelationTerm[good_index]
+#             work_index = list(set(work_index) - set(real_index))
+        good_estimate = []
+        while len(good_estimate) < Batch_size:
+            i = len(good_estimate)
+            cotangents_variable = torch.randint(
+                2, (self.sample_times, *self.output_shape)).cuda()*2-1
+            TrvJOJvs, ETrAATs = vmap(self.TrvJOJv_and_ETrAAT, (None, None, 0))(
+                params, x[i], cotangents_variable)
+            CorrelationTerm = ETrAATs.mean(0) - TrvJOJvs.var(0)/2  # (B,)
+            assert not torch.isnan(CorrelationTerm)
+            if CorrelationTerm.item() > 0:
+                good_estimate.append(
+                    CorrelationTerm/np.sqrt(np.prod(list(self.output_shape))))
+        good_estimate = torch.stack(good_estimate)
+        return good_estimate.mean()
 
+
+class NGmode_estimate2(Nodal_GradientModifier):
+    def Normlization_Term_2(self, params, x):
+        Batch_size = x.size(0)
+        cotangents_variables = torch.randint(
+            2, (self.sample_times, Batch_size, *self.output_shape)).cuda()*2-1
+        TrvJOJvs, ETrAATs = vmap(self.TrvJOJv_and_ETrAAT, (None, None, 0))(
+            params, x, cotangents_variables)
+        CorrelationTerm = ETrAATs.mean(0) - TrvJOJvs.var(0)/2  # (B,)
+        CorrelationTerm = CorrelationTerm / \
+            np.sqrt(np.prod(list(self.output_shape)))
+        return CorrelationTerm.mean()
 
 # class Nodal_GradientModifierBuff:
 #     def __init__(self,lambda1=1,lambda2=1,sample_times=10):
