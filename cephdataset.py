@@ -923,10 +923,11 @@ class WeathBench7066(WeathBench71):
 class WeathBench7066PatchDataset(WeathBench7066):
     def __init__(self,**kargs):
         super().__init__(**kargs)
-        self.cross_sample = kargs.get('cross_sample', True) and (self.split == 'train')
-        self.patch_range = patch_range = kargs.get('patch_range', 5)
-        self.center_index,self.around_index=get_center_around_indexes(self.patch_range,self.img_shape)
-        self.channel_last = False
+        self.cross_sample                   = kargs.get('cross_sample', True) and (self.split == 'train')
+        self.patch_range                    = patch_range = kargs.get('patch_range', 5)
+        self.center_index,self.around_index =get_center_around_indexes(self.patch_range,self.img_shape)
+        self.channel_last                   = False
+    
     def get_item(self,idx,patch_idx_h=None, patch_idx_w=None,reversed_part=False):
         odata=self.load_otensor(idx)
         if reversed_part:

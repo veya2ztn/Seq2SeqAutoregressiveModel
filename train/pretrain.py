@@ -447,7 +447,7 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
     
     return fourcastresult
 
-def nan_diagnose_weight(model,loss, nan_count):
+def nan_diagnose_weight(model,loss, nan_count,logsys):
     skip = False
     if torch.isnan(loss):
         # we will check whether weight has nan 
@@ -458,18 +458,18 @@ def nan_diagnose_weight(model,loss, nan_count):
                 bad_check    = True
                 bad_weight_name.append(name)
         if bad_check:
-            print(f"the value is nan in weight:{bad_weight_name}")
+            logsys.info(f"the value is nan in weight:{bad_weight_name}")
             raise optuna.TrialPruned()
         else:
             nan_count+=1
             if nan_count>10:
-                print("too many nan happened")
+                logsys.info("too many nan happened")
                 raise optuna.TrialPruned()
-            print(f"detect nan, now at {nan_count}/10 warning level, pass....")   
+            logsys.info(f"detect nan, now at {nan_count}/10 warning level, pass....")   
             skip = True
     return loss, nan_count, skip
 
-def nan_diagnose_grad(model,nan_count):
+def nan_diagnose_grad(model,nan_count,logsys):
     skip = False
     # we will check whether weight has nan 
     bad_weight_name = []
@@ -480,12 +480,12 @@ def nan_diagnose_grad(model,nan_count):
             bad_check    = True
             bad_weight_name.append(name)
     if bad_check:
-        print(f"the value is nan in weight.grad:{bad_weight_name}")
+        logsys.info(f"the value is nan in weight.grad:{bad_weight_name}")
         nan_count+=1
         if nan_count>10:
-            print("too many nan happened")
+            logsys.info("too many nan happened")
             raise
-        print(f"detect nan, now at {nan_count}/10 warning level, pass....")   
+        logsys.info(f"detect nan, now at {nan_count}/10 warning level, pass....")   
         skip = True
     return nan_count, skip
 
@@ -545,7 +545,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
             else:
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
-            loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count)
+            loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
             if skip:continue
             loss /= accumulation_steps
             iter_info_pool[f'train_loss_gpu{gpu}'] =  loss.item()
@@ -555,7 +555,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             else:
                 loss.backward()
             #GradientModifier().backward(model,x,y)
-            #nan_count, skip = nan_diagnose_grad(model,nan_count)
+            #nan_count, skip = nan_diagnose_grad(model,nan_count,logsys)
             # if skip:
             #     optimizer.zero_grad()
             #     continue
