@@ -59,7 +59,7 @@ class Nodal_GradientModifier:
     def get_TrvJOJv_times(self,params,x,cotangents_variables):
         return vmap(self.get_TrvJOJv, (None, None, 0 ))(params, x,cotangents_variables).mean()
     
-    def inference(self,model,x,y, strict=False):
+    def inference(self,model,x,y, strict=True):
         back_to_train_mode = model.training
         model.eval()
         buffers=[]
@@ -80,7 +80,8 @@ class Nodal_GradientModifier:
 
     
     def backward(self,model, x, y, strict=True):
-        #model.eval()
+        
+        model.eval()
         buffers=[]
         if not strict:buffers = list(model.buffers())
         if len(buffers) > 0:
@@ -117,7 +118,7 @@ class NGmod_absolute(Nodal_GradientModifier):
         return values
 
 class NGmod_absoluteNone(NGmod_absolute):
-    def backward(self,model, x, y):
+    def backward(self,model, x, y, strict=True):
         pass
 
 

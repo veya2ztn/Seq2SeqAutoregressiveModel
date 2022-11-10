@@ -8,10 +8,10 @@ import torch
 import numpy as np
 import random
 import argparse
-batchsize_list      = [32,64,128]
-lr_range            = [1e-3,1e-1]
-patchsize_list      = [2,4,8]
-grad_clip_list      = [1,1e2,1e4,None]
+# batchsize_list      = [32,64,128]
+# lr_range            = [1e-3,1e-1]
+# patchsize_list      = [2,4,8]
+# grad_clip_list      = [1,1e2,1e4,None]
 #input_noise_std_list= [0, 0.0001, 0.001, 0.01]
 OPTUNALIM           = 10
 error_time=0
@@ -59,7 +59,7 @@ def optuna_high_level_main():
         if not gargs.clip_grad:set_select_optuna_list(trial, args,optuna_args.grad_clip_list,'grad_clip')
         if not gargs.patch_size:set_select_optuna_list(trial, args,optuna_args.patchsize_list,'patch_size')
         args.batch_size = int(args.batch_size)
-        args.valid_batch_size = args.batch_size
+        #args.valid_batch_size = args.valid_batch_size
         
         # if not gargs.input_noise_std:
         #     args.input_noise_std = args.hparam_dict['input_noise_std'] = trial.suggest_categorical("input_noise_std", input_noise_std_list)
