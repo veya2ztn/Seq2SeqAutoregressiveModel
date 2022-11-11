@@ -927,7 +927,7 @@ class WeathBench7066PatchDataset(WeathBench7066):
         self.patch_range                    = patch_range = kargs.get('patch_range', 5)
         self.center_index,self.around_index =get_center_around_indexes(self.patch_range,self.img_shape)
         self.channel_last                   = False
-    
+        self.random = kargs.get('random_dataset', False)
     def get_item(self,idx,patch_idx_h=None, patch_idx_w=None,reversed_part=False):
         odata=self.load_otensor(idx)
         if reversed_part:
@@ -964,6 +964,8 @@ class WeathBench7066PatchDataset(WeathBench7066):
             return data
 
     def __getitem__(self,idx):
+        if self.random:
+            idx = np.random.randint(self.__len__())
         reversed_part = self.do_time_reverse(idx)
         time_step_list= [idx+i*self.time_intervel for i in range(self.time_step)]
         if reversed_part:time_step_list = time_step_list[::-1]
