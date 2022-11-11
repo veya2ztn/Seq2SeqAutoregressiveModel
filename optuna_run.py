@@ -95,8 +95,10 @@ def optuna_high_level_main():
         return result[the_key]
     ########## optuna high level script  ###########
     model_name, datasetname, project_name = get_projectname(gargs)
-    DB_NAME   = f"{datasetname}-{model_name}-{project_name}"
-
+    
+    DB_NAME   = f"{datasetname}-{model_name}-{project_name}-{gargs.opt}"
+    if gargs.batch_size==-1:
+        DB_NAME += f"-{gargs.batch_size}"
     TASK_NAME = 'task1'
     study = optuna.create_study(study_name=TASK_NAME, storage=f'sqlite:///optuna_database/{DB_NAME}.db',
                                     load_if_exists=True,
