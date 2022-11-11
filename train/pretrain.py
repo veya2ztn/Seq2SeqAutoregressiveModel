@@ -757,7 +757,7 @@ def get_projectname(args):
     if hasattr(args,'history_length') and args.history_length !=1:project_name = f"history_{args.history_length}_"+project_name
     if hasattr(args,'time_reverse_flag') and args.time_reverse_flag !="only_forward":project_name = f"{args.time_reverse_flag}_"+project_name
     if hasattr(args,'time_intervel') and args.time_intervel:project_name = project_name + f"_every_{args.time_intervel}_step"
-    
+    if hasattr(args,'random_dataset') and args.random_dataset:project_name = project_name + f"_random_dataset"
     return model_name, datasetname,project_name
 
 def deal_with_tuple_string(patch_size,defult=None):
@@ -831,6 +831,7 @@ def parse_default_args(args):
     if hasattr(args,'time_intervel'):dataset_kargs['time_intervel']= args.time_intervel
     if hasattr(args,'cross_sample'):dataset_kargs['cross_sample']= args.cross_sample
     if hasattr(args,'use_time_stamp') and args.use_time_stamp:dataset_kargs['use_time_stamp']= args.use_time_stamp
+    if hasattr(args,'random_dataset'):dataset_kargs['random_dataset']= args.random_dataset
     args.unique_up_sample_channel = args.unique_up_sample_channel if args.unique_up_sample_channel >0 else args.output_channel
     
 
@@ -899,7 +900,7 @@ def create_logsys(args,save_config=True):
     # cudnn.benchmark = True
     ## already done in logsys
     
-    
+    args.logsys = ""
     if not args.debug and save_config:
         for key, val in vars(args).items():
             if local_rank==0:print(f"{key:30s} ---> {val}")
@@ -1044,6 +1045,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         metric_dict = logsys.initial_metric_dict(accu_list)
         banner = logsys.banner_initial(args.epochs, args.SAVE_PATH)
         logsys.banner_show(0, args.SAVE_PATH)
+        val_loss=1.234
         for epoch in master_bar:
             if epoch < start_epoch:continue
             if hasattr(model,'set_epoch'):model.set_epoch(epoch=epoch,epoch_total=args.epochs)
@@ -1053,7 +1055,8 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if (not args.more_epoch_train) and (lr_scheduler is not None):lr_scheduler.step(epoch)
             #torch.cuda.empty_cache()
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys,status='train') if 'small' in args.train_set else -1
-            val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
+            if epoch%args.valid_every_epoch == 0 and not args.skip_first_valid:
+                val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             logsys.metric_dict.update({'valid_loss':val_loss},epoch)
             logsys.banner_show(epoch,args.SAVE_PATH,train_losses=[train_loss])
             if (not args.distributed) or (args.rank == 0 and local_rank == 0) :

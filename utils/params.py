@@ -12,7 +12,9 @@ def get_args_parser():
     parser.add_argument('--epochs', default=-1, type=int)
     parser.add_argument('--save_warm_up', default=5, type=int)
     parser.add_argument('--more_epoch_train', default=0, type=int)
+    parser.add_argument('--skip_first_valid', default=0, type=int)
     
+    parser.add_argument('--valid_every_epoch', default=1, type=int)
     parser.add_argument('--seed', default=-1, type=int)
     parser.add_argument('--input_noise_std', type=float, default=0.0, help='input_noise_std')
     parser.add_argument('--do_final_fourcast', type=int, default=1, help='do fourcast step after finish training')
@@ -76,7 +78,7 @@ def get_args_parser():
     parser.add_argument('--use_time_stamp', type=int, default=0)
     parser.add_argument('--cross_sample', type=int, default=1)
     parser.add_argument('--use_inmemory_dataset',type=int,default=0)
-    
+    parser.add_argument('--random_dataset',type=int,default=0)
     # Fourcast Parameter
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
     parser.add_argument('--fourcast_randn_initial', default=0, type=int)
