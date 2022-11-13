@@ -1055,7 +1055,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if (not args.more_epoch_train) and (lr_scheduler is not None):lr_scheduler.step(epoch)
             #torch.cuda.empty_cache()
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys,status='train') if 'small' in args.train_set else -1
-            if epoch%args.valid_every_epoch == 0 and not args.skip_first_valid:
+            if (epoch%args.valid_every_epoch == 0 and not (epoch==0 and args.skip_first_valid)) or (epoch == args.epochs - 1):
                 val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             logsys.metric_dict.update({'valid_loss':val_loss},epoch)
             logsys.banner_show(epoch,args.SAVE_PATH,train_losses=[train_loss])
