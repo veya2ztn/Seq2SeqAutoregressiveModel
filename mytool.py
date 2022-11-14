@@ -64,10 +64,12 @@ def assign_trail_job(trial_path):
             print(f"no scalars at {log_dir},pass")
             continue
         print("start parsing tensorboard..............")
-        for key in tqdm.tqdm(set(df['tag'].values)):
+        for key in set(df['tag'].values):
             all_pool = test_pool if 'test' in key else epoch_pool
             if len(df[df['tag'] == key] )>1e3:
+                continue
                 now = df[df['tag'] == key]
+
                 steps = now['step'].values
                 values= now['value'].values
                 unipool={}
@@ -85,6 +87,7 @@ def assign_trail_job(trial_path):
                 steps = steps[sortorder]
                 values= values[sortorder]
                 iter_metric.append([key, steps,values])
+                
                 #all_pool = iter_pool
                 if 'tag' not in reader.hparams:
                     hparams1={}
@@ -106,6 +109,9 @@ def assign_trail_job(trial_path):
     if hparams == None:return
     hparams['mode']      = mode
     hparams['time_step'] = time_step
+    with open(os.path.join(trial_path,'config.json'), 'r') as f:
+        hparams = json.load(f)
+
     wandb.init(config  = hparams,
             project = project,
             entity  = "szztn951357",

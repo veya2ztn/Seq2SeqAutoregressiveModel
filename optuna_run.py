@@ -42,7 +42,7 @@ def optuna_high_level_main():
     conf_parser.add_argument("--patchsize_list", type=str,default="2")
     conf_parser.add_argument("--grad_clip_list", type=str,default=None)
     conf_parser.add_argument("--batchsize_list", type=str,default="4,16,32")
-    conf_parser.add_argument("--optuna_trails",  type=int,default="3")
+    conf_parser.add_argument("--num_trails",  type=int,default="3")
     optuna_args, remaining_argv = conf_parser.parse_known_args()
     gargs = get_args()
     train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load = create_memory_templete(gargs)
@@ -51,8 +51,8 @@ def optuna_high_level_main():
         #args.distributed= False
         #args.rank=0
         #random_seed= args.seed
-        args.seed  = random_seed= random.randint(1, 100000)
-
+        #args.seed  = random_seed= random.randint(1, 100000)
+        args.seed  = random_seed = 2022
         args.hparam_dict = {}
         set_range_optuna_list(trial, args,optuna_args.lr_range,'lr')
         if gargs.batch_size==-1:set_select_optuna_list(trial, args, optuna_args.batchsize_list, 'batch_size')
@@ -109,7 +109,7 @@ def optuna_high_level_main():
     # if len([t.state for t in study.trials if t.state== TrialState.COMPLETE])>optuna_limit_trials:
     #     return 'up tp optuna setted limit'
     #study.optimize(objective, n_trials=50, timeout=600,pruner=optuna.pruners.MedianPruner())
-    study.optimize(objective, n_trials=optuna_args.optuna_trails,  gc_after_trial=True)
+    study.optimize(objective, n_trials=optuna_args.num_trails,  gc_after_trial=True)
 
 if __name__ == '__main__':
     optuna_high_level_main()
