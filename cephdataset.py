@@ -3,7 +3,7 @@ import numpy as np
 import torch,os,io,socket
 from torchvision import datasets, transforms
 hostname = socket.gethostname()
-if hostname not in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185']:
+if hostname not in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185'] and '54' not in hostname:
     from petrel_client.client import Client
     import petrel_client
 
