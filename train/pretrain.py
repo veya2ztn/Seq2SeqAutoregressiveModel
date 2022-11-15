@@ -5,12 +5,8 @@ sys.path.append(os.getcwd())
 from gpu_use_setting import *
 idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
-
-os.environ['WANDB_MODE'] = 'offline'
-os.environ['WANDB_CONSOLE']='off'
 experiment_hub_path = "./experiment_hub.json"
 force_big  = True
-use_wandb  = False
 accumulation_steps_global=4
 save_intervel=100
 
@@ -43,7 +39,7 @@ from utils.params import get_args
 from utils.tools import getModelSize, load_model, save_model
 from utils.eval import single_step_evaluate
 import pandas as pd
-import wandb
+
 from mltool.dataaccelerate import DataLoaderX,DataLoader,DataPrefetcher,DataSimfetcher
 from mltool.loggingsystem import LoggingSystem
 
@@ -439,7 +435,6 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
                         logsys.record(f'test_{key}_each_fourcast_step', np.mean(val), idx)
                         info_pool[f'test_{key}_each_fourcast_step'] = np.mean(val)
                     info_pool['time_step'] = idx
-                    if use_wandb:wandb.log(info_pool)
                 outstring=(f"epoch:fourcast iter:[{step:5d}]/[{len(data_loader)}] GPU:[{gpu}] cost:[Date]:{data_cost/intervel:.1e} [Train]:{train_cost/intervel:.1e} [Rest]:{rest_cost/intervel:.1e}")
                 inter_b.lwrite(outstring, end="\r")
     if save_prediction_first_step is not None:torch.save(save_prediction_first_step,os.path.join(logsys.ckpt_root,'save_prediction_first_step')) 
@@ -501,9 +496,11 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         raise NotImplementedError
     accumulation_steps = accumulation_steps_global # should be 16 for finetune. but I think its ok.
     half_model = next(model.parameters()).dtype == torch.float16
+
     data_cost  = []
     train_cost = []
-    rest_cost = []
+    rest_cost  = []
+    now = time.time()
 
     Fethcher   = Datafetcher
     device     = next(model.parameters()).device
@@ -519,7 +516,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
     inter_b.lwrite(f"load everything, start_{status}ing......", end="\r")
 
-    now = time.time()
+    
     total_diff,total_num  = torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
     nan_count = 0
     while inter_b.update_step():
@@ -578,7 +575,6 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         time_step_now = len(batch)
         if (step) % intervel==0 or step<30:
             iter_info_pool['iter'] = epoch*batches + step
-            if use_wandb:wandb.log(iter_info_pool)
             for key, val in iter_info_pool.items():logsys.record(key, val, epoch*batches + step)
             outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [TimeLeng]:{time_step_now:} GPU:[{gpu}] abs_loss:{abs_loss.item():.2f} loss:{loss.item():.2f} cost:[Date]:{np.mean(data_cost):.1e} [Train]:{np.mean(train_cost):.1e} ")
             #print(data_loader.dataset.record_load_tensor.mean().item())
@@ -604,8 +600,8 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
     val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,record_load_tensor=valid_record_load,**args.dataset_kargs)
     train_datasampler = DistributedSampler(train_dataset, shuffle=True) if args.distributed else None
     val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
-    train_dataloader  = DataLoader(train_dataset, args.batch_size,   sampler=train_datasampler, num_workers=8, pin_memory=True, drop_last=True)
-    val_dataloader    = DataLoader(val_dataset  , args.valid_batch_size, sampler=val_datasampler,   num_workers=8, pin_memory=True, drop_last=False)
+    train_dataloader  = DataLoader(train_dataset, args.batch_size,   sampler=train_datasampler, num_workers=args.num_workers, pin_memory=True, drop_last=True)
+    val_dataloader    = DataLoader(val_dataset  , args.valid_batch_size, sampler=val_datasampler,   num_workers=args.num_workers, pin_memory=True, drop_last=False)
     return   train_dataset,   val_dataset, train_dataloader, val_dataloader
 
 def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
@@ -618,7 +614,7 @@ def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
     test_dataset = dataset_type(split="test", with_idx=True,dataset_tensor=test_dataset_tensor,record_load_tensor=test_record_load,**dataset_kargs)
     assert hasattr(test_dataset,'clim_tensor')
     test_datasampler  = DistributedSampler(test_dataset,  shuffle=False) if args.distributed else None
-    test_dataloader   = DataLoader(test_dataset, args.valid_batch_size, sampler=test_datasampler, num_workers=8, pin_memory=False)
+    test_dataloader   = DataLoader(test_dataset, args.valid_batch_size, sampler=test_datasampler, num_workers=args.num_workers, pin_memory=False)
     return   test_dataset,   test_dataloader
 
 def create_fourcast_metric_table(fourcastresult, logsys,test_dataset):
@@ -690,7 +686,6 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset):
         for key, val in info_pool.items():
             logsys.record(key,val, predict_time)
         info_pool['time_step'] = predict_time
-        if use_wandb:wandb.log(info_pool)
         info_pool_list.append(info_pool)
     return info_pool_list
 
@@ -874,26 +869,26 @@ def parse_default_args(args):
 def create_logsys(args,save_config=True):
     local_rank = args.gpu
     SAVE_PATH  = args.SAVE_PATH
-    if local_rank     == 0:
-        dirname = SAVE_PATH
-        dirname,name     = os.path.split(dirname)
-        dirname,job_type = os.path.split(dirname)
-        dirname,group    = os.path.split(dirname)
-        dirname,project  = os.path.split(dirname)
-        if use_wandb:wandb.init(config  = args,
-            project = project,
-            entity  = "szztn951357",
-            group   = group,
-            job_type= job_type,
-            name    = name,
-            #dir     = "ERA5_20-12/AFNONet/pretrain-physics_small/08_11_21_34",
-            settings=wandb.Settings(_disable_stats=True)
-            #reinit=True
-            )
-    logsys   = LoggingSystem(local_rank==0 or not args.distributed,args.SAVE_PATH,seed=args.seed)
-    _     = logsys.create_recorder(hparam_dict={'patch_size':args.patch_size , 'lr':args.lr, 'batch_size':args.batch_size,
-                                                   'model':args.model_type},
-                                      metric_dict={'best_loss':None})
+        
+    logsys   = LoggingSystem(local_rank==0 or not args.distributed,args.SAVE_PATH,seed=args.seed,use_wandb=args.use_wandb)
+    hparam_dict={'patch_size':args.patch_size , 'lr':args.lr, 'batch_size':args.batch_size,
+                                                   'model':args.model_type}
+    metric_dict={'best_loss':None}
+    dirname = SAVE_PATH
+    dirname,name     = os.path.split(dirname)
+    dirname,job_type = os.path.split(dirname)
+    dirname,group    = os.path.split(dirname)
+    dirname,project  = os.path.split(dirname)
+
+    wandb_id = f"{project}-{group}-{job_type}-{name}"
+    _ = logsys.create_recorder(hparam_dict=hparam_dict,metric_dict={'best_loss': None},
+                                args=args,project = project,
+                                entity  = "szztn951357",
+                                group   = group,
+                                job_type= job_type,
+                                name    = name,
+                                wandb_id =wandb_id
+                               )
     # fix the seed for reproducibility
     # torch.manual_seed(args.seed)
     # np.random.seed(args.seed)
@@ -1063,7 +1058,6 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                 logsys.info(f"Epoch {epoch} | Train loss: {train_loss:.6f}, Val loss: {val_loss:.6f}",show=False)
                 logsys.record('train', train_loss, epoch)
                 logsys.record('valid', val_loss, epoch)
-                if use_wandb:wandb.log({"epoch":epoch,'train':train_loss,'valid':val_loss})
                 if val_loss < min_loss:
                     min_loss = val_loss
                     if epoch > args.epochs//10:
@@ -1086,7 +1080,6 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
             start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=now_best_path, only_model=True)
             run_fourcast(args, model,logsys)
-        if use_wandb:wandb.finish()
         if result_tensor is not None and local_rank==0:
             result_tensor[local_rank] = min_loss
     logsys.close()
