@@ -36,7 +36,7 @@ from model.afnonet import AFNONet
 from model.FEDformer import FEDformer
 from model.FEDformer1D import FEDformer1D
 from JCmodels.fourcastnet import AFNONet as AFNONetJC
-from model.patch_model import NaiveConvModel2D,PatchWrapper
+from model.patch_model import NaiveConvModel2D,PatchWrapper,LargeMLP
 from model.time_embeding_model import *
 from model.physics_model import *
 from utils.params import get_args
