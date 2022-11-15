@@ -134,6 +134,43 @@ class NaiveConvModel2D(nn.Module):
             x = x.reshape(B,W,H,P).permute(0,3,1,2)
         return x
         
+class LargeMLP(nn.Module):
+    '''
+    input is (B, P, patch_range_1,patch_range_2)
+    output is (B,P)
+    ''' 
+    def __init__(self,img_size=None,patch_range=5,in_chans=20, out_chans=20,p=0.1,**kargs):
+        super().__init__()
+        self.img_size = img_size
+        self.patch_range = 5
+        if self.patch_range == 5:
+            cl = [5*5*in_chans,5*5*100,5*5*100,5*5*100,5*5*100,5*5*100,5*5*70,5*5*70,5*5*70,out_chans]
+            nnlist = []
+            for i in range(len(cl)-2):
+                nnlist+=[nn.Linear(cl[i],cl[i+1]),nn.Dropout(p=p),nn.Tanh()]
+            nnlist+=[nn.Linear(cl[-2],cl[-1])]
+            self.backbone = nn.Sequential(*nnlist)
+        else:
+            raise NotImplementedError
+        self.center_index,self.around_index=get_center_around_indexes(self.patch_range,self.img_size)
+
+    def forward(self, x):
+        '''
+        The input either (B,P,patch_range,patch_range) or (B,P,w,h)
+        The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
+        ''' 
+        assert len(x.shape)==4
+        input_is_full_image = False
+        if x.shape[-2:] == self.img_size:
+            input_is_full_image = True
+            x = x[...,self.around_index[:,:,0],self.around_index[:,:,1]] # (B,P,W-4,H,Patch,Patch)
+            x = x.permute(0,2,3,1,4,5)
+            B,W,H,P,_,_ = x.shape
+            x = x.flatten(0,2) # (B* W-4 * H,P, Patch,Patch)
+        x = self.backbone(x.flatten(-3,-1)) # (B* W-4 * H,P)
+        if input_is_full_image: 
+            x = x.reshape(B,W,H,P).permute(0,3,1,2)
+        return x
 
 class PatchWrapper(nn.Module):
     '''
