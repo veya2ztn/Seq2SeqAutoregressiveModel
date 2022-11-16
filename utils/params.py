@@ -79,7 +79,8 @@ def get_args_parser():
     parser.add_argument('--cross_sample', type=int, default=1)
     parser.add_argument('--use_inmemory_dataset',type=int,default=0)
     parser.add_argument('--random_dataset',type=int,default=0)
-    parser.add_argument('--num_workers',type=int,default=8)
+    parser.add_argument('--num_workers',type=int,default=2)
+    parser.add_argument('--use_offline_data',type=int,default=0)
     # Fourcast Parameter
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
     parser.add_argument('--fourcast_randn_initial', default=0, type=int)

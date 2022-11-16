@@ -3,7 +3,7 @@ import numpy as np
 import torch,os,io,socket
 from torchvision import datasets, transforms
 hostname = socket.gethostname()
-if hostname not in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185'] and '54' not in hostname:
+if hostname not in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185'] and '54' not in hostname and '52' not in hostname:
     from petrel_client.client import Client
     import petrel_client
 
@@ -321,7 +321,7 @@ class ERA5CephSmallDataset(ERA5CephDataset):
         self.set_time_reverse(time_reverse_flag)
     
     @staticmethod
-    def create_offline_dataset_templete(split='test',years=None, root=None):
+    def create_offline_dataset_templete(split='test',years=None, root=None,**kargs):
         print(f"in this dataset:{ERA5CephSmallDataset.__name__}, years/root args is disabled")
         data = torch.Tensor(np.load(ERA5CephSmallDataset.dataset_path[split]))
         record_load_tensor = torch.ones(len(data))
@@ -678,7 +678,7 @@ class WeathBench(BaseDataset):
         return file_list
 
     @staticmethod
-    def create_offline_dataset_templete(split='test',years=None, root=None, do_in_class=False):
+    def create_offline_dataset_templete(split='test',years=None, root=None, do_in_class=False,**kargs):
         if do_in_class:return None, None
         if years is None:
             years = WeathBench.years_split[split]
@@ -849,7 +849,7 @@ class WeathBench706(WeathBench71):
 
 class WeathBench716(WeathBench71):
     default_root='datasets/weatherbench_6hour'
-    
+    use_offline_data = False
     def init_file_list(self,years):
         return np.load(os.path.join(self.root,f"{self.split}.npy"))
     def load_otensor(self,idx):
@@ -886,14 +886,21 @@ class WeathBench716(WeathBench71):
 
 class WeathBench7066(WeathBench71):
     default_root='datasets/weatherbench_6hour'
+    use_offline_data = False
     datatimelist_pool={'train':np.arange(np.datetime64("1979-01-02"), np.datetime64("2017-01-01"), np.timedelta64(6, "h")),
                        'valid':np.arange(np.datetime64("2017-01-01"), np.datetime64("2018-01-01"), np.timedelta64(6, "h")),
                         'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(6, "h"))}
     def __len__(self):
         return len(self.dataset_tensor) - self.time_step*self.time_intervel + 1
     @staticmethod
-    def create_offline_dataset_templete(split='test',years=None, root=None, do_in_class=False):
-        dataset_tensor   = torch.Tensor(np.load(os.path.join(WeathBench7066.default_root,f"{split}.npy")))
+    def create_offline_dataset_templete(split='test', root=None, use_offline_data=False, **kargs):
+        if root is None:root = WeathBench7066.default_root
+        if use_offline_data:
+            dataset_flag = kargs.get('dataset_flag')
+            data_name = f"{split}_{dataset_flag}.npy"
+        else:
+            data_name = f"{split}.npy"
+        dataset_tensor   = torch.Tensor(np.load(os.path.join(root,data_name)))
         record_load_tensor = torch.ones(len(dataset_tensor))
         return dataset_tensor,record_load_tensor
 
@@ -910,8 +917,8 @@ class WeathBench7066(WeathBench71):
             '2D70V': (_list ,'gauss_norm'   , vector_scalar_mean[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
-            '3D70N': (_list ,'gauss_norm_3D', self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), identity, identity ),
-            '3D70U': (_list ,'unit_norm_3D' , self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), identity, identity ),
+            '3D70N': (_list ,'gauss_norm_3D', self.mean_std[:,_list].reshape(2,5,14,1,1), identity, identity ),
+            #'3D70U': (_list ,'unit_norm_3D' , self.mean_std[:,_list].reshape(2,5,14,1,1,1).mean(2), identity, identity ),
         }
         
         # mean, std = self.mean_std[:,_list].reshape(2,70,1,1)
@@ -923,39 +930,45 @@ class WeathBench7066(WeathBench71):
 class WeathBench7066PatchDataset(WeathBench7066):
     def __init__(self,**kargs):
         super().__init__(**kargs)
+        self.use_offline_data = kargs.get('use_offline_data', False)
         self.cross_sample                   = kargs.get('cross_sample', True) and (self.split == 'train')
         self.patch_range                    = patch_range = kargs.get('patch_range', 5)
         self.center_index,self.around_index =get_center_around_indexes(self.patch_range,self.img_shape)
         self.channel_last                   = False
         self.random = kargs.get('random_dataset', False)
+        
+
     def get_item(self,idx,patch_idx_h=None, patch_idx_w=None,reversed_part=False):
-        odata=self.load_otensor(idx)
-        if reversed_part:
-            odata = odata.clone() if isinstance(odata,torch.Tensor) else odata.copy()
-            odata[reversed_part] = -odata[reversed_part]
-        data = odata[self.channel_choice]
-        
-        eg = torch if isinstance(data,torch.Tensor) else np
-        if '3D' in self.normalize_type:
-            # 3D should modify carefully
-            data[14*4-1] = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
-            total_precipitaiton = odata[4]
-            newdata = data[14*5-1].clone() if isinstance(data,torch.Tensor) else data[14*5-1].copy()
-            newdata[total_precipitaiton>0] = 100
-            newdata[data[14*5-1]>100]=data[14*5-1][data[14*5-1]>100]
-            data[14*5-1] = newdata
-            shape= data.shape
-            data = data.reshape(5,14,*shape[-2:])
+        if self.use_offline_data:
+            data =  self.dataset_tensor[idx]
         else:
-            data[14*4-1]    = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
-            total_precipitaiton = odata[4]
-            data[14*5-1]    = total_precipitaiton
-        
-        if 'gauss_norm' in self.normalize_type:
-            data=  (data - self.mean)/self.std
-        elif 'unit_norm' in self.normalize_type:
-            data = data/self.std
+            odata=self.load_otensor(idx)
+            if reversed_part:
+                odata = odata.clone() if isinstance(odata,torch.Tensor) else odata.copy()
+                odata[reversed_part] = -odata[reversed_part]
+            data = odata[self.channel_choice]
             
+            eg = torch if isinstance(data,torch.Tensor) else np
+            if '3D' in self.normalize_type:
+                # 3D should modify carefully
+                data[14*4-1] = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
+                total_precipitaiton = odata[4]
+                newdata = data[14*5-1].clone() if isinstance(data,torch.Tensor) else data[14*5-1].copy()
+                newdata[total_precipitaiton>0] = 100
+                newdata[data[14*5-1]>100]=data[14*5-1][data[14*5-1]>100]
+                data[14*5-1] = newdata
+                shape= data.shape
+                data = data.reshape(5,14,*shape[-2:])
+            else:
+                data[14*4-1]    = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
+                total_precipitaiton = odata[4]
+                data[14*5-1]    = total_precipitaiton
+            
+            if 'gauss_norm' in self.normalize_type:
+                data=  (data - self.mean)/self.std
+            elif 'unit_norm' in self.normalize_type:
+                data = data/self.std
+        
         if patch_idx_h is not None:
             data = data[..., patch_idx_h, patch_idx_w]
         if self.use_time_stamp:
@@ -977,6 +990,8 @@ class WeathBench7066PatchDataset(WeathBench7066):
         batch = [self.get_item(i,patch_idx_h, patch_idx_w,reversed_part) for i in time_step_list]
         self.error_path = []
         return batch if not self.with_idx else (idx,batch)
+
+
 
 if __name__ == "__main__":
     import sys
