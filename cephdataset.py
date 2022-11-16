@@ -621,7 +621,7 @@ class WeathBench(BaseDataset):
         self.split            = split
         self.single_data_path_list = self.init_file_list(years) # [[year,idx],[year,idx],.....]
         self.use_time_stamp = use_time_stamp
-        self.use_offline_data = kargs.get('use_offline_data',0)
+        self.use_offline_data = kargs.get('use_offline_data',0) and split=='train'
         # in memory dataset, if we activate the in memory procedure, please create shared tensor 
         # via Tensor.share_memory_() before call this module and pass the create tensor as args of this module
         # the self.dataset_tensor should be same shape as the otensor, for example (10000, 110, 32, 64)
@@ -902,7 +902,9 @@ class WeathBench7066(WeathBench71):
             data_name = f"{split}_{dataset_flag}.npy"
         else:
             data_name = f"{split}.npy"
-        dataset_tensor   = torch.Tensor(np.load(os.path.join(root,data_name)))
+        numpy_path = os.path.join(root,data_name)
+        print(f"load data from {numpy_path}")
+        dataset_tensor   = torch.Tensor(np.load(numpy_path))
         record_load_tensor = torch.ones(len(dataset_tensor))
         return dataset_tensor,record_load_tensor
 
@@ -938,7 +940,7 @@ class WeathBench7066PatchDataset(WeathBench7066):
         self.center_index,self.around_index =get_center_around_indexes(self.patch_range,self.img_shape)
         self.channel_last                   = False
         self.random = kargs.get('random_dataset', False)
-        
+        self.use_offline_data = kargs.get('use_offline_data',0) and kargs.get('split')=='train'
 
     def get_item(self,idx,patch_idx_h=None, patch_idx_w=None,reversed_part=False):
         if self.use_offline_data:

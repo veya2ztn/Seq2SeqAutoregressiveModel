@@ -502,7 +502,7 @@ class RandomSelectPatchFetcher:
         patch_idx_h = patch_idx[:,0]#(B,5,5)
         patch_idx_w = patch_idx[:,1]#(B,5,5)
         batch_idx = np.random.randint(self.length,size=(self.batch_size,)).reshape(self.batch_size,1,1) #(B,1,1)
-        return [self.data[batch_idx+i,:,patch_idx_h,patch_idx_w].to(self.device) for i in range(self.time_step)]
+        return [self.data[batch_idx+i,:,patch_idx_h,patch_idx_w].permute(0,3,1,2).to(self.device) for i in range(self.time_step)]
             
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
 
@@ -557,6 +557,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             if model.train_mode =='pretrain':
                 time_truncate = max(min(epoch//3,data_loader.dataset.time_step),2)
                 batch=batch[:model.history_length -1 + time_truncate]
+            
             # the normal initial method will cause numerial explore by using timestep > 4 senenrio.
             if model.use_amp:
                 with torch.cuda.amp.autocast():
@@ -854,6 +855,9 @@ def parse_default_args(args):
     dataset_kargs['time_step']   = args.time_step
     dataset_kargs['check_data']  = True
     dataset_kargs['time_reverse_flag'] = 'only_forward' if not hasattr(args,'time_reverse_flag') else args.time_reverse_flag
+
+    dataset_kargs['use_offline_data'] = args.use_offline_data
+
     if hasattr(args,'dataset_flag') and args.dataset_flag:dataset_kargs['dataset_flag']= args.dataset_flag
     if hasattr(args,'time_intervel'):dataset_kargs['time_intervel']= args.time_intervel
     if hasattr(args,'cross_sample'):dataset_kargs['cross_sample']= args.cross_sample
@@ -1111,7 +1115,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                     logsys.info(f"The best accu is {val_loss}", show=False)
                 logsys.record('best_loss', min_loss, epoch)
                 update_experiment_info(experiment_hub_path,epoch,args)
-                if epoch>args.save_warm_up:
+                if (epoch>args.save_warm_up) and (epoch%args.save_every_epoch==0):
                     logsys.info(f"saving latest model ....", show=False)
                     save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, latest_ckpt_p)
                     logsys.info(f"done ....",show=False)
