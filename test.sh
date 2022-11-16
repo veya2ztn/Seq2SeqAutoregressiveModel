@@ -1,9 +1,7 @@
-
-aws s3 --endpoint-url=http://10.140.2.204:80 --profile zhangtianning sync s3://FourCastNet/checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_12_step/ checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_12_step/
-aws s3 --endpoint-url=http://10.140.2.204:80 --profile zhangtianning sync s3://FourCastNet/checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_1_step/  checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_1_step/ 
-aws s3 --endpoint-url=http://10.140.2.204:80 --profile zhangtianning sync s3://FourCastNet/checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_24_step/ checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_24_step/
-aws s3 --endpoint-url=http://10.140.2.204:80 --profile zhangtianning sync s3://FourCastNet/checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_2_step/  checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_2_step/ 
-aws s3 --endpoint-url=http://10.140.2.204:80 --profile zhangtianning sync s3://FourCastNet/checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_3_step/  checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_3_step/ 
-aws s3 --endpoint-url=http://10.140.2.204:80 --profile zhangtianning sync s3://FourCastNet/checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_4_step/  checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_4_step/ 
-aws s3 --endpoint-url=http://10.140.2.204:80 --profile zhangtianning sync s3://FourCastNet/checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_6_step/  checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_6_step/ 
-aws s3 --endpoint-url=http://10.140.2.204:80 --profile zhangtianning sync s3://FourCastNet/checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_8_step/  checkpoints/WeathBench71/small_AFNONet/history_6_time_step_8_finetune-2D70N_every_8_step/ 
+for dataset_flag in  3D70N #3D70N
+do
+for flag in train #test valid 
+do
+    nohup python test.py $dataset_flag $flag > log/offlinedata.$dataset_flag.$flag.2&
+done
+done
