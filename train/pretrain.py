@@ -7,7 +7,6 @@ idx=0
 sys.path = [p for p in sys.path if 'lustre' not in p]
 experiment_hub_path = "./experiment_hub.json"
 force_big  = True
-accumulation_steps_global=4
 save_intervel=100
 
 from pathlib import Path
@@ -484,6 +483,27 @@ def nan_diagnose_grad(model,nan_count,logsys):
         skip = True
     return nan_count, skip
 
+class RandomSelectPatchFetcher:
+    def __init__(self,data_loader,device):
+        dataset = data_loader.dataset
+        assert dataset.use_offline_data  
+        self.data  = dataset.dataset_tensor #(B,70,32,64)
+        self.batch_size = data_loader.batch_size 
+        self.patch_range= dataset.patch_range
+        self.img_shape  = dataset.img_shape
+        self.around_index = dataset.around_index
+        self.length = len(dataset)
+        self.time_step = dataset.time_step
+        self.device = device
+    def next(self):
+        center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)*2,size=(self.batch_size,)) 
+        center_w = np.random.randint(self.img_shape[-1],size=(self.batch_size,))
+        patch_idx = self.around_index[center_h, center_w] #(B,2,5,5) 
+        patch_idx_h = patch_idx[:,0]#(B,5,5)
+        patch_idx_w = patch_idx[:,1]#(B,5,5)
+        batch_idx = np.random.randint(self.length,size=(self.batch_size,)).reshape(self.batch_size,1,1) #(B,1,1)
+        return [self.data[batch_idx+i,:,patch_idx_h,patch_idx_w].to(self.device) for i in range(self.time_step)]
+            
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
 
     if status == 'train':
@@ -494,7 +514,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         logsys.eval()
     else:
         raise NotImplementedError
-    accumulation_steps = accumulation_steps_global # should be 16 for finetune. but I think its ok.
+    accumulation_steps = model.accumulation_steps # should be 16 for finetune. but I think its ok.
     half_model = next(model.parameters()).dtype == torch.float16
 
     data_cost  = []
@@ -502,7 +522,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     rest_cost  = []
     now = time.time()
 
-    Fethcher   = Datafetcher
+    Fethcher   = RandomSelectPatchFetcher if( status =='train' and data_loader.dataset.use_offline_data) else Datafetcher
     device     = next(model.parameters()).device
     prefetcher = Fethcher(data_loader,device)
     #raise
@@ -795,7 +815,6 @@ def parse_default_args(args):
     if args.seed == -1:args.seed = 42
     if args.seed == -2:args.seed = random.randint(1, 100000)
     args.half_model = half_model
-    args.accumulation_steps_global=accumulation_steps_global
     args.batch_size = bs_for_mode[args.mode] if args.batch_size == -1 else args.batch_size
     args.valid_batch_size = args.batch_size*8 if args.valid_batch_size == -1 else args.valid_batch_size
     args.epochs     = ep_for_mode[args.mode] if args.epochs == -1 else args.epochs
@@ -943,6 +962,7 @@ def build_model(args):
     model.use_amp = args.use_amp
     model.clip_grad= args.clip_grad
     model.pred_len = args.pred_len
+    model.accumulation_steps = args.accumulation_steps
     return model
 
 def update_experiment_info(experiment_hub_path,epoch,args):
