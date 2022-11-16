@@ -25,6 +25,10 @@ def get_args_parser():
     parser.add_argument('--continue_train', type=int, default=0, help='continue_train')
     parser.add_argument('--accumulation_steps', type=int, default=4, help='accumulation_steps')
     parser.add_argument('--use_wandb', type=str, default="off", help='when to activate wandb')
+    parser.add_argument('--GDMod_type', type=str, default='off')
+    parser.add_argument('--GDMod_lambda1', type=float, default=1)
+    parser.add_argument('--GDMod_lambda2', type=float, default=0)
+
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
                         #choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC','NaiveConvModel2D']
@@ -46,7 +50,7 @@ def get_args_parser():
     
     parser.add_argument('--pred_len', type=int, default=1)
     parser.add_argument('--label_len', type=int, default=3)
-    parser.add_argument('--use_amp', type=int, default=True, help='use_amp')
+    parser.add_argument('--use_amp', type=int, default=1, help='use_amp')
     parser.add_argument('--random_time_step', action='store_true')
     parser.set_defaults(random_time_step=False)
     parser.add_argument('--use_scalar_advection', action='store_true')
