@@ -1009,7 +1009,7 @@ def build_optimizer(args,model):
         'NGmod_delta_mean': NGmod_delta_mean,
         'NGmod_absoluteNone': NGmod_absoluteNone
     }
-    optimizer.grad_modifier = GDMode[GDMod_type](GDMod_lambda1, GDMod_lambda2) if GDMod_type in GDMode else None
+    optimizer.grad_modifier = GDMode[GDMod_type](GDMod_lambda1, GDMod_lambda2) if GDMod_type != 'off' else None
     
     lr_scheduler = None
     if args.sched:
