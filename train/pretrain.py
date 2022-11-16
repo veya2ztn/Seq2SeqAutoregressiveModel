@@ -42,7 +42,7 @@ import pandas as pd
 from mltool.dataaccelerate import DataLoaderX,DataLoader,DataPrefetcher,DataSimfetcher
 from mltool.loggingsystem import LoggingSystem
 
-
+from model.GradientModifier import *
 from cephdataset import *
 # dataset_type = ERA5CephDataset
 # dataset_type  = SpeedTestDataset
@@ -539,6 +539,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     
     total_diff,total_num  = torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
     nan_count = 0
+    Nodeloss1, Nodeloss2 = 0 , 0
     while inter_b.update_step():
         #if inter_b.now>10:break
         step = inter_b.now
@@ -565,12 +566,20 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
             if skip:continue
             loss /= accumulation_steps
-            iter_info_pool[f'train_loss_gpu{gpu}'] =  loss.item()
+            
 
+            iter_info_pool[f'train_loss_gpu{gpu}'] =  loss.item()
+            iter_info_pool[f'train_Nodeloss1_gpu{gpu}'] = Nodeloss1
+            iter_info_pool[f'train_Nodeloss2_gpu{gpu}'] = Nodeloss2
             if model.use_amp:
                 loss_scaler.scale(loss).backward()
             else:
                 loss.backward()
+            if optimizer.grad_modifier is not None:
+                assert len(batch)==2 # we now only allow one 
+                assert isinstance(batch[0],torch.Tensor)
+                optimizer.grad_modifier.backward(model, batch[0], batch[1], strict=False)
+                Nodeloss1, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
             #GradientModifier().backward(model,x,y)
             #nan_count, skip = nan_diagnose_grad(model,nan_count,logsys)
             # if skip:
@@ -587,6 +596,10 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         else:
             with torch.no_grad():
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
+                if optimizer.grad_modifier is not None:
+                    Nodeloss1, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
+                iter_info_pool[f'{status}_Nodeloss1_gpu{gpu}'] = Nodeloss1
+                iter_info_pool[f'{status}_Nodeloss2_gpu{gpu}'] = Nodeloss2
         total_diff  += abs_loss.item()
         #total_num   += len(batch) - 1 #batch 
         total_num   += 1 
@@ -988,6 +1001,15 @@ def build_optimizer(args,model):
         optimizer       = torch.optim.SGD(model.parameters(), lr=args.lr)
     else:
         raise NotImplementedError
+    GDMod_type  = args.GDMod_type
+    GDMod_lambda1 = args.GDMod_lambda1
+    GDMod_lambda2 = args.GDMod_lambda2
+    GDMode = {
+        'NGmod_absolute': NGmod_absolute,
+        'NGmod_delta_mean': NGmod_delta_mean,
+        'NGmod_absoluteNone': NGmod_absoluteNone
+    }
+    optimizer.grad_modifier = GDMode[GDMod_type](GDMod_lambda1, GDMod_lambda2) if GDMod_type in GDMode else None
     
     lr_scheduler = None
     if args.sched:

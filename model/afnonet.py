@@ -441,7 +441,7 @@ class AFNONet(BaseModel):
         #timer.record('final_dropout',level=0)
         x = self.pre_logits(x);#print(torch.std_mean(x))
         #timer.record('pre_logits',level=0)
-        x = self.head(x);#print(torch.std_mean(x))
+        x = self.head(x)  # print(torch.std_mean(x))
         if self.history_length >1:
             x = x.flatten(1,2).transpose(1,-1)
             x = self.last_Linear_layer(x)
