@@ -23,8 +23,8 @@ def get_args_parser():
     parser.add_argument('--rank', type=int, default=0, help='rank')
     parser.add_argument('--share_memory', type=int, default=1, help='share_memory_flag')
     parser.add_argument('--continue_train', type=int, default=0, help='continue_train')
-    parser.add_argument('--accumulation_steps', type=int, default=4, help='continue_train')
-    
+    parser.add_argument('--accumulation_steps', type=int, default=4, help='accumulation_steps')
+    parser.add_argument('--use_wandb', type=str, default="off", help='when to activate wandb')
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
                         #choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC','NaiveConvModel2D']
