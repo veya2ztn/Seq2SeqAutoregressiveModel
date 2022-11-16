@@ -621,6 +621,7 @@ class WeathBench(BaseDataset):
         self.split            = split
         self.single_data_path_list = self.init_file_list(years) # [[year,idx],[year,idx],.....]
         self.use_time_stamp = use_time_stamp
+        self.use_offline_data = kargs.get('use_offline_data',0)
         # in memory dataset, if we activate the in memory procedure, please create shared tensor 
         # via Tensor.share_memory_() before call this module and pass the create tensor as args of this module
         # the self.dataset_tensor should be same shape as the otensor, for example (10000, 110, 32, 64)
@@ -630,7 +631,8 @@ class WeathBench(BaseDataset):
             ((record_load_tensor is    None) and (dataset_tensor is   None))
         
         if dataset_tensor is None:
-            self.dataset_tensor,self.record_load_tensor = self.create_offline_dataset_templete(split,years=years, root=self.root, do_in_class=True)
+            self.dataset_tensor,self.record_load_tensor = self.create_offline_dataset_templete(split,
+            years=years, root=self.root, do_in_class=True,use_offline_data=self.use_offline_data,dataset_flag=dataset_flag)
         else:
             self.dataset_tensor,self.record_load_tensor = dataset_tensor,record_load_tensor
 
@@ -895,7 +897,7 @@ class WeathBench7066(WeathBench71):
     @staticmethod
     def create_offline_dataset_templete(split='test', root=None, use_offline_data=False, **kargs):
         if root is None:root = WeathBench7066.default_root
-        if use_offline_data:
+        if use_offline_data and split=='train':
             dataset_flag = kargs.get('dataset_flag')
             data_name = f"{split}_{dataset_flag}.npy"
         else:

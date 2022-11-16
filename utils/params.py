@@ -23,6 +23,8 @@ def get_args_parser():
     parser.add_argument('--rank', type=int, default=0, help='rank')
     parser.add_argument('--share_memory', type=int, default=1, help='share_memory_flag')
     parser.add_argument('--continue_train', type=int, default=0, help='continue_train')
+    parser.add_argument('--accumulation_steps', type=int, default=4, help='continue_train')
+    
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
                         #choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC','NaiveConvModel2D']
@@ -81,6 +83,8 @@ def get_args_parser():
     parser.add_argument('--random_dataset',type=int,default=0)
     parser.add_argument('--num_workers',type=int,default=2)
     parser.add_argument('--use_offline_data',type=int,default=0)
+
+    
     # Fourcast Parameter
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
     parser.add_argument('--fourcast_randn_initial', default=0, type=int)

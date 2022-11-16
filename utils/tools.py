@@ -86,10 +86,10 @@ def get_patch_location_index(center,img_shape,patch_range):
         return pos
 
 def get_center_around_indexes(patch_range,img_shape):
-    hlist = range(patch_range//2, img_shape[-2] - (patch_range//2))
-    wlist = range(img_shape[-1])
+    hlist   = range(patch_range//2, img_shape[-2] - (patch_range//2))
+    wlist   = range(img_shape[-1])
     xes,yes = np.meshgrid(hlist,wlist)
-    coor   = np.stack([xes,yes],-1).reshape(-1,2)
+    coor    = np.stack([xes,yes],-1).reshape(-1,2)
     indexes = np.array([np.stack(get_patch_location_index([x,y],img_shape,patch_range)) for x,y in coor] )
     indexes = indexes.reshape(len(wlist),len(hlist),2,patch_range,patch_range).transpose(1,0,2,3,4)
     coor    = coor.reshape(len(wlist),len(hlist),2).transpose(2,1,0)
