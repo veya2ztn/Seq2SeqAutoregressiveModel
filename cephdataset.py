@@ -936,11 +936,12 @@ class WeathBench7066PatchDataset(WeathBench7066):
         super().__init__(**kargs)
         self.use_offline_data = kargs.get('use_offline_data', False)
         self.cross_sample                   = kargs.get('cross_sample', True) and (self.split == 'train')
+        self.use_offline_data               = kargs.get('use_offline_data',0) and kargs.get('split')=='train'
         self.patch_range                    = patch_range = kargs.get('patch_range', 5)
-        self.center_index,self.around_index =get_center_around_indexes(self.patch_range,self.img_shape)
+        self.center_index,self.around_index = get_center_around_indexes(self.patch_range,self.img_shape)
         self.channel_last                   = False
         self.random = kargs.get('random_dataset', False)
-        self.use_offline_data = kargs.get('use_offline_data',0) and kargs.get('split')=='train'
+        
 
     def get_item(self,idx,patch_idx_h=None, patch_idx_w=None,reversed_part=False):
         if self.use_offline_data:
