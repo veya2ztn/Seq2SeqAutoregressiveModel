@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 from torch.nn.modules.batchnorm import _BatchNorm
 import numpy as np
-from utils.tools import get_center_around_indexes
+from utils.tools import get_center_around_indexes,get_center_around_indexes_3D
 
 class AdaptiveBatchNorm2d(_BatchNorm):
     def _check_input_dim(self, input):
@@ -133,7 +133,7 @@ class NaiveConvModel2D(nn.Module):
         if input_is_full_image: 
             x = x.reshape(B,W,H,P).permute(0,3,1,2)
         return x
-        
+
 class LargeMLP(nn.Module):
     '''
     input is (B, P, patch_range_1,patch_range_2)
@@ -172,6 +172,49 @@ class LargeMLP(nn.Module):
             x = x.reshape(B,W,H,P).permute(0,3,1,2)
         return x
 
+class LargeMLP_3D(nn.Module):
+    '''
+    input is (B, P, patch_range_1,patch_range_2,patch_range_3)
+    output is (B,P)
+    ''' 
+    def __init__(self,img_size=None,patch_range=5,in_chans=20, out_chans=20,p=0.1,**kargs):
+        super().__init__()
+        self.img_size = img_size
+        self.patch_range = 5
+        if self.patch_range == 5:
+            cl = [5*5*5*in_chans,5*5*5*5,5*5*5*5,
+                  5*5*5*5,5*5*5*5,5*5*5*5,5*5*5*5,
+                  5*5*5*5,5*5*5*5,out_chans]
+            nnlist = []
+            for i in range(len(cl)-2):
+                nnlist+=[nn.Linear(cl[i],cl[i+1]),nn.Dropout(p=p),nn.Tanh()]
+            nnlist+=[nn.Linear(cl[-2],cl[-1])]
+            self.backbone = nn.Sequential(*nnlist)
+        else:
+            raise NotImplementedError
+        self.center_index,self.around_index=get_center_around_indexes_3D(self.patch_range,self.img_size)
+
+    def forward(self, x):
+        '''
+        The input either (B,P,patch_range,patch_range) or (B,P,w,h)
+        The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
+        ''' 
+        assert len(x.shape) == 5 #(B,P,Z,W,H)
+        input_is_full_image = False
+        if x.shape[-3:] == self.img_size:
+            input_is_full_image = True
+            x = x[..., self.around_index[:, :, : , 0],self.around_index[:, :, : , 1],self.around_index[:, :, : , 2]] 
+            # (B,P,Z-2,W-2,H,Patch,Patch,Patch)
+            x = x.permute(0, 2, 3, 4, 1, 5, 6, 7)
+            B, Z, W, H, P, _, _, _ = x.shape
+            x = x.flatten(0, 3)  # (B* Z-2 * W-2 * H, Property, Patch,Patch,Patch)
+        assert tuple(x.shape[-3:]) == (self.patch_range,self.patch_range,self.patch_range)
+        x = self.backbone(x.flatten(-4,-1)) # (B* W-4 * H,P)
+        if input_is_full_image:
+            x = x.reshape(B, Z, W, H, P).permute(0, 4, 1, 2,3) #(B, Z-2,W-2,H,P)  -> (B,P, Z-2,W-2,H)
+        return x
+
+
 class PatchWrapper(nn.Module):
     '''
     input is (B, P, patch_range_1,patch_range_2)
@@ -184,10 +227,8 @@ class PatchWrapper(nn.Module):
         self.monitor = True
         self.img_size = (32, 64)
         self.patch_range = 5
-        self.center_index, self.around_index = get_center_around_indexes(
-            self.patch_range, self.img_size)
-        self.mlp = nn.Sequential(nn.Tanh(), nn.Linear(
-            args.output_channel*self.patch_range**2, args.output_channel))
+        self.center_index, self.around_index = get_center_around_indexes(self.patch_range, self.img_size)
+        self.mlp = nn.Sequential(nn.Tanh(), nn.Linear(args.output_channel*self.patch_range**2, args.output_channel))
 
     def forward(self, x):
         '''
@@ -198,13 +239,49 @@ class PatchWrapper(nn.Module):
         input_is_full_image = False
         if x.shape[-2:] == self.img_size:
             input_is_full_image = True
-            x = x[..., self.around_index[:, :, 0],
-                  self.around_index[:, :, 1]]  # (B,P,W-2,H,Patch,Patch)
+            x = x[..., self.around_index[:, :, 0],self.around_index[:, :, 1]]  # (B,P,W-2,H,Patch,Patch)
             x = x.permute(0, 2, 3, 1, 4, 5)
             B, W, H, P, _, _ = x.shape
             x = x.flatten(0, 2)  # (B* W-2 * H, Property, Patch,Patch)
+        assert tuple(x.shape[-2:]) == (self.patch_range,self.patch_range)
         x = self.backbone(x)
         x = self.mlp(x.reshape(x.size(0), -1))
         if input_is_full_image:
             x = x.reshape(B, W, H, P).permute(0, 3, 1, 2)
+        return x
+
+class PatchWrapper3D(nn.Module):
+    '''
+    input is (B, P, patch_range_1,patch_range_2)
+    output is (B,P)
+    '''
+
+    def __init__(self, args, backbone):
+        super().__init__()
+        self.backbone = backbone
+        self.monitor = True
+        self.img_size = (32, 64)
+        self.patch_range = 5
+        self.center_index, self.around_index = get_center_around_indexes_3D(self.patch_range, self.img_size)
+        self.mlp = nn.Sequential(nn.Tanh(), nn.Linear(args.output_channel*self.patch_range**3, args.output_channel))
+
+    def forward(self, x):
+        '''
+        The input either (B,P,patch_range,patch_range) or (B,P,w,h)
+        The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
+        '''
+        assert len(x.shape) == 5 #(B,P,Z,W,H)
+        input_is_full_image = False
+        if x.shape[-3:] == self.img_size:
+            input_is_full_image = True
+            x = x[..., self.around_index[:, :, : , 0],self.around_index[:, :, : , 1],self.around_index[:, :, : , 2]] 
+            # (B,P,Z-2,W-2,H,Patch,Patch,Patch)
+            x = x.permute(0, 2, 3, 4, 1, 5, 6, 7)
+            B, Z, W, H, P, _, _, _ = x.shape
+            x = x.flatten(0, 3)  # (B* Z-2 * W-2 * H, Property, Patch,Patch,Patch)
+        assert tuple(x.shape[-3:]) == (self.patch_range,self.patch_range,self.patch_range)
+        x = self.backbone(x)
+        x = self.mlp(x.reshape(x.size(0), -1))
+        if input_is_full_image:
+            x = x.reshape(B, Z, W, H, P).permute(0, 4, 1, 2,3) #(B, Z-2,W-2,H,P)  -> (B,P, Z-2,W-2,H)
         return x

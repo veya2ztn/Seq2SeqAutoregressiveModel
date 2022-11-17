@@ -31,7 +31,7 @@ from model.afnonet import AFNONet
 from model.FEDformer import FEDformer
 from model.FEDformer1D import FEDformer1D
 from JCmodels.fourcastnet import AFNONet as AFNONetJC
-from model.patch_model import NaiveConvModel2D,PatchWrapper,LargeMLP
+from model.patch_model import NaiveConvModel2D,PatchWrapper,LargeMLP,LargeMLP_3D
 from model.time_embeding_model import *
 from model.physics_model import *
 from utils.params import get_args
@@ -236,9 +236,14 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
         start     = start[1:] + [ltmv_pred]
     #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
     #print(target.shape,torch.std_mean(target))
-    if len(ltmv_pred.shape)>2:
-        target = target[...,model.center_index[0],model.center_index[1]]
-    else:
+    if len(ltmv_pred.shape)>2: #(B,P,Z,H,W)
+        if len(ltmv_pred.shape) == 5:
+            target = target[...,model.center_index[0],model.center_index[1],model.center_index[2]]
+        elif len(ltmv_pred.shape) == 4:
+            target = target[...,model.center_index[0],model.center_index[1]]
+        else:
+            raise NotImplementedError
+    else: #(B, P)
         B,P,W,H=target.shape
         target = target[...,W//2,H//2]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
@@ -496,13 +501,28 @@ class RandomSelectPatchFetcher:
         self.time_step = dataset.time_step
         self.device = device
     def next(self):
-        center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)*2,size=(self.batch_size,)) 
-        center_w = np.random.randint(self.img_shape[-1],size=(self.batch_size,))
-        patch_idx = self.around_index[center_h, center_w] #(B,2,5,5) 
-        patch_idx_h = patch_idx[:,0]#(B,5,5)
-        patch_idx_w = patch_idx[:,1]#(B,5,5)
-        batch_idx = np.random.randint(self.length,size=(self.batch_size,)).reshape(self.batch_size,1,1) #(B,1,1)
-        return [self.data[batch_idx+i,:,patch_idx_h,patch_idx_w].permute(0,3,1,2).to(self.device) for i in range(self.time_step)]
+        if len(self.img_shape)==2:
+            center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)*2,size=(self.batch_size,)) 
+            center_w = np.random.randint(self.img_shape[-1],size=(self.batch_size,))
+            patch_idx = self.around_index[center_h, center_w] #(B,2,5,5) 
+            patch_idx_h = patch_idx[:,0]#(B,5,5)
+            patch_idx_w = patch_idx[:,1]#(B,5,5)
+            batch_idx = np.random.randint(self.length,size=(self.batch_size,)).reshape(self.batch_size,1,1) #(B,1,1)
+            return [self.data[batch_idx+i,:,patch_idx_h,patch_idx_w].permute(0,3,1,2).to(self.device) for i in range(self.time_step)]
+        elif len(self.img_shape)==3:
+            center_z    = np.random.randint(self.img_shape[-3] - (self.patch_range//2)*2) 
+            center_h    = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2) 
+            center_w    = np.random.randint(self.img_shape[-1])
+            patch_idx   = self.around_index[center_z, center_h, center_w] #(B,2,5,5,5) 
+            print(patch_idx.shape)
+            patch_idx_z = patch_idx[:,0]#(B,5,5,5)
+            patch_idx_h = patch_idx[:,1]#(B,5,5,5)
+            patch_idx_w = patch_idx[:,2]#(B,5,5,5)
+            batch_idx = np.random.randint(self.length,size=(self.batch_size,)).reshape(self.batch_size,1,1,1) #(B,1,1,1)
+            print(self.data.shape)
+            return [self.data[batch_idx+i,:,patch_idx_z,patch_idx_h,patch_idx_w].permute(0,4,1,2,3).to(self.device) for i in range(self.time_step)]
+        else:
+            raise NotImplementedError
             
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
 
@@ -855,7 +875,7 @@ def parse_default_args(args):
     dataset_kargs['time_step']   = args.time_step
     dataset_kargs['check_data']  = True
     dataset_kargs['time_reverse_flag'] = 'only_forward' if not hasattr(args,'time_reverse_flag') else args.time_reverse_flag
-
+    
     dataset_kargs['use_offline_data'] = args.use_offline_data
 
     if hasattr(args,'dataset_flag') and args.dataset_flag:dataset_kargs['dataset_flag']= args.dataset_flag
@@ -872,7 +892,7 @@ def parse_default_args(args):
     y_c        = args.output_channel= y_c if not args.output_channel else args.output_channel
     patch_size = args.patch_size = deal_with_tuple_string(args.patch_size,patch_size)
     img_size   = args.img_size   = deal_with_tuple_string(args.img_size,img_size)
-    
+    dataset_kargs['img_size'] = img_size
     args.dataset_kargs = dataset_kargs
     
     model_kargs={

@@ -14,7 +14,7 @@ import pandas as pd
 from utils.timefeatures import time_features
 import os
 import h5py
-from utils.tools import get_center_around_indexes
+from utils.tools import get_center_around_indexes,get_center_around_indexes_3D
 
 def load_test_dataset_in_memory(years=[2018], root='cluster3:s3://era5npy',crop_coord=None,channel_last=True,vnames=[]):
     client = None
@@ -603,7 +603,7 @@ class WeathBench(BaseDataset):
     datatimelist_pool={'train':np.arange(np.datetime64("1979-01-02"), np.datetime64("2016-01-01"), np.timedelta64(1, "h")),
                        'valid':np.arange(np.datetime64("2016-01-01"), np.datetime64("2018-01-01"), np.timedelta64(1, "h")),
                         'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(1, "h"))}
-
+    use_offline_data =False
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,
                  root=None, time_step=2,
                  with_idx=False,
@@ -621,7 +621,6 @@ class WeathBench(BaseDataset):
         self.split            = split
         self.single_data_path_list = self.init_file_list(years) # [[year,idx],[year,idx],.....]
         self.use_time_stamp = use_time_stamp
-        self.use_offline_data = kargs.get('use_offline_data',0) and split=='train'
         # in memory dataset, if we activate the in memory procedure, please create shared tensor 
         # via Tensor.share_memory_() before call this module and pass the create tensor as args of this module
         # the self.dataset_tensor should be same shape as the otensor, for example (10000, 110, 32, 64)
@@ -897,7 +896,7 @@ class WeathBench7066(WeathBench71):
     @staticmethod
     def create_offline_dataset_templete(split='test', root=None, use_offline_data=False, **kargs):
         if root is None:root = WeathBench7066.default_root
-        if use_offline_data and split=='train':
+        if use_offline_data:
             dataset_flag = kargs.get('dataset_flag')
             data_name = f"{split}_{dataset_flag}.npy"
         else:
@@ -933,21 +932,30 @@ class WeathBench7066(WeathBench71):
     
 class WeathBench7066PatchDataset(WeathBench7066):
     def __init__(self,**kargs):
+        self.use_offline_data = kargs.get('use_offline_data',0) #and kargs.get('split')=='train'
         super().__init__(**kargs)
         self.use_offline_data = kargs.get('use_offline_data', False)
-        self.cross_sample                   = kargs.get('cross_sample', True) and (self.split == 'train')
-        self.use_offline_data               = kargs.get('use_offline_data',0) and kargs.get('split')=='train'
-        self.patch_range                    = patch_range = kargs.get('patch_range', 5)
-        self.center_index,self.around_index = get_center_around_indexes(self.patch_range,self.img_shape)
+        self.cross_sample     = kargs.get('cross_sample', True) #and (self.split == 'train')
+        
+        self.patch_range      = patch_range = kargs.get('patch_range', 5)
+        self.img_shape        = kargs.get('img_size',WeathBench7066PatchDataset.img_shape)
+        #print(self.img_shape)
+        if isinstance(self.img_shape,str):self.img_shape=tuple([int(p) for p in self.img_shape.split(',')])
+
+        if '3D' in self.normalize_type:
+            self.center_index,self.around_index = get_center_around_indexes_3D(self.patch_range,self.img_shape)
+        else:
+            self.center_index,self.around_index = get_center_around_indexes(self.patch_range,self.img_shape)
         self.channel_last                   = False
         self.random = kargs.get('random_dataset', False)
         
 
-    def get_item(self,idx,patch_idx_h=None, patch_idx_w=None,reversed_part=False):
+    def get_item(self,idx,patch_idx_h=None, patch_idx_w=None,patch_idx_z=None,reversed_part=False):
         if self.use_offline_data:
             data =  self.dataset_tensor[idx]
         else:
             odata=self.load_otensor(idx)
+            
             if reversed_part:
                 odata = odata.clone() if isinstance(odata,torch.Tensor) else odata.copy()
                 odata[reversed_part] = -odata[reversed_part]
@@ -973,9 +981,13 @@ class WeathBench7066PatchDataset(WeathBench7066):
                 data=  (data - self.mean)/self.std
             elif 'unit_norm' in self.normalize_type:
                 data = data/self.std
-        
+
         if patch_idx_h is not None:
-            data = data[..., patch_idx_h, patch_idx_w]
+            if '3D' in self.normalize_type:
+                assert patch_idx_z
+                data = data[..., patch_idx_z, patch_idx_h, patch_idx_w]
+            else:
+                data = data[..., patch_idx_h, patch_idx_w]
         if self.use_time_stamp:
             return data, self.timestamp[idx]
         else:
@@ -987,12 +999,20 @@ class WeathBench7066PatchDataset(WeathBench7066):
         reversed_part = self.do_time_reverse(idx)
         time_step_list= [idx+i*self.time_intervel for i in range(self.time_step)]
         if reversed_part:time_step_list = time_step_list[::-1]
-        patch_idx_h, patch_idx_w = None,None
+        patch_idx_h, patch_idx_w,patch_idx_z = None,None,None
+        
         if self.cross_sample:
+            center_z = np.random.randint(self.patch_range//2, self.img_shape[-3] - (self.patch_range//2)*2) 
             center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)*2) 
             center_w = np.random.randint(self.img_shape[-1])
-            patch_idx_h, patch_idx_w = self.around_index[center_h, center_w]
-        batch = [self.get_item(i,patch_idx_h, patch_idx_w,reversed_part) for i in time_step_list]
+            if '3D' in self.normalize_type:
+                patch_idx_z,patch_idx_h, patch_idx_w = self.around_index[center_z,center_h, center_w]
+            else:
+                patch_idx_h, patch_idx_w = self.around_index[center_h, center_w]
+        batch = [self.get_item(i,patch_idx_h=patch_idx_h, 
+                                 patch_idx_w=patch_idx_w,
+                                 patch_idx_z=patch_idx_z,
+                                 reversed_part=reversed_part) for i in time_step_list]
         self.error_path = []
         return batch if not self.with_idx else (idx,batch)
 
