@@ -285,6 +285,8 @@ class AFNONet(BaseModel):
 
         assert img_size is not None
         patch_size   = [patch_size]*len(img_size) if isinstance(patch_size,int) else patch_size
+        self.in_chans = in_chans
+        self.out_chans=out_chans
         if history_length > 1:
             img_size = (history_length,*img_size)
             patch_size = (1,*patch_size)

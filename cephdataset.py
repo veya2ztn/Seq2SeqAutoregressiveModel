@@ -365,7 +365,7 @@ class ERA5CephSmallPatchDataset(ERA5CephSmallDataset):
             arrays[reversed_part] = -arrays[reversed_part]
         arrays = arrays[self.channel_pick]
         if self.cross_sample:
-            center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)*2) 
+            center_h = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2) 
             center_w = np.random.randint(self.img_shape[-1])
             patch_idx_h,patch_idx_w = self.around_index[center_h,center_w]
             arrays = arrays[..., patch_idx_h, patch_idx_w]
@@ -932,10 +932,9 @@ class WeathBench7066(WeathBench71):
     
 class WeathBench7066PatchDataset(WeathBench7066):
     def __init__(self,**kargs):
-        self.use_offline_data = kargs.get('use_offline_data',0) #and kargs.get('split')=='train'
+        self.use_offline_data = kargs.get('use_offline_data',0) and kargs.get('split')=='train'
         super().__init__(**kargs)
-        self.use_offline_data = kargs.get('use_offline_data', False)
-        self.cross_sample     = kargs.get('cross_sample', True) #and (self.split == 'train')
+        self.cross_sample     = kargs.get('cross_sample', True) and (self.split == 'train')
         
         self.patch_range      = patch_range = kargs.get('patch_range', 5)
         self.img_shape        = kargs.get('img_size',WeathBench7066PatchDataset.img_shape)
@@ -984,7 +983,7 @@ class WeathBench7066PatchDataset(WeathBench7066):
 
         if patch_idx_h is not None:
             if '3D' in self.normalize_type:
-                assert patch_idx_z
+                assert patch_idx_z is not None
                 data = data[..., patch_idx_z, patch_idx_h, patch_idx_w]
             else:
                 data = data[..., patch_idx_h, patch_idx_w]
@@ -1002,8 +1001,8 @@ class WeathBench7066PatchDataset(WeathBench7066):
         patch_idx_h, patch_idx_w,patch_idx_z = None,None,None
         
         if self.cross_sample:
-            center_z = np.random.randint(self.patch_range//2, self.img_shape[-3] - (self.patch_range//2)*2) 
-            center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)*2) 
+            center_z = np.random.randint(self.img_shape[-3] - (self.patch_range//2)*2) 
+            center_h = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2) 
             center_w = np.random.randint(self.img_shape[-1])
             if '3D' in self.normalize_type:
                 patch_idx_z,patch_idx_h, patch_idx_w = self.around_index[center_z,center_h, center_w]

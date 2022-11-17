@@ -31,7 +31,7 @@ from model.afnonet import AFNONet
 from model.FEDformer import FEDformer
 from model.FEDformer1D import FEDformer1D
 from JCmodels.fourcastnet import AFNONet as AFNONetJC
-from model.patch_model import NaiveConvModel2D,PatchWrapper,LargeMLP,LargeMLP_3D
+from model.patch_model import NaiveConvModel2D,PatchWrapper,LargeMLP,LargeMLP_3D,PatchWrapper3D
 from model.time_embeding_model import *
 from model.physics_model import *
 from utils.params import get_args
@@ -244,8 +244,14 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
         else:
             raise NotImplementedError
     else: #(B, P)
-        B,P,W,H=target.shape
-        target = target[...,W//2,H//2]
+        if len(target.shape) == 4:
+            B,P,W,H=target.shape
+            target = target[...,W//2,H//2]
+        elif len(target.shape) == 5:
+            B,P,Z,W,H=target.shape
+            target = target[...,Z//2,W//2,H//2]  
+        else:
+            raise NotImplementedError
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 
@@ -502,24 +508,22 @@ class RandomSelectPatchFetcher:
         self.device = device
     def next(self):
         if len(self.img_shape)==2:
-            center_h = np.random.randint(self.patch_range//2, self.img_shape[-2] - (self.patch_range//2)*2,size=(self.batch_size,)) 
-            center_w = np.random.randint(self.img_shape[-1],size=(self.batch_size,))
+            center_h = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2,size=(self.batch_size,)) 
+            center_w = np.random.randint(self.img_shape[-1]                          ,size=(self.batch_size,))
             patch_idx = self.around_index[center_h, center_w] #(B,2,5,5) 
             patch_idx_h = patch_idx[:,0]#(B,5,5)
             patch_idx_w = patch_idx[:,1]#(B,5,5)
             batch_idx = np.random.randint(self.length,size=(self.batch_size,)).reshape(self.batch_size,1,1) #(B,1,1)
             return [self.data[batch_idx+i,:,patch_idx_h,patch_idx_w].permute(0,3,1,2).to(self.device) for i in range(self.time_step)]
         elif len(self.img_shape)==3:
-            center_z    = np.random.randint(self.img_shape[-3] - (self.patch_range//2)*2) 
-            center_h    = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2) 
-            center_w    = np.random.randint(self.img_shape[-1])
+            center_z    = np.random.randint(self.img_shape[-3] - (self.patch_range//2)*2,size=(self.batch_size,)) 
+            center_h    = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2,size=(self.batch_size,))  
+            center_w    = np.random.randint(self.img_shape[-1]                          ,size=(self.batch_size,)) 
             patch_idx   = self.around_index[center_z, center_h, center_w] #(B,2,5,5,5) 
-            print(patch_idx.shape)
             patch_idx_z = patch_idx[:,0]#(B,5,5,5)
             patch_idx_h = patch_idx[:,1]#(B,5,5,5)
             patch_idx_w = patch_idx[:,2]#(B,5,5,5)
             batch_idx = np.random.randint(self.length,size=(self.batch_size,)).reshape(self.batch_size,1,1,1) #(B,1,1,1)
-            print(self.data.shape)
             return [self.data[batch_idx+i,:,patch_idx_z,patch_idx_h,patch_idx_w].permute(0,4,1,2,3).to(self.device) for i in range(self.time_step)]
         else:
             raise NotImplementedError
@@ -895,8 +899,14 @@ def parse_default_args(args):
     dataset_kargs['img_size'] = img_size
     args.dataset_kargs = dataset_kargs
     
+    model_img_size= args.img_size
+    if 'Patch' in args.wrapper_model:
+        if '3D' in args.wrapper_model:
+            model_img_size = tuple([5]*3)
+        else:
+            model_img_size = tuple([5]*2)
     model_kargs={
-        "img_size": args.img_size, 
+        "img_size": model_img_size, 
         "patch_size": args.patch_size, 
         "in_chans": args.input_channel, 
         "out_chans": args.output_channel,
@@ -993,6 +1003,7 @@ def build_model(args):
     if args.half_model:model = model.half()
 
     model.train_mode=args.mode
+    
     model.random_time_step_train = args.random_time_step
     model.input_noise_std = args.input_noise_std
     model.history_length=args.history_length
