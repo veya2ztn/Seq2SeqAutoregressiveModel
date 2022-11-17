@@ -96,6 +96,36 @@ def get_center_around_indexes(patch_range,img_shape):
     return coor, indexes
 
 
+def get_patch_location_index_3D(center,img_shape,patch_range):
+        # we want to get the patch index around center with the patch_range
+        # For example, 
+        #   (i-1,j-1) (i ,j-1) (i+1,j-1)
+        #   (i-1,j ) (i ,j ) (i+1,j )
+        #   (i-1,j+1) (i ,j+1) (i+1,j+1)
+        # notice our data is on the sphere, this mean the center in H should be in [-boundary+patch_range, boundary-patch_range]
+        # and the position in W is perodic.
+        assert center[-2] >= patch_range//2
+        assert center[-2] <= img_shape[-2] - (patch_range//2)
+        assert center[-3] >= patch_range//2
+        assert center[-3] <= img_shape[-2] - (patch_range//2)
+        delta = [list(range(-(patch_range//2),patch_range//2+1))]*len(center)
+        delta = np.meshgrid(*delta)
+        pos  = [c+dc for c,dc in zip(center,delta)]
+        pos[-1]= pos[-1]%img_shape[-1] # perodic
+        pos = np.stack(pos).transpose(0,3,2,1)
+        return pos
+
+def get_center_around_indexes_3D(patch_range,img_shape):
+    wlist   = range(img_shape[-1])
+    hlist   = range(patch_range//2, img_shape[-2] - (patch_range//2))
+    zlist   = range(patch_range//2, img_shape[-3] - (patch_range//2))
+    zes,yes,xes = np.meshgrid(zlist,hlist,wlist)
+    coor    = np.stack([zes,yes,xes],-1).reshape(-1,3)
+    indexes = np.array([np.stack(get_patch_location_index_3D([z,y,x],img_shape,patch_range)) for z,y,x in coor] )
+    indexes = indexes.reshape(len(wlist),len(hlist),len(zlist),3,patch_range,patch_range,patch_range).transpose(2,1,0,3,4,5,6)
+    coor    = coor.reshape(len(wlist),len(hlist),len(zlist),3).transpose(3,2,1,0)
+    return coor, indexes
+
 if __name__ == '__main__':
     img_shape = (32,64)
     patch_range = 5
