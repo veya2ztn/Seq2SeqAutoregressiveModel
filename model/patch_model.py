@@ -260,10 +260,10 @@ class PatchWrapper3D(nn.Module):
         super().__init__()
         self.backbone = backbone
         self.monitor = True
-        self.img_size = (32, 64)
+        self.img_size = args.img_size
         self.patch_range = 5
         self.center_index, self.around_index = get_center_around_indexes_3D(self.patch_range, self.img_size)
-        self.mlp = nn.Sequential(nn.Tanh(), nn.Linear(args.output_channel*self.patch_range**3, args.output_channel))
+        self.mlp = nn.Sequential(nn.Tanh(), nn.Linear(backbone.out_chans*self.patch_range**3, backbone.out_chans))
 
     def forward(self, x):
         '''
@@ -272,6 +272,7 @@ class PatchWrapper3D(nn.Module):
         '''
         assert len(x.shape) == 5 #(B,P,Z,W,H)
         input_is_full_image = False
+        #print(x.shape)
         if x.shape[-3:] == self.img_size:
             input_is_full_image = True
             x = x[..., self.around_index[:, :, : , 0],self.around_index[:, :, : , 1],self.around_index[:, :, : , 2]] 
@@ -279,6 +280,7 @@ class PatchWrapper3D(nn.Module):
             x = x.permute(0, 2, 3, 4, 1, 5, 6, 7)
             B, Z, W, H, P, _, _, _ = x.shape
             x = x.flatten(0, 3)  # (B* Z-2 * W-2 * H, Property, Patch,Patch,Patch)
+        #print(x.shape)
         assert tuple(x.shape[-3:]) == (self.patch_range,self.patch_range,self.patch_range)
         x = self.backbone(x)
         x = self.mlp(x.reshape(x.size(0), -1))
