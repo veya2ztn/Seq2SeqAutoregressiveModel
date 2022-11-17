@@ -983,17 +983,20 @@ def build_model(args):
     return model
 
 def update_experiment_info(experiment_hub_path,epoch,args):
-    if os.path.exists(experiment_hub_path):
-        with open(experiment_hub_path,'r') as f:
-            experiment_hub=json.load(f)
-    else:
-        experiment_hub={}
-    path = str(args.SAVE_PATH)
-    if path not in experiment_hub:
-        experiment_hub[path] = {"id":len(experiment_hub),'epoch_tot':args.epochs,"start_time":time.strftime("%m_%d_%H_%M_%S")}
-    experiment_hub[path]['epoch']  =epoch
-    experiment_hub[path]['endtime']=time.strftime("%m_%d_%H_%M_%S")
-    with open(experiment_hub_path,'w') as f:json.dump(experiment_hub, f)
+    try:
+        if os.path.exists(experiment_hub_path):
+            with open(experiment_hub_path,'r') as f:
+                experiment_hub=json.load(f)
+        else:
+            experiment_hub={}
+        path = str(args.SAVE_PATH)
+        if path not in experiment_hub:
+            experiment_hub[path] = {"id":len(experiment_hub),'epoch_tot':args.epochs,"start_time":time.strftime("%m_%d_%H_%M_%S")}
+        experiment_hub[path]['epoch']  =epoch
+        experiment_hub[path]['endtime']=time.strftime("%m_%d_%H_%M_%S")
+        with open(experiment_hub_path,'w') as f:json.dump(experiment_hub, f)
+    except:
+        pass
 
 def build_optimizer(args,model):
     if args.opt == 'adamw':
