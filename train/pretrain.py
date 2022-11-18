@@ -8,7 +8,7 @@ sys.path = [p for p in sys.path if 'lustre' not in p]
 experiment_hub_path = "./experiment_hub.json"
 force_big  = True
 save_intervel=100
-
+import hashlib
 from pathlib import Path
 import numpy as np
 import torch
@@ -88,22 +88,23 @@ half_model = False
 def generate_latweight(w, device):
     # steph = 180.0 / h
     # latitude = np.arange(-90, 90, steph).astype(np.int)
-    tw =  w if w != 28 else 32
+    tw =  32 if w < 32 else w
     latitude = torch.linspace(-np.pi/2,np.pi/2,tw).to(device)
-    if w==28:latitude=latitude[2:-2]
+    if w<32:
+        offset  = ( 32 - w )//2
+        latitude=latitude[offset:-offset]
     cos_lat   = torch.cos(latitude)
     latweight = cos_lat/cos_lat.mean()
     latweight = latweight.reshape(1, w, 1,1)
     return latweight
 
 def compute_accu(ltmsv_pred, ltmsv_true):
-    wlist = [28, 32,49, 720]
     if len(ltmsv_pred.shape)==5:ltmsv_pred = ltmsv_pred.flatten(1,2)
     if len(ltmsv_true.shape)==5:ltmsv_true = ltmsv_true.flatten(1,2)
-    if ltmsv_pred.shape[1] not in wlist: ltmsv_pred = ltmsv_pred.permute(0,2,3,1)
-    if ltmsv_true.shape[1] not in wlist: ltmsv_true = ltmsv_true.permute(0,2,3,1)
-    # ltmsv_pred --> (B, w,h, property)
-    # ltmsv_true --> (B, w,h, property)
+    ltmsv_pred = ltmsv_pred.permute(0,2,3,1)
+    ltmsv_true = ltmsv_true.permute(0,2,3,1)
+    # ltmsv_pred --> (B, w, h, property)
+    # ltmsv_true --> (B, w, h, property)
     latweight = generate_latweight(ltmsv_pred.shape[1],ltmsv_pred.device)
     # history_record <-- (B, w,h, property)
     fenzi = (latweight*ltmsv_pred*ltmsv_true).sum(dim=(1, 2))
@@ -113,13 +114,12 @@ def compute_accu(ltmsv_pred, ltmsv_true):
     return torch.clamp(fenzi/(fenmu+1e-10),0,10)
 
 def compute_rmse(pred, true):
-    wlist = [28, 32,49, 720]
     if len(pred.shape)==5:pred = pred.flatten(1,2)
     if len(true.shape)==5:true = true.flatten(1,2)
-    if pred.shape[1] not in wlist: pred = pred.permute(0,2,3,1)
-    if true.shape[1] not in wlist: true = true.permute(0,2,3,1)
+    pred = pred.permute(0,2,3,1)
+    true = true.permute(0,2,3,1)
     latweight = generate_latweight(pred.shape[1],pred.device)
-    return  torch.clamp(torch.sqrt((latweight*(pred - true)**2).mean(dim=(1,2) )),0,1000)
+    return  torch.clamp(torch.sqrt((latweight*(pred - true)**2).mean(dim=(1,2))),0,1000)
 
 
 
@@ -229,18 +229,25 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
         out = out[0]
 
     ltmv_pred = dataset.inv_normlize_data([out])[0]
-
+    
     if isinstance(start[0],(list,tuple)):
         start = start[1:]+[[ltmv_pred, 0 , end[-1]]]
     else:
         start     = start[1:] + [ltmv_pred]
     #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
     #print(target.shape,torch.std_mean(target))
-    if len(ltmv_pred.shape)>2: #(B,P,Z,H,W)
-        if len(ltmv_pred.shape) == 5:
-            target = target[...,model.center_index[0],model.center_index[1],model.center_index[2]]
-        elif len(ltmv_pred.shape) == 4:
-            target = target[...,model.center_index[0],model.center_index[1]]
+    get_center_index_depend_on = model.module.get_center_index_depend_on if hasattr(model,'module') else model.get_center_index_depend_on
+    if len(target.shape)>2: #(B,P,Z,H,W)
+        if len(target.shape) == 5:
+            img_shape = target.shape[-3:]
+            sld_shape = ltmv_pred.shape[-3:]
+            z_idx, h_idx, l_idx = get_center_index_depend_on(sld_shape, img_shape)[0]
+            target = target[...,z_idx, h_idx, l_idx]
+        elif len(target.shape) == 4:
+            img_shape = target.shape[-2:]
+            sld_shape = ltmv_pred.shape[-2:]
+            h_idx, l_idx = get_center_index_depend_on(sld_shape, img_shape)[0]
+            target = target[...,h_idx, l_idx]
         else:
             raise NotImplementedError
     else: #(B, P)
@@ -290,6 +297,9 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
 
         abs_loss = criterion(ltmv_pred,target)
         iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
+        if status != "train":
+            iter_info_pool[f'{status}_accu_gpu{gpu}_timestep{i}']     =  compute_accu(ltmv_pred,target).mean().item()
+            iter_info_pool[f'{status}_rmse_gpu{gpu}_timestep{i}']     =  compute_rmse(ltmv_pred,target).mean().item()
         pred_step+=1
         loss += abs_loss + extra_loss
         diff += abs_loss
@@ -442,9 +452,8 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
                 for idx, val_pool in extra_info.items():
                     info_pool={}
                     for key, val in val_pool.items():
-                        logsys.record(f'test_{key}_each_fourcast_step', np.mean(val), idx)
+                        logsys.record(f'test_{key}_each_fourcast_step', np.mean(val), idx, epoch_flag = 'time_step')
                         info_pool[f'test_{key}_each_fourcast_step'] = np.mean(val)
-                    info_pool['time_step'] = idx
                 outstring=(f"epoch:fourcast iter:[{step:5d}]/[{len(data_loader)}] GPU:[{gpu}] cost:[Date]:{data_cost/intervel:.1e} [Train]:{train_cost/intervel:.1e} [Rest]:{rest_cost/intervel:.1e}")
                 inter_b.lwrite(outstring, end="\r")
     if save_prediction_first_step is not None:torch.save(save_prediction_first_step,os.path.join(logsys.ckpt_root,'save_prediction_first_step')) 
@@ -632,8 +641,8 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         train_cost.append(time.time() - now);now = time.time()
         time_step_now = len(batch)
         if (step) % intervel==0 or step<30:
-            iter_info_pool['iter'] = epoch*batches + step
-            for key, val in iter_info_pool.items():logsys.record(key, val, epoch*batches + step)
+            for key, val in iter_info_pool.items():
+                logsys.record(key, val, epoch*batches + step, epoch_flag='iter')
             outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [TimeLeng]:{time_step_now:} GPU:[{gpu}] abs_loss:{abs_loss.item():.2f} loss:{loss.item():.2f} cost:[Date]:{np.mean(data_cost):.1e} [Train]:{np.mean(train_cost):.1e} ")
             #print(data_loader.dataset.record_load_tensor.mean().item())
             data_cost  = []
@@ -663,12 +672,13 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
     return   train_dataset,   val_dataset, train_dataloader, val_dataloader
 
 def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
-    time_step = max(3*24//6,args.time_step) if args.mode=='fourcast' else 3*24//6 + args.time_step
+    time_step = args.time_step if args.mode=='fourcast' else 3*24//6 + args.time_step
     dataset_kargs = copy.deepcopy(args.dataset_kargs)
     dataset_kargs['time_step'] = time_step
     if dataset_kargs['time_reverse_flag'] in ['only_forward','random_forward_backward']:
         dataset_kargs['time_reverse_flag'] = 'only_forward'
     dataset_type = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
+    #print(dataset_kargs)
     test_dataset = dataset_type(split="test", with_idx=True,dataset_tensor=test_dataset_tensor,record_load_tensor=test_record_load,**dataset_kargs)
     assert hasattr(test_dataset,'clim_tensor')
     test_datasampler  = DistributedSampler(test_dataset,  shuffle=False) if args.distributed else None
@@ -742,8 +752,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset):
             info_pool[prefix + f'test_rmse_unit_{name}'] = rmse_unit.item()
         info_pool['real_time'] = real_time
         for key, val in info_pool.items():
-            logsys.record(key,val, predict_time)
-        info_pool['time_step'] = predict_time
+            logsys.record(key,val, predict_time, epoch_flag = 'time_step')
         info_pool_list.append(info_pool)
     return info_pool_list
 
@@ -932,11 +941,11 @@ def parse_default_args(args):
     args.model_kargs = model_kargs
     return args
 
-def create_logsys(args,save_config=True):
+def create_logsys(args,save_config=True,wandb_id=None):
     local_rank = args.gpu
     SAVE_PATH  = args.SAVE_PATH
         
-    logsys   = LoggingSystem(local_rank==0 or not args.distributed,args.SAVE_PATH,seed=args.seed,use_wandb=args.use_wandb)
+    logsys   = LoggingSystem(local_rank==0 or (not args.distributed),args.SAVE_PATH,seed=args.seed,use_wandb=args.use_wandb)
     hparam_dict={'patch_size':args.patch_size , 'lr':args.lr, 'batch_size':args.batch_size,
                                                    'model':args.model_type}
     metric_dict={'best_loss':None}
@@ -945,8 +954,10 @@ def create_logsys(args,save_config=True):
     dirname,job_type = os.path.split(dirname)
     dirname,group    = os.path.split(dirname)
     dirname,project  = os.path.split(dirname)
-
-    wandb_id = f"{project}-{group}-{job_type}-{name}"
+    if wandb_id is None:
+        wandb_id = f"{project}-{group}-{job_type}-{name}"
+        wandb_id = hashlib.md5(wandb_id.encode("utf-8")).hexdigest()
+    print(f"wandb id: {wandb_id}")
     _ = logsys.create_recorder(hparam_dict=hparam_dict,metric_dict={'best_loss': None},
                                 args=args,project = project,
                                 entity  = "szztn951357",
@@ -1102,7 +1113,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     logsys.info(f"entering {args.mode} training in {next(model.parameters()).device}")
     now_best_path = SAVE_PATH / 'backbone.best.pt'
     latest_ckpt_p = SAVE_PATH / 'pretrain_latest.pt'
-
+    train_loss=-1
     if args.mode=='fourcast':
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,
                                       test_record_load=train_record_load)
@@ -1125,7 +1136,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if epoch < start_epoch:continue
             if hasattr(model,'set_epoch'):model.set_epoch(epoch=epoch,epoch_total=args.epochs)
             if hasattr(model,'module') and hasattr(model.module,'set_epoch'):model.module.set_epoch(epoch=epoch,epoch_total=args.epochs)
-            logsys.record('learning rate',optimizer.param_groups[0]['lr'],epoch)
+            logsys.record('learning rate',optimizer.param_groups[0]['lr'],epoch, epoch_flag='epoch')
             train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
             if (not args.more_epoch_train) and (lr_scheduler is not None):lr_scheduler.step(epoch)
             #torch.cuda.empty_cache()
@@ -1136,8 +1147,8 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             logsys.banner_show(epoch,args.SAVE_PATH,train_losses=[train_loss])
             if (not args.distributed) or (args.rank == 0 and local_rank == 0) :
                 logsys.info(f"Epoch {epoch} | Train loss: {train_loss:.6f}, Val loss: {val_loss:.6f}",show=False)
-                logsys.record('train', train_loss, epoch)
-                logsys.record('valid', val_loss, epoch)
+                logsys.record('train', train_loss, epoch, epoch_flag='epoch')
+                logsys.record('valid', val_loss, epoch, epoch_flag='epoch')
                 if val_loss < min_loss:
                     min_loss = val_loss
                     if epoch > args.epochs//10:
@@ -1147,7 +1158,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                     #if last_best_path is not None:os.system(f"rm {last_best_path}")
                     #last_best_path= now_best_path
                     logsys.info(f"The best accu is {val_loss}", show=False)
-                logsys.record('best_loss', min_loss, epoch)
+                logsys.record('best_loss', min_loss, epoch, epoch_flag='epoch')
                 update_experiment_info(experiment_hub_path,epoch,args)
                 if (epoch>args.save_warm_up) and (epoch%args.save_every_epoch==0):
                     logsys.info(f"saving latest model ....", show=False)
