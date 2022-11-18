@@ -888,6 +888,7 @@ class WeathBench716(WeathBench71):
 class WeathBench7066(WeathBench71):
     default_root='datasets/weatherbench_6hour'
     use_offline_data = False
+    time_unit=6
     datatimelist_pool={'train':np.arange(np.datetime64("1979-01-02"), np.datetime64("2017-01-01"), np.timedelta64(6, "h")),
                        'valid':np.arange(np.datetime64("2017-01-01"), np.datetime64("2018-01-01"), np.timedelta64(6, "h")),
                         'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(6, "h"))}
