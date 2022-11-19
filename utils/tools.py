@@ -115,7 +115,7 @@ def get_patch_location_index_3D(center,img_shape,patch_range):
         pos = np.stack(pos).transpose(0,3,2,1)
         return pos
 
-def get_center_around_indexes_3D(patch_range,img_shape, h_range=None, w_range=None,z_range=None):
+def get_center_around_indexes_3D(patch_range,img_shape,z_range=None, h_range=None, w_range=None):
     wlist   = range(img_shape[-1]) if w_range is None else w_range
     hlist   = range(patch_range//2, img_shape[-2] - (patch_range//2)) if h_range is None else h_range
     zlist   = range(patch_range//2, img_shape[-3] - (patch_range//2)) if z_range is None else z_range

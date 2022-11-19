@@ -202,6 +202,7 @@ class AutoPatchModel2D(nn.Module):
         return x
 
 class AutoPatchModel3D(nn.Module):
+    center_around_index_table = {}
     def __init__(self,img_size, patch_range):
         super().__init__()
         assert img_size is not None
@@ -229,6 +230,22 @@ class AutoPatchModel3D(nn.Module):
             self.center_index_pool[img_shape]=self.center_index
             self.around_index_pool[img_shape]=self.around_index
         return self.around_index_pool[img_shape]
+
+    def get_center_index_depend_on(self, tgt_shape, img_shape):
+        if img_shape not in self.center_around_index_table:
+            self.center_around_index_table[img_shape]={}
+        if tgt_shape not in self.center_around_index_table[img_shape]:
+            range_list = []
+            for i in range(len(tgt_shape)):
+                delta = img_shape[i] - tgt_shape[i]
+                trange = range(delta//2, img_shape[i] - delta//2)
+                assert len(trange) == tgt_shape[i]
+                range_list.append(trange)
+            
+            self.center_around_index_table[img_shape][tgt_shape]=get_center_around_indexes_3D(self.patch_range,img_shape, 
+                z_range=range_list[0],h_range=range_list[1], w_range=range_list[2])
+        return self.center_around_index_table[img_shape][tgt_shape]
+
 
     def image_to_patches(self, x):
         assert len(x.shape) == 5 #(B,P,Z,W,H)
@@ -288,7 +305,7 @@ class LargeMLP_3D(AutoPatchModel3D):
     output is (B,P)
     ''' 
     def __init__(self,img_size=None,patch_range=5,in_chans=20, out_chans=20,p=0.1,**kargs):
-        super().__init__()
+        super().__init__(img_size,patch_range)
         self.img_size = img_size
         self.patch_range = 5
         if self.patch_range == 5:
@@ -359,7 +376,16 @@ class PatchWrapper3D(AutoPatchModel3D):
         The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
         '''
         x = self.image_to_patches(x)
-        x = self.backbone(x)
-        x = self.mlp(x.reshape(x.size(0), -1))
+        if not self.training and len(x)>1000:
+            big_x = []
+            for small_x in torch.split(x,12800):
+               mid_x = self.backbone(small_x)
+               mid_x = self.mlp(mid_x.reshape(mid_x.size(0), -1))
+               big_x.append(mid_x)
+            x = torch.cat(big_x)
+        else:
+
+            x = self.backbone(x)
+            x = self.mlp(x.reshape(x.size(0), -1))
         x = self.patches_to_image(x)
         return x

@@ -26,6 +26,7 @@ def assign_trail_job(trial_path,wandb_id=None, gpu=0):
     import wandb
     from train.pretrain import create_logsys
     args              = get_the_args(trial_path)
+    if args is None:return
     args.use_wandb    = 'wandb_runtime'
     args.wandb_id     = wandb_id
     args.wandb_resume = 'must'
@@ -60,8 +61,8 @@ def assign_trail_job(trial_path,wandb_id=None, gpu=0):
         for key in set(df['tag'].values):
             all_pool = test_pool if 'test' in key else epoch_pool
             if len(df[df['tag'] == key] )>1e3:
-                print(f"key={key} has too many summary, skip")
-                continue
+                #print(f"key={key} has too many summary, skip")
+                #continue
                 now = df[df['tag'] == key]
 
                 steps = now['step'].values
@@ -98,7 +99,7 @@ def assign_trail_job(trial_path,wandb_id=None, gpu=0):
             for step, val in zip(steps,values):
                 if step not in all_pool:all_pool[step]={}
                 all_pool[step][key]=val
-        print("tensorboard parse done, start wandb..............")
+    print("tensorboard parse done, start wandb..............")
     hparams = hparams2 if hparams1 is None else hparams1
     if hparams == None:return
     hparams['mode']      = mode
@@ -149,6 +150,8 @@ def run_fourcast(ckpt_path,step = 4*24//6):
 
 def get_the_args(ckpt_path):
     from train.pretrain import get_args
+    if len(os.listdir(ckpt_path))==0:
+        return 
     args = get_args()
     if 'config.json' in os.listdir(ckpt_path):
         with open(os.path.join(ckpt_path,'config.json'),'r') as f:
@@ -157,7 +160,9 @@ def get_the_args(ckpt_path):
             if hasattr(args,key):
                 setattr(args,key,val)
     else:
-        raise NotImplementedError("we dont find config file in this project")
+        
+        raise NotImplementedError(f"we dont find config file in this project {ckpt_path}")
+    args.SAVE_PATH = ckpt_path
     #     #args = Config(old_args)
     # else:
     #     if "Euler" in ckpt_path:
@@ -213,29 +218,29 @@ def create_fourcast_table(ckpt_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('parse tf.event file to wandb', add_help=False)
-    parser.add_argument('--path',type=str)
-    parser.add_argument('--mode',type=str)
+    parser.add_argument('--path',type=str,default="")
+    parser.add_argument('--mode',type=str,default="dryrun")
     parser.add_argument('--level', default=1, type=int)
     parser.add_argument('--divide', default=1, type=int)
     parser.add_argument('--part', default=0, type=int)
     parser.add_argument('--fourcast_step', default=4*24//6, type=int)
+    parser.add_argument('--path_list_file',default="",type=str)
     args = parser.parse_known_args()[0]
 
-    level = args.level
-    root_path = args.path
-    now_path = [root_path]
-    while level>0:
-        new_path = []
-        for root_path in now_path:
-            for sub_name in os.listdir(root_path):
-                sub_path =  os.path.join(root_path,sub_name)
-                if os.path.isfile(sub_path):continue
-                new_path.append(sub_path)
-        now_path = new_path
-        level -= 1
-    total_lenght = len(now_path)
-    length = int(np.ceil(1.0*total_lenght/args.divide))
-    s = args.part
+    if args.path != "":
+        level = args.level
+        root_path = args.path
+        now_path = [root_path]
+        while level>0:
+            new_path = []
+            for root_path in now_path:
+                for sub_name in os.listdir(root_path):
+                    sub_path =  os.path.join(root_path,sub_name)
+                    if os.path.isfile(sub_path):continue
+                    new_path.append(sub_path)
+            now_path = new_path
+            level -= 1
+    
 
 
     #now_path = [
@@ -243,14 +248,29 @@ if __name__ == "__main__":
     #    "checkpoints/WeathBench71/small_AFNONet/history_6_time_step_7_pretrain-2D70N_every_12_step/09_29_14_28_06-seed_97967",
     #    "checkpoints/WeathBench71/small_AFNONet/history_6_time_step_7_pretrain-2D70N_every_24_step/09_29_14_28_06-seed_26333-pollution",
     #]
+    now_path_pool = None
+    if 'json' in args.path_list_file:
+        with open(args.path_list_file, 'r') as f:
+            path_list_file = json.load(f)
+        if isinstance(path_list_file,dict):
+            now_path_pool = path_list_file
+            now_path = list(now_path_pool.keys())
+        else:
+            now_path = path_list_file
 
 
-    print(f"we detect {len(now_path)} trail path; from {now_path[0]} to {now_path[-1]}")
+    print(f"we detect {len(now_path)} trail path; \n  from {now_path[0]} to \n  {now_path[-1]}")
+    total_lenght = len(now_path)
+    length = int(np.ceil(1.0*total_lenght/args.divide))
+    s    = int(args.part)
     now_path = now_path[s*length:(s+1)*length]
-    print(f"we process from {now_path[0]} to {now_path[-1]}")
+    print(f"we process:\n  from  from {now_path[0]}\n to  {now_path[-1]}")
 
     if args.mode == 'dryrun':exit()
     for trail_path in tqdm.tqdm(now_path):
+        if len(os.listdir(trail_path))==0:
+            os.system(f"rm -r {trail_path}")
+            continue
         #os.system(f"sensesync sync s3://QNL1575AXM6DF9QUZDA9:BiulXCfnNpIx6tl6P14I8W5QDw6NSU3yqSWVdbkH@FourCastNet.10.140.2.204:80/{trail_path}/ {trail_path}/")
         #os.system(f"sensesync sync {trail_path}/ s3://QNL1575AXM6DF9QUZDA9:BiulXCfnNpIx6tl6P14I8W5QDw6NSU3yqSWVdbkH@FourCastNet.10.140.2.204:80/{trail_path}/ ")
         #os.system(f"aws s3 --endpoint-url=http://10.140.2.204:80 --profile zhangtianning sync s3://FourCastNet/{trail_path}/ {trail_path}/")
