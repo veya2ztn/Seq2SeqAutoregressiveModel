@@ -219,6 +219,7 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
     if model.training and model.input_noise_std and i==1:
         normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
 
+    
     out   = model(normlized_Field)
 
     extra_loss = 0
@@ -237,7 +238,7 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
     #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
     #print(target.shape,torch.std_mean(target))
     get_center_index_depend_on = model.module.get_center_index_depend_on if hasattr(model,'module') else model.get_center_index_depend_on
-    if len(target.shape)>2: #(B,P,Z,H,W)
+    if len(ltmv_pred.shape)>2: #(B,P,Z,H,W)
         if len(target.shape) == 5:
             img_shape = target.shape[-3:]
             sld_shape = ltmv_pred.shape[-3:]
@@ -1160,7 +1161,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                     logsys.info(f"The best accu is {val_loss}", show=False)
                 logsys.record('best_loss', min_loss, epoch, epoch_flag='epoch')
                 update_experiment_info(experiment_hub_path,epoch,args)
-                if (epoch>args.save_warm_up) and (epoch%args.save_every_epoch==0):
+                if ((epoch>args.save_warm_up) and (epoch%args.save_every_epoch==0)) or (epoch==args.epochs-1):
                     logsys.info(f"saving latest model ....", show=False)
                     save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, latest_ckpt_p)
                     logsys.info(f"done ....",show=False)
