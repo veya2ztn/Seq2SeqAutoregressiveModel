@@ -31,7 +31,7 @@ from model.afnonet import AFNONet
 from model.FEDformer import FEDformer
 from model.FEDformer1D import FEDformer1D
 from JCmodels.fourcastnet import AFNONet as AFNONetJC
-from model.patch_model import NaiveConvModel2D,PatchWrapper,LargeMLP,LargeMLP_3D,PatchWrapper3D
+from model.patch_model import *
 from model.time_embeding_model import *
 from model.physics_model import *
 from utils.params import get_args
@@ -868,6 +868,9 @@ def parse_default_args(args):
     args.epochs     = ep_for_mode[args.mode] if args.epochs == -1 else args.epochs
     args.lr         = lr_for_mode[args.mode] if args.lr == -1 else args.lr
     args.time_step = ts_for_mode[args.mode] if args.time_step == -1 else args.time_step
+
+    if not hasattr(args,'epoch_save_list'):args.epoch_save_list = [99]
+    if isinstance(args.epoch_save_list,str):args.epoch_save_list = [int(p) for p in args.epoch_save_list.split(',')]
     # input size
     img_size = patch_size = x_c = y_c =  dataset_type = None
 
@@ -1161,12 +1164,12 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                     logsys.info(f"The best accu is {val_loss}", show=False)
                 logsys.record('best_loss', min_loss, epoch, epoch_flag='epoch')
                 update_experiment_info(experiment_hub_path,epoch,args)
-                if ((epoch>args.save_warm_up) and (epoch%args.save_every_epoch==0)) or (epoch==args.epochs-1):
+                if ((epoch>args.save_warm_up) and (epoch%args.save_every_epoch==0)) or (epoch==args.epochs-1) or (epoch in args.epoch_save_list):
                     logsys.info(f"saving latest model ....", show=False)
                     save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, latest_ckpt_p)
                     logsys.info(f"done ....",show=False)
-                    if epoch == 99:
-                        os.system(f'cp {latest_ckpt_p} {latest_ckpt_p}-epoch100')
+                    if epoch in args.epoch_save_list:
+                        os.system(f'cp {latest_ckpt_p} {latest_ckpt_p}-epoch{epoch}')
         
         if os.path.exists(now_best_path) and args.do_final_fourcast and not args.distributed:
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
