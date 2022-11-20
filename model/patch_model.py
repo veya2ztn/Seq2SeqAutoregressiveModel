@@ -330,6 +330,32 @@ class LargeMLP_3D(AutoPatchModel3D):
         x = self.backbone(x.flatten(-4,-1)) # (B* W-4 * H,P)
         x = self.patches_to_image(x)
         return x
+from vit_pytorch import ViT
+class SimpleViT(AutoPatchModel2D):
+    def __init__(self,img_size=None,patch_range=5,in_chans=20, out_chans=20,p=0.1,**kargs):
+        super().__init__(img_size,patch_range)
+        self.backbone = ViT(image_size = (patch_range,patch_range),
+                    patch_size = 1,
+                    num_classes = 70,
+                    dim = 1024,
+                    depth = 7,
+                    heads = 16,
+                    mlp_dim = 768,
+                    channels= 70,
+                    dropout = 0.1,
+                    emb_dropout = 0.1
+            )
+
+    def forward(self, x):
+        '''
+        The input either (B,P,patch_range,patch_range) or (B,P,w,h)
+        The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
+        ''' 
+        x = self.image_to_patches(x)
+        x = self.backbone(x)
+        x = self.patches_to_image(x)
+        return x
+    
 
 class PatchWrapper(AutoPatchModel2D):
     '''
