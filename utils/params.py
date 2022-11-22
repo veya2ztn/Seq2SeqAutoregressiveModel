@@ -30,7 +30,7 @@ def get_args_parser():
     parser.add_argument('--GDMod_type', type=str, default='off')
     parser.add_argument('--GDMod_lambda1', type=float, default=1)
     parser.add_argument('--GDMod_lambda2', type=float, default=0)
-
+    
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
                         #choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC','NaiveConvModel2D']
@@ -95,7 +95,7 @@ def get_args_parser():
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
     parser.add_argument('--fourcast_randn_initial', default=0, type=int)
     parser.add_argument('--force_fourcast', default=0, type=int)
- 
+    parser.add_argument('--snap_index', type=str, default=None)
     # Optimizer parameters # feed into timm
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER', help='Optimizer (default: "adamw"')
     parser.add_argument('--opt-eps', default=1e-8, type=float, metavar='EPSILON', help='Optimizer Epsilon (default: 1e-8)')

@@ -31,6 +31,7 @@ def assign_trail_job(trial_path,wandb_id=None, gpu=0):
     args.wandb_id     = wandb_id
     args.wandb_resume = 'must'
     args.gpu          = gpu
+    args.recorder_list = []
     logsys = create_logsys(args, save_config=False,wandb_id=wandb_id)
     epoch_pool  = {}
     test_pool   = {}
@@ -126,12 +127,14 @@ class Config(object):
         for key, val in config_dict.items():
             self.__setattr__(key, val)
 
-def run_fourcast(ckpt_path,step = 4*24//6):
+def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False):
     from train.pretrain import main
     args = get_the_args(ckpt_path)
     if args is None:return
     args.mode      = 'fourcast'
     args.fourcast  = True
+    args.recorder_list = []
+    args.use_wandb = 'wandb_runtime'
     args.batch_size=args.valid_batch_size= 4 
     if 'backbone.best.pt' in os.listdir(ckpt_path):
         best_path = os.path.join(ckpt_path,'backbone.best.pt')
@@ -144,7 +147,8 @@ def run_fourcast(ckpt_path,step = 4*24//6):
     args.pretrain_weight = best_path
     args.time_step = step
     #args.data_root = "datasets/weatherbench"
-    args.force_fourcast = False
+    args.force_fourcast = force_fourcast
+    args.snap_index = [[0,40,80,12],[2,3],{0:[[15],[15]],1:[[13],[15]],2:[[11],[15]],3:[[9],[15]],4:[[7],[15]],5:[[5],[15]]}]
     if args.force_fourcast or 'rmse_table' not in os.listdir(ckpt_path):
         main(args)
 
@@ -225,6 +229,7 @@ if __name__ == "__main__":
     parser.add_argument('--part', default=0, type=int)
     parser.add_argument('--fourcast_step', default=4*24//6, type=int)
     parser.add_argument('--path_list_file',default="",type=str)
+    parser.add_argument('--force_fourcast',default=0,type=int)
     args = parser.parse_known_args()[0]
 
     if args.path != "":
@@ -276,7 +281,7 @@ if __name__ == "__main__":
         #os.system(f"aws s3 --endpoint-url=http://10.140.2.204:80 --profile zhangtianning sync s3://FourCastNet/{trail_path}/ {trail_path}/")
         # print(trail_path)
         # print(os.listdir(trail_path))
-        if   args.mode == 'fourcast':run_fourcast(trail_path,step=args.fourcast_step)
+        if   args.mode == 'fourcast':run_fourcast(trail_path,step=args.fourcast_step,force_fourcast=args.force_fourcast)
         elif args.mode == 'tb2wandb':assign_trail_job(trail_path)
         elif args.mode == 'cleantmp':remove_trail_path(trail_path)
         elif args.mode == 'cleanwgt':remove_weight(trail_path)
