@@ -9,6 +9,7 @@ experiment_hub_path = "./experiment_hub.json"
 force_big  = True
 save_intervel=100
 import hashlib
+import wandb
 from pathlib import Path
 import numpy as np
 import torch
@@ -113,14 +114,16 @@ def compute_accu(ltmsv_pred, ltmsv_true):
                        )
     return torch.clamp(fenzi/(fenmu+1e-10),0,10)
 
-def compute_rmse(pred, true):
+def compute_rmse(pred, true, return_map_also=False):
     if len(pred.shape)==5:pred = pred.flatten(1,2)
     if len(true.shape)==5:true = true.flatten(1,2)
     pred = pred.permute(0,2,3,1)
     true = true.permute(0,2,3,1)
     latweight = generate_latweight(pred.shape[1],pred.device)
-    return  torch.clamp(torch.sqrt((latweight*(pred - true)**2).mean(dim=(1,2))),0,1000)
-
+    out = torch.sqrt((latweight*(pred - true)**2).mean(dim=(1,2)))
+    if return_map_also:
+        out = [out, torch.sqrt((latweight*(pred - true)**2).mean(0))]
+    return out
 
 
 def once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode):
@@ -312,13 +315,55 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
     diff = diff/pred_step
     return loss, diff, iter_info_pool
 
-def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,save_prediction_first_step=None,save_prediction_final_step=None):
+def get_tensor_value(tensor,snap_index,time = 0):
+    regist_batch_id_list, regist_feature_id_list, regist_position = snap_index
+
+    if isinstance(regist_position,dict):
+        regist_position = regist_position[time]
+    # regist_batch_id_list is a list for select batch id
+    # regist_feature_id_list is a list for select property id
+    # regist_position is a position, if is 2D, it should be (#select_points,) (#select_points,)
+    output_tensor = []
+    for regist_batch_id in regist_batch_id_list:
+        one_batch_tensor= []
+        for regist_feature_id in regist_feature_id_list:
+            if len(regist_position)==2:
+                location_tensor= tensor[regist_batch_id][regist_feature_id][regist_position[0],regist_position[1]]
+            elif len(regist_position)==3:
+                location_tensor= tensor[regist_batch_id,regist_feature_id,regist_position[0],regist_position[1],regist_position[2]]
+            else:
+                raise NotImplementedError
+            one_batch_tensor.append(location_tensor.detach().cpu())
+        output_tensor.append(torch.stack(one_batch_tensor))
+    return torch.stack(output_tensor)
+
+def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
+                    save_prediction_first_step=None,save_prediction_final_step=None,
+                    snap_index=None):
     accu_series=[]
     rmse_series=[]
+    rmse_maps = []
+    hmse_series=[]
     extra_info = {}
     time_step_1_mode=False
+    batch_variance_line_pred = [] 
+    batch_variance_line_true = []
+    # we will also record the variance for each slot, assume the input is a time series of data
+    # [ (B, P, W, H) -> (B, P, W, H) -> .... -> (B, P, W, H) ,(B, P, W, H)]
+    # we would record the variance of each batch on the location (W,H)
     clim = model.clim.detach().cpu()
+    
     start = batch[0:model.history_length] # start must be a list
+
+    
+    snap_line = []
+    
+
+    if snap_index is not None:  
+        for i,tensor in enumerate(start):
+            # each tensor is like (B, 70, 32, 64) or (B, P, Z, W, H)
+            snap_line.append([len(snap_line), get_tensor_value(tensor,snap_index, time=model.history_length),'input'])
+
     for i in range(model.history_length,len(batch)):# i now is the target index
         ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
         for extra_info_from_model in extra_info_from_model_list:
@@ -327,29 +372,63 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,save_predi
                 if key not in extra_info[i]:extra_info[i][key] = []
                 extra_info[i][key].append(val)
 
+
+        ### enter CPU computing
         ltmv_true = dataset.inv_normlize_data([target])[0].detach().cpu()
         ltmv_pred = ltmv_pred.detach().cpu()
         if len(clim.shape)!=len(ltmv_pred.shape):
             ltmv_pred = ltmv_pred.squeeze(-1)
             ltmv_true = ltmv_true.squeeze(-1) # temporary use this for timestamp input like [B, P, w,h,T]
 
-        if save_prediction_first_step is not None and i==model.history_length:save_prediction_first_step[idxes] = ltmv_pred.detach().cpu()
-        if save_prediction_final_step is not None and i==len(batch) - 1:save_prediction_final_step[idxes] = ltmv_pred.detach().cpu()
+        if save_prediction_first_step is not None and i==model.history_length:
+            save_prediction_first_step[idxes] = ltmv_pred.detach().cpu()
+        if save_prediction_final_step is not None and i==len(batch) - 1:
+            save_prediction_final_step[idxes] = ltmv_pred.detach().cpu()
 
-        accu_series.append(compute_accu(ltmv_pred - clim, ltmv_true - clim))
-        #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
+        if snap_index is not None:
+            snap_line.append([i, get_tensor_value(ltmv_pred,snap_index, time=i),'pred'])
+            snap_line.append([i, get_tensor_value(ltmv_true,snap_index, time=i),'true'])
         
-        rmse_series.append(compute_rmse(ltmv_pred , ltmv_true ))
+        statistic_dim = tuple(range(2,len(ltmv_true.shape))) # always assume (B,P,Z,W,H)
+        batch_variance_line_pred.append(ltmv_pred.std(dim=statistic_dim))
+        batch_variance_line_true.append(ltmv_true.std(dim=statistic_dim))
+
+        #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
+        accu_series.append(compute_accu(ltmv_pred - clim, ltmv_true - clim))
+        rmse_v,rmse_map = compute_rmse(ltmv_pred , ltmv_true, return_map_also=True)
+        rmse_series.append(rmse_v) #(B,70)
+        rmse_maps.append(rmse_map) #(70,32,64)
+        hmse_value = compute_rmse(ltmv_pred[...,8:23,:], ltmv_true[...,8:23,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
+        hmse_series.append(hmse_value)
         #torch.cuda.empty_cache()
-    
-    
-    accu_series = torch.stack(accu_series,1) # (B,fourcast_num,20)
-    rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,20)
 
+    
+    accu_series = torch.stack(accu_series,1) # (B,fourcast_num,property_num)
+    rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,property_num)
+    hmse_series = torch.stack(hmse_series,1) # (B,fourcast_num,property_num)
+    batch_variance_line_pred = torch.stack(batch_variance_line_pred,1) # (B,fourcast_num,property_num)
+    batch_variance_line_true = torch.stack(batch_variance_line_true,1) # (B,fourcast_num,property_num)
 
-    for idx, accu,rmse in zip(idxes,accu_series,rmse_series):
+    
+    for idx, accu,rmse,hmse, std_pred,std_true in zip(idxes,accu_series,rmse_series,hmse_series,
+                                                batch_variance_line_pred,batch_variance_line_true):
         #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
-        fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse}
+        fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse,'std_pred':std_pred,'std_true':std_true,'snap_line':[],
+                                      "hmse":hmse}
+    
+    if snap_index is not None:
+        for batch_id,select_batch_id in enumerate(snap_index[0]):
+            for snap_each_fourcast_time in snap_line:
+                # each snap is tensor (b, p, L)
+                time_step, tensor, label = snap_each_fourcast_time
+                fourcastresult[idxes[select_batch_id].item()]['snap_line'].append([
+                    time_step,tensor[batch_id],label
+                ])
+            #  (p, L) -> (p, L) -> (p, L)
+    if "global_rmse_map" not in fourcastresult:
+        fourcastresult['global_rmse_map'] = rmse_maps # it is a map list (70,32,64) -> (70, 28,64) ->....
+    else:
+        fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],rmse_maps)]
     return fourcastresult,extra_info
 
 
@@ -414,7 +493,7 @@ def make_data_regular(batch,half_model=False):
 
 
 
-def fourcast_step(data_loader, model,logsys,random_repeat = 0):
+def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None):
     model.eval()
     logsys.eval()
     status     = 'test'
@@ -431,9 +510,9 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
     save_prediction_first_step = None#torch.zeros_like(data_loader.dataset.data)
     save_prediction_final_step = None#torch.zeros_like(data_loader.dataset.data)
     intervel = batches//100 + 1
+
     with torch.no_grad():
         inter_b.lwrite("load everything, start_validating......", end="\r")
-        
         while inter_b.update_step():
             #if inter_b.now>10:break
             data_cost += time.time() - now;now = time.time()
@@ -441,25 +520,35 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0):
             idxes,batch = prefetcher.next()
             batch       = make_data_regular(batch,half_model)
             # first sum should be (B, P, W, H )
+            the_snap_index_in_iter = None
+            if snap_index is not None:
+                select_start_timepoints = snap_index[0]
+                the_snap_index_in_iter=[[],snap_index[1],snap_index[2]]
+                the_snap_index_in_iter[0] = [batch_id for batch_id, idx in enumerate(idxes) if idx in select_start_timepoints]
+                if len(the_snap_index_in_iter[0]) == 0: the_snap_index_in_iter=None
+            if the_snap_index_in_iter is None:continue
             fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset,
-                                         save_prediction_first_step=save_prediction_first_step,save_prediction_final_step=save_prediction_final_step)
+                                         save_prediction_first_step=save_prediction_first_step,
+                                         save_prediction_final_step=save_prediction_final_step,
+                                         snap_index=the_snap_index_in_iter)
             train_cost += time.time() - now;now = time.time()
-            start = batch[0]
+            global_start = batch[0].clone()
             for _ in range(random_repeat):
-                batch[0] = start*(1 + torch.randn_like(start)*0.05)
+                raise NotImplementedError
+                batch[0] = global_start*(1 + torch.randn_like(global_start)*0.05)
                 fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset)
+            
             rest_cost += time.time() - now;now = time.time()
             if (step+1) % intervel==0 or step==0:
                 for idx, val_pool in extra_info.items():
-                    info_pool={}
                     for key, val in val_pool.items():
                         logsys.record(f'test_{key}_each_fourcast_step', np.mean(val), idx, epoch_flag = 'time_step')
-                        info_pool[f'test_{key}_each_fourcast_step'] = np.mean(val)
                 outstring=(f"epoch:fourcast iter:[{step:5d}]/[{len(data_loader)}] GPU:[{gpu}] cost:[Date]:{data_cost/intervel:.1e} [Train]:{train_cost/intervel:.1e} [Rest]:{rest_cost/intervel:.1e}")
                 inter_b.lwrite(outstring, end="\r")
+            if inter_b.now >2:break
     if save_prediction_first_step is not None:torch.save(save_prediction_first_step,os.path.join(logsys.ckpt_root,'save_prediction_first_step')) 
     if save_prediction_final_step is not None:torch.save(save_prediction_final_step,os.path.join(logsys.ckpt_root,'save_prediction_final_step')) 
-    
+    fourcastresult['snap_index'] = snap_index
     return fourcastresult
 
 def nan_diagnose_weight(model,loss, nan_count,logsys):
@@ -603,23 +692,26 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             loss /= accumulation_steps
             
 
-            iter_info_pool[f'train_loss_gpu{gpu}'] =  loss.item()
-            iter_info_pool[f'train_Nodeloss1_gpu{gpu}'] = Nodeloss1
-            iter_info_pool[f'train_Nodeloss2_gpu{gpu}'] = Nodeloss2
+            
             if model.use_amp:
                 loss_scaler.scale(loss).backward()
             else:
                 loss.backward()
             if optimizer.grad_modifier is not None:
+                assert not model.use_amp
                 assert len(batch)==2 # we now only allow one 
                 assert isinstance(batch[0],torch.Tensor)
                 optimizer.grad_modifier.backward(model, batch[0], batch[1], strict=False)
                 Nodeloss1, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
+            iter_info_pool[f'train_loss_gpu{gpu}'] =  loss.item()
+            iter_info_pool[f'train_Nodeloss1_gpu{gpu}'] = Nodeloss1
+            iter_info_pool[f'train_Nodeloss2_gpu{gpu}'] = Nodeloss2
             #GradientModifier().backward(model,x,y)
             #nan_count, skip = nan_diagnose_grad(model,nan_count,logsys)
             # if skip:
             #     optimizer.zero_grad()
             #     continue
+            
             if model.clip_grad:nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
             if (step+1) % accumulation_steps == 0:
                 if model.use_amp:
@@ -686,7 +778,17 @@ def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
     test_dataloader   = DataLoader(test_dataset, args.valid_batch_size, sampler=test_datasampler, num_workers=args.num_workers, pin_memory=False)
     return   test_dataset,   test_dataloader
 
-def create_fourcast_metric_table(fourcastresult, logsys,test_dataset):
+def save_and_log_table(_list, logsys, name, column, row=None):
+    table= pd.DataFrame(_list.transpose(1,0),index=column, columns=row)
+    new_row = [[a]+b for a,b in zip(row,_list.tolist())]
+    logsys.add_table(name, new_row , 0, ['fourcast']+column)
+    logsys.info(f"===>{name}<===")
+    logsys.info(table);
+    table.to_csv(os.path.join(logsys.ckpt_root,name))
+
+from mltool.visualization import *
+
+def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature']):
     prefix_pool={
         'only_backward':"time_reverse_",
         'only_forward':""
@@ -701,21 +803,40 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset):
         for save_path in fourcastresult_list:
             tmp = torch.load(save_path)
             for key,val in tmp.items():
-                fourcastresult[key] = val
-    
-    
-    accu_list = torch.stack([p['accu'] for p in fourcastresult.values()]).mean(0)# (fourcast_num,property_num)
-    accu_table= pd.DataFrame(accu_list.transpose(1,0),index=test_dataset.vnames)
-    
-    logsys.info("===>accu_table<===")
-    logsys.info(accu_table);
-    accu_table.to_csv(os.path.join(logsys.ckpt_root,prefix+'accu_table'))
+                if key not in fourcastresult:
+                    fourcastresult[key] = val
+                else:
+                    if key == 'global_rmse_map':
+                        fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],tmp)]
+                    else:
+                        fourcastresult[key] = val # overwrite
 
-    rmse_list = torch.stack([p['rmse'] for p in fourcastresult.values()]).mean(0)# (fourcast_num,property_num)
-    rmse_table= pd.DataFrame(rmse_list.transpose(1,0),index=test_dataset.vnames)
-    logsys.info("===>rmse_table<===")
-    logsys.info(rmse_table);
-    rmse_table.to_csv(os.path.join(logsys.ckpt_root,prefix+'rmse_table'))
+    property_names = test_dataset.vnames
+    ## <============= ACCU ===============>
+    accu_list = torch.stack([p['accu'] for p in fourcastresult.values() if 'accu' in p]).numpy()
+    total_num = len(accu_list)
+    accu_list = accu_list.mean(0)# (fourcast_num,property_num)
+    real_times = [(predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit for predict_time in range(len(accu_list))]
+    
+    save_and_log_table(accu_list,logsys, prefix+'accu_table', property_names, real_times)    
+
+    ## <============= RMSE ===============>
+    rmse_list = torch.stack([p['rmse'] for p in fourcastresult.values() if 'rmse' in p]).mean(0)# (fourcast_num,property_num)
+    save_and_log_table(rmse_list,logsys, prefix+'rmse_table', property_names, real_times)       
+    
+    ## <============= HMSE ===============>
+    hmse_list = torch.stack([p['hmse'] for p in fourcastresult.values() if 'hmse' in p]).mean(0)# (fourcast_num,property_num)
+    if (hmse_list<0).all():
+        save_and_log_table(rmse_list,logsys, prefix+'hmse_table', property_names, real_times)       
+
+    ## <============= STD_Location ===============>
+    meanofstd = torch.stack([p['std_pred'] for p in fourcastresult.values() if 'std_pred' in p]).numpy().mean(0)# (B, (fourcast_num,property_num)
+    save_and_log_table(meanofstd,logsys, prefix+'meanofstd_table', property_names, real_times)       
+
+    stdofstd = torch.stack([p['std_pred'] for p in fourcastresult.values() if 'std_pred' in p]).numpy().std(0)# (B, (fourcast_num,property_num)
+    save_and_log_table(stdofstd,logsys, prefix+'stdofstd_table', property_names, real_times)      
+
+    
     try:
         if not isinstance(test_dataset.unit_list,int):
             unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
@@ -731,30 +852,76 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset):
             unit_list= test_dataset.unit_list
         
         rmse_unit_list= (rmse_list*unit_list)
-        print(rmse_unit_list.shape)
-        rmse_table_unit = pd.DataFrame(rmse_unit_list.transpose(1,0),index=test_dataset.vnames)
-        logsys.info("===>rmse_unit_table<===")
-        logsys.info(rmse_table_unit);rmse_table_unit.to_csv(os.path.join(logsys.ckpt_root,prefix+'rmse_table_unit'))
+        save_and_log_table(rmse_unit_list,logsys, prefix+'rmse_unit_list', property_names, real_times)
+        if (hmse_list<0).all():
+            hmse_unit_list= (hmse_list*unit_list)
+            save_and_log_table(hmse_unit_list,logsys, prefix+'hmse_unit_list', property_names, real_times)       
     except:
         logsys.info(f"get wrong when use unit list, we will fource let [rmse_unit_list] = [rmse_list]")
         traceback.print_exc()
 
+    ## <============= Snap_PLot ==================>
+    snap_tables = []
+    if fourcastresult['snap_index'] is not None:
+        snap_index = fourcastresult['snap_index']
+        select_snap_start_time_point = snap_index[0]
+        select_snap_show_property_id = snap_index[1]
+        select_snap_property_name    = [property_names[iidd] for iidd in select_snap_show_property_id]
+        for select_time_point in select_snap_start_time_point:
+            timestamp = test_dataset.datatimelist_pool['test'][select_time_point]
+            if select_time_point in fourcastresult: # in case do not record
+                linedata = fourcastresult[select_time_point]['snap_line']
+                for predict_time_point, tensor, label in linedata:
+                    for name, value in zip(select_snap_property_name,tensor):
+                        predict_timestamp = 0 if predict_time_point==0 else real_times[predict_time_point-1]
+                        snap_tables.append([timestamp, name, predict_timestamp, value.item(), label])
+        logsys.add_table("snap_table", snap_tables , 0, ['start_time',"property","predict_time","value","label"])
+
+    if 'global_rmse_map' in fourcastresult:
+        global_rmse_map = fourcastresult['global_rmse_map']
+        mean_global_rmse_map = [t/total_num for t in global_rmse_map]
+        for j,prop_name in enumerate(property_names): 
+            if prop_name not in collect_names:continue
+            for i,map_per_time in enumerate(mean_global_rmse_map):
+                name = f"global_rmse_map_for_{prop_name}"
+                s_dir= os.path.join(logsys.ckpt_root,"figures")
+                if not os.path.exists(s_dir):os.makedirs(s_dir)
+                spath= os.path.join(s_dir,name+'.png')
+                data = map_per_time[...,j]
+                if data.shape[-2] < 32:
+                    pad = (32 - data.shape[-2])//2
+                    data= torch.nn.functional.pad(data,(0,0,pad,pad),'constant',100)
+                assert data.shape[-2] == 32
+                #images = wandb.Image(mean_global_rmse_map[i][...,j], caption='rmse_map')
+                #wandb.log({f"rmse_map_of_{prop_name}": images})
+                fig = plt.figure()
+                plt.imshow(data,vmin=0,vmax=0.05,cmap='gray')
+                plt.xticks([]);plt.yticks([])
+                fig.savefig(spath)
+                logsys.wandblog({name:wandb.Image(spath)},step=i)
+                fig.clear()
+
     info_pool_list = []
     for predict_time in range(len(accu_list)):
-        
-        real_time = (predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit
+        real_time = real_times[predict_time]
         info_pool={}
         accu_table = accu_list[predict_time]
         rmse_table = rmse_list[predict_time]
         rmse_table_unit = rmse_unit_list[predict_time]
-        for name,accu,rmse,rmse_unit in zip(test_dataset.vnames,accu_table,rmse_table, rmse_table_unit):
+        for name,accu,rmse,rmse_unit in zip(property_names,accu_table,rmse_table, rmse_table_unit):
+            if name not in collect_names:continue
             info_pool[prefix + f'test_accu_{name}'] = accu.item()
             info_pool[prefix + f'test_rmse_{name}'] = rmse.item()
             info_pool[prefix + f'test_rmse_unit_{name}'] = rmse_unit.item()
+            if real_time in [12, 24, 48, 72, 96, 120]:        
+                info_pool[prefix + f'{real_time}_hours_test_rmse_unit_{name}'] = rmse_unit.item()
+                info_pool[prefix + f'{real_time}_hours_test_rmse_{name}'] = rmse.item()
         info_pool['real_time'] = real_time
         for key, val in info_pool.items():
             logsys.record(key,val, predict_time, epoch_flag = 'time_step')
         info_pool_list.append(info_pool)
+
+
     return info_pool_list
 
 def run_fourcast(args, model,logsys,test_dataloader=None):
@@ -770,17 +937,19 @@ def run_fourcast(args, model,logsys,test_dataloader=None):
 
     #args.force_fourcast=True
     gpu       = dist.get_rank() if hasattr(model,'module') else 0
-    save_path = os.path.join(logsys.ckpt_root,f"fourcastresult.gpu_{gpu}")
-    if not os.path.exists(save_path) or  args.force_fourcast:
+    fourcastresult_path = os.path.join(logsys.ckpt_root,f"fourcastresult.gpu_{gpu}")
+    if not os.path.exists(fourcastresult_path) or  args.force_fourcast:
         logsys.info(f"use dataset ==> {test_dataset.__class__.__name__}")
         logsys.info("starting fourcast~!")
         with open(os.path.join(logsys.ckpt_root,'weight_path'),'w') as f:f.write(args.pretrain_weight)
-        fourcastresult = fourcast_step(test_dataloader, model,logsys,random_repeat = args.fourcast_randn_initial)
-        torch.save(fourcastresult,save_path)
-        logsys.info(f"save fourcastresult at {save_path}")
+        fourcastresult  = fourcast_step(test_dataloader, model,logsys,
+                                    random_repeat = args.fourcast_randn_initial,
+                                    snap_index=args.snap_index)
+        torch.save(fourcastresult,fourcastresult_path)
+        logsys.info(f"save fourcastresult at {fourcastresult_path}")
     else:
-        logsys.info(f"load fourcastresult at {save_path}")
-        fourcastresult = torch.load(save_path)
+        logsys.info(f"load fourcastresult at {fourcastresult_path}")
+        fourcastresult = torch.load(fourcastresult_path)
 
     if not args.distributed:
         create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
@@ -948,8 +1117,9 @@ def parse_default_args(args):
 def create_logsys(args,save_config=True,wandb_id=None):
     local_rank = args.gpu
     SAVE_PATH  = args.SAVE_PATH
-        
-    logsys   = LoggingSystem(local_rank==0 or (not args.distributed),args.SAVE_PATH,seed=args.seed,use_wandb=args.use_wandb)
+    recorder_list = args.recorder_list if hasattr(args,'recorder_list') else ['tensorboard']
+    logsys   = LoggingSystem(local_rank==0 or (not args.distributed),args.SAVE_PATH,seed=args.seed,
+                             use_wandb=args.use_wandb,recorder_list=recorder_list)
     hparam_dict={'patch_size':args.patch_size , 'lr':args.lr, 'batch_size':args.batch_size,
                                                    'model':args.model_type}
     metric_dict={'best_loss':None}
