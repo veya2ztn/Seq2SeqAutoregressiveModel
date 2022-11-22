@@ -127,7 +127,7 @@ class Config(object):
         for key, val in config_dict.items():
             self.__setattr__(key, val)
 
-def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False):
+def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None):
     from train.pretrain import main
     args = get_the_args(ckpt_path)
     if args is None:return
@@ -135,7 +135,8 @@ def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False):
     args.fourcast  = True
     args.recorder_list = []
     args.use_wandb = 'wandb_runtime'
-    args.batch_size=args.valid_batch_size= 4 
+    #args.batch_size=args.valid_batch_size= 4 
+    if wandb_id is not None:args.wandb_id = wandb_id
     if 'backbone.best.pt' in os.listdir(ckpt_path):
         best_path = os.path.join(ckpt_path,'backbone.best.pt')
     elif 'pretrain_latest.pt' in os.listdir(ckpt_path):
@@ -143,12 +144,12 @@ def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False):
     else:
         print("no backbone.best.pt or pretrain_latest.pt, pass!")
         return
-    best_path = os.path.join(ckpt_path,'pretrain_latest.pt')
+    #best_path = os.path.join(ckpt_path,'pretrain_latest.pt')
     args.pretrain_weight = best_path
     args.time_step = step
     #args.data_root = "datasets/weatherbench"
     args.force_fourcast = force_fourcast
-    args.snap_index = [[0,40,80,12],[2,3],{0:[[15],[15]],1:[[13],[15]],2:[[11],[15]],3:[[9],[15]],4:[[7],[15]],5:[[5],[15]]}]
+    
     if args.force_fourcast or 'rmse_table' not in os.listdir(ckpt_path):
         main(args)
 
@@ -273,6 +274,7 @@ if __name__ == "__main__":
 
     if args.mode == 'dryrun':exit()
     for trail_path in tqdm.tqdm(now_path):
+        trail_path = trail_path.strip("/")
         if len(os.listdir(trail_path))==0:
             os.system(f"rm -r {trail_path}")
             continue
