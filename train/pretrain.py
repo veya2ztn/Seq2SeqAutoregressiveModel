@@ -120,9 +120,9 @@ def compute_rmse(pred, true, return_map_also=False):
     pred = pred.permute(0,2,3,1)
     true = true.permute(0,2,3,1)
     latweight = generate_latweight(pred.shape[1],pred.device)
-    out = torch.sqrt((latweight*(pred - true)**2).mean(dim=(1,2)))
+    out = torch.sqrt(torch.clamp((latweight*(pred - true)**2).mean(dim=(1,2)),0,1000))
     if return_map_also:
-        out = [out, torch.sqrt((latweight*(pred - true)**2).mean(0))]
+        out = [out, torch.clamp((latweight*(pred - true)**2).sum(dim=(0)),0,1000)]
     return out
 
 
@@ -398,7 +398,7 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
         rmse_v,rmse_map = compute_rmse(ltmv_pred , ltmv_true, return_map_also=True)
         rmse_series.append(rmse_v) #(B,70)
         rmse_maps.append(rmse_map) #(70,32,64)
-        hmse_value = compute_rmse(ltmv_pred[...,8:23,:], ltmv_true[...,8:23,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
+        hmse_value = compute_rmse(ltmv_pred[...,8:24,:], ltmv_true[...,8:24,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
         hmse_series.append(hmse_value)
         #torch.cuda.empty_cache()
 
@@ -526,7 +526,7 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None):
                 the_snap_index_in_iter=[[],snap_index[1],snap_index[2]]
                 the_snap_index_in_iter[0] = [batch_id for batch_id, idx in enumerate(idxes) if idx in select_start_timepoints]
                 if len(the_snap_index_in_iter[0]) == 0: the_snap_index_in_iter=None
-            if the_snap_index_in_iter is None:continue
+            #if the_snap_index_in_iter is None:continue
             fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset,
                                          save_prediction_first_step=save_prediction_first_step,
                                          save_prediction_final_step=save_prediction_final_step,
@@ -545,7 +545,7 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None):
                         logsys.record(f'test_{key}_each_fourcast_step', np.mean(val), idx, epoch_flag = 'time_step')
                 outstring=(f"epoch:fourcast iter:[{step:5d}]/[{len(data_loader)}] GPU:[{gpu}] cost:[Date]:{data_cost/intervel:.1e} [Train]:{train_cost/intervel:.1e} [Rest]:{rest_cost/intervel:.1e}")
                 inter_b.lwrite(outstring, end="\r")
-            if inter_b.now >2:break
+            #if inter_b.now >2:break
     if save_prediction_first_step is not None:torch.save(save_prediction_first_step,os.path.join(logsys.ckpt_root,'save_prediction_first_step')) 
     if save_prediction_final_step is not None:torch.save(save_prediction_final_step,os.path.join(logsys.ckpt_root,'save_prediction_final_step')) 
     fourcastresult['snap_index'] = snap_index
@@ -807,9 +807,11 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
                     fourcastresult[key] = val
                 else:
                     if key == 'global_rmse_map':
-                        fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],tmp)]
+
+                        fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],tmp['global_rmse_map'])]
                     else:
                         fourcastresult[key] = val # overwrite
+        
 
     property_names = test_dataset.vnames
     ## <============= ACCU ===============>
@@ -817,7 +819,6 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
     total_num = len(accu_list)
     accu_list = accu_list.mean(0)# (fourcast_num,property_num)
     real_times = [(predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit for predict_time in range(len(accu_list))]
-    
     save_and_log_table(accu_list,logsys, prefix+'accu_table', property_names, real_times)    
 
     ## <============= RMSE ===============>
@@ -826,9 +827,8 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
     
     ## <============= HMSE ===============>
     hmse_list = torch.stack([p['hmse'] for p in fourcastresult.values() if 'hmse' in p]).mean(0)# (fourcast_num,property_num)
-    if (hmse_list<0).all():
-        save_and_log_table(rmse_list,logsys, prefix+'hmse_table', property_names, real_times)       
-
+    if (hmse_list>0).all():
+        save_and_log_table(rmse_list,logsys, prefix+'hmse_table', property_names, real_times)           
     ## <============= STD_Location ===============>
     meanofstd = torch.stack([p['std_pred'] for p in fourcastresult.values() if 'std_pred' in p]).numpy().mean(0)# (B, (fourcast_num,property_num)
     save_and_log_table(meanofstd,logsys, prefix+'meanofstd_table', property_names, real_times)       
@@ -853,8 +853,9 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
         
         rmse_unit_list= (rmse_list*unit_list)
         save_and_log_table(rmse_unit_list,logsys, prefix+'rmse_unit_list', property_names, real_times)
-        if (hmse_list<0).all():
-            hmse_unit_list= (hmse_list*unit_list)
+        hmse_unit_list= (hmse_list*unit_list)
+        if (hmse_list>0).all():
+            
             save_and_log_table(hmse_unit_list,logsys, prefix+'hmse_unit_list', property_names, real_times)       
     except:
         logsys.info(f"get wrong when use unit list, we will fource let [rmse_unit_list] = [rmse_list]")
@@ -879,27 +880,31 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
 
     if 'global_rmse_map' in fourcastresult:
         global_rmse_map = fourcastresult['global_rmse_map']
-        mean_global_rmse_map = [t/total_num for t in global_rmse_map]
+        mean_global_rmse_map = [torch.sqrt(t/total_num) for t in global_rmse_map]
         for j,prop_name in enumerate(property_names): 
             if prop_name not in collect_names:continue
+            big_step = len(mean_global_rmse_map)
+            vmin = min([map_per_time[...,j].min().item() for map_per_time in mean_global_rmse_map])
+            vmax = max([map_per_time[...,j].max().item() for map_per_time in mean_global_rmse_map])
             for i,map_per_time in enumerate(mean_global_rmse_map):
                 name = f"global_rmse_map_for_{prop_name}"
                 s_dir= os.path.join(logsys.ckpt_root,"figures")
                 if not os.path.exists(s_dir):os.makedirs(s_dir)
-                spath= os.path.join(s_dir,name+'.png')
+                real_time = real_times[i]
+                spath= os.path.join(s_dir,name+f'.{real_time}h.png')
                 data = map_per_time[...,j]
                 if data.shape[-2] < 32:
                     pad = (32 - data.shape[-2])//2
                     data= torch.nn.functional.pad(data,(0,0,pad,pad),'constant',100)
                 assert data.shape[-2] == 32
                 #images = wandb.Image(mean_global_rmse_map[i][...,j], caption='rmse_map')
-                #wandb.log({f"rmse_map_of_{prop_name}": images})
-                fig = plt.figure()
-                plt.imshow(data,vmin=0,vmax=0.05,cmap='gray')
+                plt.imshow(data.numpy(),vmin=vmin,vmax=vmax,cmap='gray')
+                plt.title(f"value range: {vmin:.3f}-{vmax:.3f}")
                 plt.xticks([]);plt.yticks([])
-                fig.savefig(spath)
-                logsys.wandblog({name:wandb.Image(spath)},step=i)
-                fig.clear()
+                plt.savefig(spath)
+                plt.close()
+                logsys.wandblog({name:wandb.Image(spath)},step=i+big_step)
+                
 
     info_pool_list = []
     for predict_time in range(len(accu_list)):
@@ -908,19 +913,27 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
         accu_table = accu_list[predict_time]
         rmse_table = rmse_list[predict_time]
         rmse_table_unit = rmse_unit_list[predict_time]
-        for name,accu,rmse,rmse_unit in zip(property_names,accu_table,rmse_table, rmse_table_unit):
+
+        hmse_table = hmse_list[predict_time]
+        hmse_table_unit = hmse_unit_list[predict_time]
+        for name,accu,rmse,rmse_unit,hmse,hmse_unit in zip(property_names,accu_table,rmse_table, rmse_table_unit,hmse_table, hmse_table_unit):
             if name not in collect_names:continue
             info_pool[prefix + f'test_accu_{name}'] = accu.item()
             info_pool[prefix + f'test_rmse_{name}'] = rmse.item()
             info_pool[prefix + f'test_rmse_unit_{name}'] = rmse_unit.item()
+            info_pool[prefix + f'test_hmse{name}']    = hmse.item()
+            info_pool[prefix + f'test_hmse_unit_{name}'] = hmse_unit.item()
             if real_time in [12, 24, 48, 72, 96, 120]:        
                 info_pool[prefix + f'{real_time}_hours_test_rmse_unit_{name}'] = rmse_unit.item()
                 info_pool[prefix + f'{real_time}_hours_test_rmse_{name}'] = rmse.item()
+                info_pool[prefix + f'{real_time}_hours_test_hmse_{name}'] = hmse.item()
+                info_pool[prefix + f'{real_time}_hours_test_hmse_unit_{name}'] = hmse_unit.item()
         info_pool['real_time'] = real_time
         for key, val in info_pool.items():
             logsys.record(key,val, predict_time, epoch_flag = 'time_step')
         info_pool_list.append(info_pool)
 
+    
 
     return info_pool_list
 
@@ -1112,9 +1125,18 @@ def parse_default_args(args):
         "share_memory":args.share_memory
     }
     args.model_kargs = model_kargs
+
+
+    args.snap_index = [[0,40,80,12],[2,3]]
+    if 'Patch' in args.wrapper_model:
+        args.snap_index.append({0:[[15],[15]],1:[[13],[15]],2:[[11],[15]],3:[[ 9],[15]],4:[[ 7],[15]],5:[[ 5],[15]]})
+    else:
+        args.snap_index.append([[15],[15]])
+
+
     return args
 
-def create_logsys(args,save_config=True,wandb_id=None):
+def create_logsys(args,save_config=True):
     local_rank = args.gpu
     SAVE_PATH  = args.SAVE_PATH
     recorder_list = args.recorder_list if hasattr(args,'recorder_list') else ['tensorboard']
@@ -1128,9 +1150,11 @@ def create_logsys(args,save_config=True,wandb_id=None):
     dirname,job_type = os.path.split(dirname)
     dirname,group    = os.path.split(dirname)
     dirname,project  = os.path.split(dirname)
+    wandb_id = args.wandb_id
     if wandb_id is None:
         wandb_id = f"{project}-{group}-{job_type}-{name}"
         wandb_id = hashlib.md5(wandb_id.encode("utf-8")).hexdigest()
+    args.wandb_id = wandb_id
     print(f"wandb id: {wandb_id}")
     _ = logsys.create_recorder(hparam_dict=hparam_dict,metric_dict={'best_loss': None},
                                 args=args,project = project,

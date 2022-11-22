@@ -96,6 +96,8 @@ def get_args_parser():
     parser.add_argument('--fourcast_randn_initial', default=0, type=int)
     parser.add_argument('--force_fourcast', default=0, type=int)
     parser.add_argument('--snap_index', type=str, default=None)
+    parser.add_argument('--wandb_id', type=str, default=None)
+    
     # Optimizer parameters # feed into timm
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER', help='Optimizer (default: "adamw"')
     parser.add_argument('--opt-eps', default=1e-8, type=float, metavar='EPSILON', help='Optimizer Epsilon (default: 1e-8)')
