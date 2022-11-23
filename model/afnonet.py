@@ -79,6 +79,15 @@ class BaseModel(nn.Module):
         pass
     def set_step(self,step,epoch):
         pass
+    def get_w_resolution_pad(self,shape):
+        w_now   = shape[-2]
+        w_should= self.img_size[-2]
+        if w_now == w_should:return None
+        if w_now > w_should:
+            raise NotImplementedError
+        if w_now < w_should and not ((w_should - w_now)%2):
+            # we only allow symmetry pad
+            return (w_should - w_now)//2
     
 class AdaptiveFourierNeuralOperator(nn.Module):
     def __init__(self, dim, img_size, fno_blocks=4,fno_bias=True, fno_softshrink=False):
@@ -276,6 +285,7 @@ class PatchEmbed(nn.Module):
         x = self.proj(x).flatten(2).transpose(1, 2)
         return x
 
+
 class AFNONet(BaseModel):
     def __init__(self, img_size, patch_size=8, in_chans=20, out_chans=20, embed_dim=768, depth=12, mlp_ratio=4.,
                  uniform_drop=False, drop_rate=0., drop_path_rate=0., unique_up_sample_channel=0,
@@ -402,16 +412,6 @@ class AFNONet(BaseModel):
         x = torch.reshape(x, [-1, self.embed_dim, *self.final_shape])
         return x
 
-    def get_w_resolution_pad(self,shape):
-        w_now   = shape[-2]
-        w_should= self.img_size[-2]
-        if w_now == w_should:return None
-        if w_now > w_should:
-            raise NotImplementedError
-        if w_now < w_should and not ((w_should - w_now)%2):
-            # we only allow symmetry pad
-            return (w_should - w_now)//2
-
     def set_step(self,step,epoch):
         if len(self.reduce_Field_coef)>1:
             if step%2 or step==0:
@@ -444,6 +444,53 @@ class AFNONet(BaseModel):
         x = self.pre_logits(x);#print(torch.std_mean(x))
         #timer.record('pre_logits',level=0)
         x = self.head(x)  # print(torch.std_mean(x))
+        if self.history_length >1:
+            x = x.flatten(1,2).transpose(1,-1)
+            x = self.last_Linear_layer(x)
+            x = x.transpose(1,-1)
+            ot_shape=ot_shape[1:]
+        #timer.record('head',level=0)
+        x = x.reshape(B,-1,*ot_shape)
+        if pad is not None:
+            x = x[...,pad:-pad,:]
+        #timer.show_stat()
+        #print("============================")
+
+        return x
+
+from vit_pytorch import ViT
+class ViTDirect(BaseModel):
+    def __init__(self, img_size, patch_size=8, in_chans=20, out_chans=20, embed_dim=768, depth=12, mlp_ratio=4.,
+                 drop_rate=0., drop_path_rate=0.,history_length=1,**kargs):
+        super().__init__()
+        self.backbone = ViT(
+                    image_size = img_size,
+                    patch_size = patch_size,
+                    num_classes = out_chans,
+                    dim = embed_dim,
+                    depth = depth,
+                    heads = 16,
+                    mlp_dim = 768,
+                    channels= in_chans,
+                    dropout = drop_rate,
+                    emb_dropout = drop_path_rate
+            )
+
+    def forward(self, x):
+        ### we assume always feed the tensor (B, p*z, h, w)
+        shape = x.shape
+        #print(x.shape)
+        # argue the w resolution.
+        pad = self.get_w_resolution_pad(shape)
+        if pad is not None:
+            x = F.pad(x.flatten(0,1),(0,0,pad,pad),mode='replicate').reshape(*shape[:-2],-1,shape[-1])
+        #print(x.shape)
+        B = x.shape[0]
+        ot_shape = x.shape[2:]
+        x = x.reshape(B,-1,*self.img_size)# (B, p, z, h, w) or (B, p, h, w)
+        #timer.restart(level=0)
+        #print(torch.std_mean(x))
+        x = self.backbone(x);#print(torch.std_mean(x))
         if self.history_length >1:
             x = x.flatten(1,2).transpose(1,-1)
             x = self.last_Linear_layer(x)
