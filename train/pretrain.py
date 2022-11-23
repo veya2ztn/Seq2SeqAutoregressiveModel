@@ -825,10 +825,12 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
     rmse_list = torch.stack([p['rmse'] for p in fourcastresult.values() if 'rmse' in p]).mean(0)# (fourcast_num,property_num)
     save_and_log_table(rmse_list,logsys, prefix+'rmse_table', property_names, real_times)       
     
+    
     ## <============= HMSE ===============>
     hmse_list = torch.stack([p['hmse'] for p in fourcastresult.values() if 'hmse' in p]).mean(0)# (fourcast_num,property_num)
     if (hmse_list>0).all():
         save_and_log_table(rmse_list,logsys, prefix+'hmse_table', property_names, real_times)           
+    
     ## <============= STD_Location ===============>
     meanofstd = torch.stack([p['std_pred'] for p in fourcastresult.values() if 'std_pred' in p]).numpy().mean(0)# (B, (fourcast_num,property_num)
     save_and_log_table(meanofstd,logsys, prefix+'meanofstd_table', property_names, real_times)       
