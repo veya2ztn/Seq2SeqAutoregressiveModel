@@ -177,7 +177,6 @@ class AutoPatchModel2D(nn.Module):
             self.center_around_index_table[img_shape][tgt_shape]=get_center_around_indexes(self.patch_range,img_shape, h_range=h_range, w_range=w_range)
         return self.center_around_index_table[img_shape][tgt_shape]
 
-
     def image_to_patches(self, x):
         assert len(x.shape)==4
         self.input_is_full_image = False
@@ -200,6 +199,104 @@ class AutoPatchModel2D(nn.Module):
             B,W,H,P = self.input_shape_tmp
             x = x.reshape(B,W,H,P).permute(0,3,1,2)
         return x
+
+class AutoPatchOverLapModel2D(AutoPatchModel2D):
+    counting_matrix = None
+    def patches_to_image(self,x):
+        if self.input_is_full_image: 
+            B,W,H,P = self.input_shape_tmp
+            L     =  W+4
+            # (28, 32)
+            x = x.reshape(B,W,H,P,self.patch_range,self.patch_range)
+            x = torch.nn.functional.pad(x,(0,0, 0,0, 0,0, 0,0, 2,2))
+            #print(x.shape)
+            assert self.patch_range==5
+            if self.counting_matrix is None:
+                counting_matrix = torch.ones(L,H)
+                counting_matrix[0]*=5
+                counting_matrix[1]*=10
+                counting_matrix[2]*=15
+                counting_matrix[3]*=20
+                counting_matrix[4:W]*=25
+                counting_matrix[W]*=20
+                counting_matrix[W+1]*=15
+                counting_matrix[W+2]*=10
+                counting_matrix[W+3]*=5
+                self.counting_matrix = counting_matrix.unsqueeze(0).unsqueeze(0)
+            self.counting_matrix =self.counting_matrix.to(x.device)
+            
+            w_idx = np.arange(0,L)
+            wes   = np.stack([w_idx, w_idx+1,w_idx+2, w_idx-1, w_idx-2],1)%L
+            yes   = np.array([[2,  1,  0,  3,  4]])
+            x_idx = np.arange(H)
+            xes   = np.stack([x_idx, x_idx+1,x_idx+2, x_idx-1, x_idx-2],1)%H
+            x     = x[:, wes, :,:,yes,:].sum(1) #(4, B, H, P, PS)
+            x     = x[:, :, xes,:,yes].sum(1)#(H,W, B,P)   
+            x     = x.permute(2,3,1,0)#(B,P, W,H)   
+            x     = x/self.counting_matrix #(B,P, W,H)  / (1,1 , W,H)
+        return x
+    def patches_to_image_slow(self,x):
+        if self.input_is_full_image: 
+            B,W,H,P = self.input_shape_tmp
+            # (28, 32)
+            x = x.reshape(B,W,H,P,self.patch_range,self.patch_range)
+            assert self.patch_range==5
+            assert not self.training
+            
+            x_idx = np.arange(H)
+            xes = np.stack([x_idx, x_idx+1,x_idx+2, x_idx-1, x_idx-2],1)%H
+            yes = np.array([[2,  1,  0,  3,  4]])
+            lines = []
+            end = W + 4 
+            for line_id in range(end): #(0 --> 32)
+                line = 0
+                if line_id < 4:
+                    for w_id in range(line_id+1):
+                        line += x[:, w_id, xes,:, line_id - w_id,yes].mean(1) #(H,B,P)
+                    line = line/(line_id + 1)
+                    line = line.permute(1,2,0).unsqueeze(2)#(B,P,1,H)      
+                elif line_id > end - 5:
+                    for w_id in range(line_id - end, 0): #(-3,-2,-1)
+                        line += x[:, w_id, xes,:, line_id - end -1 - w_id,yes].mean(1)#(H,B,P)       
+                    line = line/(end - line_id)
+                    line = line.permute(1,2,0).unsqueeze(2)#(B,P,1,H)       
+                elif line_id == 4:
+                    w_idx = np.arange(2,W-2)
+                    wes   = np.stack([w_idx, w_idx+1,w_idx+2, w_idx-1, w_idx-2],1)
+                    line  = x[:, wes, :,:,yes,:].mean(1) #(4,B, H, P, PS)
+                    line  = line[:, :, xes,:,yes].mean(1)#(H,B,P)   
+                    line  = line.permute(2,3,1,0)
+                else:
+                    continue
+                lines.append(line)
+            x = torch.cat(lines,2)
+
+        return x
+
+class PatchOverLapWrapper(AutoPatchOverLapModel2D):
+    '''
+    input is (B, P, patch_range_1,patch_range_2)
+    output is (B,P, patch_range_1,patch_range_2)
+    '''
+
+    def __init__(self, args, backbone):
+        super().__init__(args.img_size,5)
+        self.backbone = backbone
+        self.monitor = True
+        self.img_size = (32, 64)
+        self.patch_range = 5
+        
+    def forward(self, x):
+        '''
+        The input either (B,P,patch_range,patch_range) or (B,P,w,h)
+        The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
+        '''
+        x = self.image_to_patches(x)
+        x = self.backbone(x)
+        x = self.patches_to_image(x)
+        return x
+
+
 
 class AutoPatchModel3D(nn.Module):
     center_around_index_table = {}
@@ -381,6 +478,9 @@ class PatchWrapper(AutoPatchModel2D):
         x = self.mlp(x.reshape(x.size(0), -1))
         x = self.patches_to_image(x)
         return x
+
+
+
 
 class PatchWrapper3D(AutoPatchModel3D):
     '''
