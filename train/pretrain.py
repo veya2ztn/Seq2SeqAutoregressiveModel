@@ -242,27 +242,35 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
     #print(target.shape,torch.std_mean(target))
     get_center_index_depend_on = model.module.get_center_index_depend_on if hasattr(model,'module') else model.get_center_index_depend_on
     if len(ltmv_pred.shape)>2: #(B,P,Z,H,W)
-        if len(target.shape) == 5:
-            img_shape = target.shape[-3:]
-            sld_shape = ltmv_pred.shape[-3:]
-            z_idx, h_idx, l_idx = get_center_index_depend_on(sld_shape, img_shape)[0]
-            target = target[...,z_idx, h_idx, l_idx]
-        elif len(target.shape) == 4:
-            img_shape = target.shape[-2:]
-            sld_shape = ltmv_pred.shape[-2:]
-            h_idx, l_idx = get_center_index_depend_on(sld_shape, img_shape)[0]
-            target = target[...,h_idx, l_idx]
+        if ltmv_pred.shape!=target.shape: # (B,P,W,H) -> (B,P,W-4,H) mode
+            if len(target.shape) == 5:
+                img_shape = target.shape[-3:]
+                sld_shape = ltmv_pred.shape[-3:]
+                z_idx, h_idx, l_idx = get_center_index_depend_on(sld_shape, img_shape)[0]
+                target = target[...,z_idx, h_idx, l_idx]
+            elif len(target.shape) == 4:
+                img_shape = target.shape[-2:]
+                sld_shape = ltmv_pred.shape[-2:]
+                h_idx, l_idx = get_center_index_depend_on(sld_shape, img_shape)[0]
+                target = target[...,h_idx, l_idx]
+            else:
+                raise NotImplementedError
         else:
-            raise NotImplementedError
+            # (B,P,W,H) -> (B,P,W,H) mode
+            pass
     else: #(B, P)
-        if len(target.shape) == 4:
-            B,P,W,H=target.shape
-            target = target[...,W//2,H//2]
-        elif len(target.shape) == 5:
-            B,P,Z,W,H=target.shape
-            target = target[...,Z//2,W//2,H//2]  
+        if ltmv_pred.shape[-1] == 1: # (B,P,5,5) -> (B,P) mode
+            if len(target.shape) == 4:
+                B,P,W,H=target.shape
+                target = target[...,W//2,H//2]
+            elif len(target.shape) == 5:
+                B,P,Z,W,H=target.shape
+                target = target[...,Z//2,W//2,H//2]  
+            else:
+                raise NotImplementedError
         else:
-            raise NotImplementedError
+            # (B,P,5,5) -> (B,P) mode
+            target = target 
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 

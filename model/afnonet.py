@@ -285,7 +285,6 @@ class PatchEmbed(nn.Module):
         x = self.proj(x).flatten(2).transpose(1, 2)
         return x
 
-
 class AFNONet(BaseModel):
     def __init__(self, img_size, patch_size=8, in_chans=20, out_chans=20, embed_dim=768, depth=12, mlp_ratio=4.,
                  uniform_drop=False, drop_rate=0., drop_path_rate=0., unique_up_sample_channel=0,
@@ -455,14 +454,23 @@ class AFNONet(BaseModel):
             x = x[...,pad:-pad,:]
         #timer.show_stat()
         #print("============================")
-
         return x
 
 from vit_pytorch import ViT
+
+from vit_pytorch.cross_vit import CrossViT
 class ViTDirect(BaseModel):
     def __init__(self, img_size, patch_size=8, in_chans=20, out_chans=20, embed_dim=768, depth=12, mlp_ratio=4.,
                  drop_rate=0., drop_path_rate=0.,history_length=1,**kargs):
         super().__init__()
+        self.in_chans = in_chans
+        self.out_chans=out_chans
+        if history_length > 1:
+            img_size = (history_length,*img_size)
+            patch_size = (1,*patch_size)
+        self.history_length = history_length
+        self.embed_dim   = embed_dim
+        self.img_size    = img_size
         self.backbone = ViT(
                     image_size = img_size,
                     patch_size = patch_size,
