@@ -142,7 +142,8 @@ def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None):
     elif 'pretrain_latest.pt' in os.listdir(ckpt_path):
         best_path = os.path.join(ckpt_path,'pretrain_latest.pt')
     else:
-        print("no backbone.best.pt or pretrain_latest.pt, pass!")
+        print(f"{ckpt_path}===>")
+        print("   no backbone.best.pt or pretrain_latest.pt, pass!")
         return
     #best_path = os.path.join(ckpt_path,'pretrain_latest.pt')
     args.pretrain_weight = best_path
@@ -157,16 +158,7 @@ def get_the_args(ckpt_path):
     from train.pretrain import get_args
     if len(os.listdir(ckpt_path))==0:
         return 
-    args = get_args()
-    if 'config.json' in os.listdir(ckpt_path):
-        with open(os.path.join(ckpt_path,'config.json'),'r') as f:
-            old_args = json.load(f)
-        for key,val in old_args.items():
-            if hasattr(args,key):
-                setattr(args,key,val)
-    else:
-        
-        raise NotImplementedError(f"we dont find config file in this project {ckpt_path}")
+    args = get_args(os.path.join(ckpt_path,'config.json'))
     args.SAVE_PATH = ckpt_path
     #     #args = Config(old_args)
     # else:
