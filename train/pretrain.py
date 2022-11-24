@@ -212,18 +212,31 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
+    time_stamp = None
+    pos = None
+    assert len(start)==1
+    if isinstance(start[-1],list):
+        assert len(start[-1])<=3 # only allow tensor + time_stamp + pos
+        tensor, time_stamp, pos = start[-1]
+        start = [tensor]
     
     Field  = start[-1]
-    
     normlized_Field_list = dataset.do_normlize_data([start])[0]  #always use normlized input
-    normlized_Field      = normlized_Field_list[0] if len(normlized_Field_list)==1 else torch.stack(normlized_Field_list,2)
-    target               = dataset.do_normlize_data([end])[0] #always use normlized target
+    normlized_Field    = normlized_Field_list[0] if len(normlized_Field_list)==1 else torch.stack(normlized_Field_list,2)
+    
+
+    if time_stamp is not None or pos is not None:
+        target = dataset.do_normlize_data([end[0]])[0] #always use normlized target
+    else:
+        target = dataset.do_normlize_data([end])[0] #always use normlized target
 
     if model.training and model.input_noise_std and i==1:
         normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
 
-    
-    out   = model(normlized_Field)
+    if time_stamp is not None or pos is not None :
+        out   = model(normlized_Field,time_stamp,pos)
+    else:
+        out   = model(normlized_Field)
 
     extra_loss = 0
     extra_info_from_model_list = []
@@ -275,10 +288,10 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
 
 
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
-    if hasattr(dataset,'use_time_stamp') and dataset.use_time_stamp:
-        return once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode)
-    elif 'Patch' in dataset.__class__.__name__:
+    if 'Patch' in dataset.__class__.__name__:
         return once_forward_patch(model,i,start,end,dataset,time_step_1_mode)
+    elif hasattr(dataset,'use_time_stamp') and dataset.use_time_stamp:
+        return once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode)
     else:
        return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
 
@@ -490,11 +503,12 @@ def make_data_regular(batch,half_model=False):
     #     ...............................................
     #   timestamp_n:Field
     # ]
-    if not isinstance(batch,list):
+    if not isinstance(batch,(list,tuple)):
+        
         batch = batch.half() if half_model else batch.float()
-        channel_last = batch.shape[1] in [32,720] # (B, P, W, H )
-        if channel_last:
-            batch = batch.permute(0,3,1,2)
+        if len(batch.shape)==4:
+            channel_last = batch.shape[1] in [32,720] # (B, P, W, H )
+            if channel_last:batch = batch.permute(0,3,1,2)
         return batch
     else:
         return [make_data_regular(x,half_model=half_model) for x in batch]
@@ -610,31 +624,46 @@ class RandomSelectPatchFetcher:
         self.patch_range= dataset.patch_range
         self.img_shape  = dataset.img_shape
         self.around_index = dataset.around_index
+        self.center_index = dataset.center_index
         self.length = len(dataset)
         self.time_step = dataset.time_step
         self.device = device
+        self.use_time_stamp = dataset.use_time_stamp
+        self.use_position_idx= dataset.use_position_idx
+        self.timestamp = dataset.timestamp
     def next(self):
         if len(self.img_shape)==2:
             center_h = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2,size=(self.batch_size,)) 
-            center_w = np.random.randint(self.img_shape[-1]                          ,size=(self.batch_size,))
-            patch_idx = self.around_index[center_h, center_w] #(B,2,5,5) 
-            patch_idx_h = patch_idx[:,0]#(B,5,5)
-            patch_idx_w = patch_idx[:,1]#(B,5,5)
+            center_w = np.random.randint(self.img_shape[-1],size=(self.batch_size,))
+            location = self.around_index[center_h, center_w] #(B,2,5,5) 
+            patch_idx_h = location[:,0]#(B,5,5)
+            patch_idx_w = location[:,1]#(B,5,5)
+            #location  = self.center_index[:, center_h, center_w].transpose(1,0)#(B,2)
             batch_idx = np.random.randint(self.length,size=(self.batch_size,)).reshape(self.batch_size,1,1) #(B,1,1)
-            return [self.data[batch_idx+i,:,patch_idx_h,patch_idx_w].permute(0,3,1,2).to(self.device) for i in range(self.time_step)]
+            data = [[self.data[batch_idx+i,:,patch_idx_h,patch_idx_w].permute(0,3,1,2).to(self.device)] for i in range(self.time_step)]
         elif len(self.img_shape)==3:
             center_z    = np.random.randint(self.img_shape[-3] - (self.patch_range//2)*2,size=(self.batch_size,)) 
             center_h    = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2,size=(self.batch_size,))  
-            center_w    = np.random.randint(self.img_shape[-1]                          ,size=(self.batch_size,)) 
-            patch_idx   = self.around_index[center_z, center_h, center_w] #(B,2,5,5,5) 
-            patch_idx_z = patch_idx[:,0]#(B,5,5,5)
-            patch_idx_h = patch_idx[:,1]#(B,5,5,5)
-            patch_idx_w = patch_idx[:,2]#(B,5,5,5)
+            center_w    = np.random.randint(self.img_shape[-1],size=(self.batch_size,)) 
+            location    = self.around_index[center_z, center_h, center_w] #(B,2,5,5,5) 
+            patch_idx_z = location[:,0]#(B,5,5,5)
+            patch_idx_h = location[:,1]#(B,5,5,5)
+            patch_idx_w = location[:,2]#(B,5,5,5)
+            #location = self.center_index[:,center_z, center_h, center_w].transpose(1,0)#(B,3)
             batch_idx = np.random.randint(self.length,size=(self.batch_size,)).reshape(self.batch_size,1,1,1) #(B,1,1,1)
-            return [self.data[batch_idx+i,:,patch_idx_z,patch_idx_h,patch_idx_w].permute(0,4,1,2,3).to(self.device) for i in range(self.time_step)]
+            data = [[self.data[batch_idx+i,:,patch_idx_z,patch_idx_h,patch_idx_w].permute(0,4,1,2,3).to(self.device)] for i in range(self.time_step)]
         else:
             raise NotImplementedError
-            
+        out = data 
+        if self.use_time_stamp:
+            out = [out[i]+[torch.Tensor(self.timestamp[batch_idx.flatten()+i]).to(self.device)] for i in range(self.time_step)]
+        if self.use_position_idx:
+            out = [out[i]+[torch.Tensor(location).to(self.device)] for i in range(self.time_step)]
+        if len(out[0])==1:
+            out = [t[0] for t in out]
+        return out 
+
+
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
 
     if status == 'train':
@@ -679,6 +708,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         #raise
         if step < start_step:continue
         #batch = data_loader.dataset.do_normlize_data(batch)
+        
         batch = make_data_regular(batch,half_model)
         #if len(batch)==1:batch = batch[0] # for Field -> Field_Dt dataset
         data_cost.append(time.time() - now);now = time.time()
@@ -1091,6 +1121,7 @@ def parse_default_args(args):
     if hasattr(args,'time_intervel'):dataset_kargs['time_intervel']= args.time_intervel
     if hasattr(args,'cross_sample'):dataset_kargs['cross_sample']= args.cross_sample
     if hasattr(args,'use_time_stamp') and args.use_time_stamp:dataset_kargs['use_time_stamp']= args.use_time_stamp
+    if hasattr(args,'use_position_idx'):dataset_kargs['use_position_idx']= args.use_position_idx
     if hasattr(args,'random_dataset'):dataset_kargs['random_dataset']= args.random_dataset
     args.unique_up_sample_channel = args.unique_up_sample_channel if args.unique_up_sample_channel >0 else args.output_channel
     
