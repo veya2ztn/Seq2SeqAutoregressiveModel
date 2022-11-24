@@ -17,7 +17,7 @@ def get_args_parser():
     parser.add_argument('--valid_every_epoch', default=1, type=int)
     parser.add_argument('--save_every_epoch', default=1, type=int)
     parser.add_argument('--tracemodel', default=0, type=int)
-    
+    parser.add_argument('--dropout_rate', default=0, type=float)
     parser.add_argument('--seed', default=-1, type=int)
     parser.add_argument('--input_noise_std', type=float, default=0.0, help='input_noise_std')
     parser.add_argument('--do_final_fourcast', type=int, default=1, help='do fourcast step after finish training')
