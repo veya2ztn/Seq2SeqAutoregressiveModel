@@ -35,6 +35,7 @@ from JCmodels.fourcastnet import AFNONet as AFNONetJC
 from model.patch_model import *
 from model.time_embeding_model import *
 from model.physics_model import *
+from model.othermodels import CK_SWDformer_3264
 from utils.params import get_args
 from utils.tools import getModelSize, load_model, save_model
 from utils.eval import single_step_evaluate
