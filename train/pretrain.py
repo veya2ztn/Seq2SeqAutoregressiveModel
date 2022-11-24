@@ -35,7 +35,7 @@ from JCmodels.fourcastnet import AFNONet as AFNONetJC
 from model.patch_model import *
 from model.time_embeding_model import *
 from model.physics_model import *
-from model.othermodels import CK_SWDformer_3264
+from model.othermodels import *
 from utils.params import get_args
 from utils.tools import getModelSize, load_model, save_model
 from utils.eval import single_step_evaluate
@@ -1365,12 +1365,14 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                        valid_dataset_tensor=valid_dataset_tensor,valid_record_load=valid_record_load)
         logsys.info(f"use dataset ==> {train_dataset.__class__.__name__}")
         logsys.info(f"Start training for {args.epochs} epochs")
+        
         master_bar = logsys.create_master_bar(args.epochs)
         accu_list = ['valid_loss']
         metric_dict = logsys.initial_metric_dict(accu_list)
         banner = logsys.banner_initial(args.epochs, args.SAVE_PATH)
         logsys.banner_show(0, args.SAVE_PATH)
         val_loss=1.234
+        if args.tracemodel:logsys.wandb_watch(model,log_freq=100)
         for epoch in master_bar:
             if epoch < start_epoch:continue
             if hasattr(model,'set_epoch'):model.set_epoch(epoch=epoch,epoch_total=args.epochs)
