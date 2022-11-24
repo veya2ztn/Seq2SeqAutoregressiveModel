@@ -948,9 +948,9 @@ class WeathBench7066PatchDataset(WeathBench7066):
             self.center_index,self.around_index = get_center_around_indexes(self.patch_range,self.img_shape)
         self.channel_last                   = False
         self.random = kargs.get('random_dataset', False)
-        
+        self.use_position_idx = kargs.get('use_position_idx', False)
 
-    def get_item(self,idx,patch_idx_h=None, patch_idx_w=None,patch_idx_z=None,reversed_part=False):
+    def get_item(self,idx,location=-1,reversed_part=False):
         if self.use_offline_data:
             data =  self.dataset_tensor[idx]
         else:
@@ -982,16 +982,21 @@ class WeathBench7066PatchDataset(WeathBench7066):
             elif 'unit_norm' in self.normalize_type:
                 data = data/self.std
 
-        if patch_idx_h is not None:
+        if location != -1:
             if '3D' in self.normalize_type:
                 assert patch_idx_z is not None
+                patch_idx_z, patch_idx_h, patch_idx_w = location
                 data = data[..., patch_idx_z, patch_idx_h, patch_idx_w]
             else:
+                patch_idx_h, patch_idx_w = location
                 data = data[..., patch_idx_h, patch_idx_w]
+        out = [data]
         if self.use_time_stamp:
-            return data, self.timestamp[idx]
-        else:
-            return data
+            out.append(self.timestamp[idx])
+        if self.use_position_idx:
+            out.append(location)
+        if len(out)==1:out=out[0]
+        return out
 
     def __getitem__(self,idx):
         if self.random:
@@ -999,20 +1004,21 @@ class WeathBench7066PatchDataset(WeathBench7066):
         reversed_part = self.do_time_reverse(idx)
         time_step_list= [idx+i*self.time_intervel for i in range(self.time_step)]
         if reversed_part:time_step_list = time_step_list[::-1]
-        patch_idx_h, patch_idx_w,patch_idx_z = None,None,None
-        
+        patch_idx_h = patch_idx_w = patch_idx_z = None
+        location = -1
         if self.cross_sample:
-            center_z = np.random.randint(self.img_shape[-3] - (self.patch_range//2)*2) 
             center_h = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2) 
             center_w = np.random.randint(self.img_shape[-1])
             if '3D' in self.normalize_type:
-                patch_idx_z,patch_idx_h, patch_idx_w = self.around_index[center_z,center_h, center_w]
+                center_z = np.random.randint(self.img_shape[-3] - (self.patch_range//2)*2) 
+                location      = self.around_index[center_z,center_h, center_w]
+                #location = self.center_index[:,center_z, center_h, center_w]
             else:
-                patch_idx_h, patch_idx_w = self.around_index[center_h, center_w]
-        batch = [self.get_item(i,patch_idx_h=patch_idx_h, 
-                                 patch_idx_w=patch_idx_w,
-                                 patch_idx_z=patch_idx_z,
-                                 reversed_part=reversed_part) for i in time_step_list]
+                location = self.around_index[center_h, center_w]
+                #location= self.center_index[:, center_h, center_w]
+        batch = [self.get_item(i,location=location,
+                      reversed_part=reversed_part) 
+                     for i in time_step_list]
         self.error_path = []
         return batch if not self.with_idx else (idx,batch)
 
