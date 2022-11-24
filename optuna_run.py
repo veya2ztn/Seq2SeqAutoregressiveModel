@@ -38,11 +38,14 @@ def set_select_optuna_list(trial, args,range_string,flag):
 
 def optuna_high_level_main():
     conf_parser = argparse.ArgumentParser(description=__doc__,formatter_class=argparse.RawDescriptionHelpFormatter,add_help=False)
-    conf_parser.add_argument("--lr_range",       type=str,default="0.0001,0.01")
-    conf_parser.add_argument("--patchsize_list", type=str,default="2")
+    conf_parser.add_argument("--lr_range",   type=str,default="0.0001,0.01")
+    conf_parser.add_argument("--patchsize_list", type=str,default=None)
     conf_parser.add_argument("--grad_clip_list", type=str,default=None)
-    conf_parser.add_argument("--batchsize_list", type=str,default="4,16,32")
+    conf_parser.add_argument("--batchsize_list", type=str,default=None)
+    conf_parser.add_argument("--dropout_rate_list",type=str,default=None)
     conf_parser.add_argument("--num_trails",  type=int,default="3")
+    
+    
     optuna_args, remaining_argv = conf_parser.parse_known_args()
     gargs = get_args()
     train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load = create_memory_templete(gargs)
@@ -55,9 +58,10 @@ def optuna_high_level_main():
         args.seed  = random_seed = 2022
         args.hparam_dict = {}
         set_range_optuna_list(trial, args,optuna_args.lr_range,'lr')
-        if gargs.batch_size==-1:set_select_optuna_list(trial, args, optuna_args.batchsize_list, 'batch_size')
-        if not gargs.clip_grad:set_select_optuna_list(trial, args,optuna_args.grad_clip_list,'grad_clip')
-        if not gargs.patch_size:set_select_optuna_list(trial, args,optuna_args.patchsize_list,'patch_size')
+        if args.optuna_args.batchsize_list:set_select_optuna_list(trial, args, optuna_args.batchsize_list, 'batch_size')
+        if args.optuna_args.grad_clip_list:set_select_optuna_list(trial, args,optuna_args.grad_clip_list,'grad_clip')
+        if args.optuna_args.patchsize_list:set_select_optuna_list(trial, args,optuna_args.patchsize_list,'patch_size')
+        if  args.optuna_args.dropout_list:set_select_optuna_list(trial, args,optuna_args.dropout_list,'dropout_rate')
         args.batch_size = int(args.batch_size)
         #args.valid_batch_size = args.valid_batch_size
         

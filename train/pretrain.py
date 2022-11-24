@@ -1163,7 +1163,8 @@ def parse_default_args(args):
         "label_len":args.label_len,
         "canonical_fft":args.canonical_fft,
         "unique_up_sample_channel":args.unique_up_sample_channel,
-        "share_memory":args.share_memory
+        "share_memory":args.share_memory,
+        "dropout_rate":args.dropout_rate
     }
     args.model_kargs = model_kargs
 
