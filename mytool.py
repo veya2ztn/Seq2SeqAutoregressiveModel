@@ -182,6 +182,8 @@ def remove_trail_path(trial_path):
         os.system(f"rm -rf {trail_path}")
 
 def create_fourcast_table(ckpt_path):
+    #if "figures" in os.listdir(ckpt_path):return
+    if "fourcastresult.gpu_0" not in os.listdir(ckpt_path):return
     from train.pretrain import create_fourcast_metric_table,get_test_dataset,LoggingSystem,parse_default_args,create_logsys
     import torch
     # if 'rmse_unit_table' in os.listdir(ckpt_path):
@@ -189,7 +191,7 @@ def create_fourcast_table(ckpt_path):
     args = get_the_args(ckpt_path)
     args.mode = 'fourcast'
     args.gpu = args.local_rank = gpu  = local_rank = 0
-    
+    args.data_root = "datasets/weatherbench"
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
     args= parse_default_args(args)
     args.SAVE_PATH = ckpt_path
