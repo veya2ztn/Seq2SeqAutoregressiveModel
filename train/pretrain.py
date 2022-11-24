@@ -913,10 +913,9 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
             if select_time_point in fourcastresult: # in case do not record
                 linedata = fourcastresult[select_time_point]['snap_line']
                 for predict_time_point, tensor, label in linedata:
-                    for name, value in zip(select_snap_property_name,tensor):
-                        predict_timestamp = 0 if predict_time_point==0 else real_times[predict_time_point-1]
-                        snap_tables.append([timestamp, name, predict_timestamp, value.item(), label])
-        logsys.add_table("snap_table", snap_tables , 0, ['start_time',"property","predict_time","value","label"])
+                    predict_timestamp = (predict_time_point)*test_dataset.time_intervel*test_dataset.time_unit
+                    snap_tables.append([timestamp, label, predict_timestamp] + [v.item() for v in tensor])
+        logsys.add_table("snap_table", snap_tables , 0, ['start_time',"label","predict_time"] + select_snap_property_name)
 
     if 'global_rmse_map' in fourcastresult:
         global_rmse_map = fourcastresult['global_rmse_map']
@@ -1168,7 +1167,7 @@ def parse_default_args(args):
     args.model_kargs = model_kargs
 
 
-    args.snap_index = [[0,40,80,12],[2,3]]
+    args.snap_index = [[0,40,80,12],[38,49]]
     if 'Patch' in args.wrapper_model:
         args.snap_index.append({0:[[15],[15]],1:[[13],[15]],2:[[11],[15]],3:[[ 9],[15]],4:[[ 7],[15]],5:[[ 5],[15]]})
     else:
@@ -1507,6 +1506,7 @@ def main(args=None):
         main_worker(0, args.ngpus_per_node, args,result_tensor,
         train_dataset_tensor,train_record_load,valid_dataset_tensor,valid_record_load)
     return result_tensor
+
 
 if __name__ == '__main__':
     main()
