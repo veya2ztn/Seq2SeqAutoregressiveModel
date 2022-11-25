@@ -683,7 +683,10 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     rest_cost  = []
     now = time.time()
 
-    Fethcher   = RandomSelectPatchFetcher if( status =='train' and data_loader.dataset.use_offline_data) else Datafetcher
+    Fethcher   = RandomSelectPatchFetcher if( status =='train' and \
+                                              data_loader.dataset.use_offline_data and \
+                                              data_loader.dataset.split=='train' and \
+                                              'Patch' in data_loader.dataset.__class__.__name__) else Datafetcher
     device     = next(model.parameters()).device
     prefetcher = Fethcher(data_loader,device)
     #raise
