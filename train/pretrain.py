@@ -357,7 +357,7 @@ def get_tensor_value(tensor,snap_index,time = 0):
                 raise NotImplementedError
             one_batch_tensor.append(location_tensor.detach().cpu())
         output_tensor.append(torch.stack(one_batch_tensor))
-    return torch.stack(output_tensor)
+    return torch.stack(output_tensor)#(B,P,N)
 
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
                     save_prediction_first_step=None,save_prediction_final_step=None,
@@ -908,6 +908,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
         snap_index = fourcastresult['snap_index']
         select_snap_start_time_point = snap_index[0]
         select_snap_show_property_id = snap_index[1]
+        select_snap_show_location    = snap_index[2]
         select_snap_property_name    = [property_names[iidd] for iidd in select_snap_show_property_id]
         for select_time_point in select_snap_start_time_point:
             timestamp = test_dataset.datatimelist_pool['test'][select_time_point]
@@ -915,8 +916,13 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
                 linedata = fourcastresult[select_time_point]['snap_line']
                 for predict_time_point, tensor, label in linedata:
                     predict_timestamp = (predict_time_point)*test_dataset.time_intervel*test_dataset.time_unit
-                    snap_tables.append([timestamp, label, predict_timestamp] + [v.item() for v in tensor])
-        logsys.add_table("snap_table", snap_tables , 0, ['start_time',"label","predict_time"] + select_snap_property_name)
+                    #  TENSOR --> (P,N) 
+                    for propery_name, property_along_location in zip(select_snap_property_name,tensor):
+                        for pos_id, value in enumerate(property_along_location):
+                            location_x,location_y = select_snap_show_location[pos_id]
+                            snap_tables.append([timestamp, label, predict_timestamp,propery_name,location_x,location_y,value])
+                    
+        logsys.add_table("snap_table", snap_tables , 0, ['start_time',"label","predict_time","propery","pos_x","pos_y","value"])
 
     if 'global_rmse_map' in fourcastresult:
         global_rmse_map = fourcastresult['global_rmse_map']
@@ -1169,11 +1175,14 @@ def parse_default_args(args):
     args.model_kargs = model_kargs
 
 
-    args.snap_index = [[0,40,80,12],[38,49]]
+    args.snap_index = [[0,40,80,12],  # 
+                       [38,49]        # property  Z500 and T850 
+                       ]
     if 'Patch' in args.wrapper_model:
         args.snap_index.append({0:[[15],[15]],1:[[13],[15]],2:[[11],[15]],3:[[ 9],[15]],4:[[ 7],[15]],5:[[ 5],[15]]})
     else:
-        args.snap_index.append([[15],[15]])
+        args.snap_index.append([[15,15,15, 7, 7, 7,23,23,23],
+                                [15,31,45,15,31,45,15,31,45]])
 
 
     return args
@@ -1195,7 +1204,7 @@ def create_logsys(args,save_config=True):
     wandb_id = args.wandb_id
     if wandb_id is None:
         wandb_id = f"{project}-{group}-{job_type}-{name}"
-        wandb_id = hashlib.md5(wandb_id.encode("utf-8")).hexdigest()
+        wandb_id = hashlib.md5(wandb_id.encode("utf-8")).hexdigest()+"the2"
     args.wandb_id = wandb_id
     print(f"wandb id: {wandb_id}")
     _ = logsys.create_recorder(hparam_dict=hparam_dict,metric_dict={'best_loss': None},

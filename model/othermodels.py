@@ -1,22 +1,6 @@
-from networks.SWD_former import SWD_former,SWDfromer
 from model.afnonet import BaseModel
 import torch.nn as nn
 import torch
-
-class CK_SWDformer_3264(BaseModel):
-    def __init__(self,*args,**kargs):
-        super().__init__()
-        print("this is pre-set model, we disable all config")
-        self.backbone = SWD_former(patch_size= [1, 1],
-                            in_chans= 70,
-                            out_chans= 70,
-                            embed_dim= 768,
-                            window_size= (32,64),
-                            depths= [4, 4, 4],
-                            num_heads= [6, 6, 6],
-                            Weather_T=1,only_swin=True)
-    def forward(self,x):
-        return self.backbone(x)
 
 
 from einops.layers.torch import Rearrange
