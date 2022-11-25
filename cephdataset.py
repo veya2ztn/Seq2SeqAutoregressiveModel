@@ -747,7 +747,7 @@ class WeathBench71(WeathBench):
     volicity_idx = ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
                  [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2] # v component of wind and the 10m v wind
                 )
-                
+    use_offline_data = False            
     def config_pool_initial(self):
 
         _list = self._component_list
@@ -794,31 +794,34 @@ class WeathBench71(WeathBench):
         '''
         Notice for 3D case, we return (5,14,32,64) data tensor
         '''
-        odata=self.load_otensor(idx)
-        if reversed_part:
-            odata = odata.clone() if isinstance(odata,torch.Tensor) else odata.copy()
-            odata[reversed_part] = -odata[reversed_part]
-        data = odata[self.channel_choice]
-        eg = torch if isinstance(data,torch.Tensor) else np
-        if '3D' in self.normalize_type:
-            # 3D should modify carefully
-            data[14*4-1] = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
-            total_precipitaiton = odata[4]
-            newdata = data[14*5-1].clone() if isinstance(data,torch.Tensor) else data[14*5-1].copy()
-            newdata[total_precipitaiton>0] = 100
-            newdata[data[14*5-1]>100]=data[14*5-1][data[14*5-1]>100]
-            data[14*5-1] = newdata
-            shape= data.shape
-            data = data.reshape(5,14,*shape[-2:])
+        if self.use_offline_data:
+            data =  self.dataset_tensor[idx]
         else:
-            data[14*4-1]    = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
-            total_precipitaiton = odata[4]
-            data[14*5-1]    = total_precipitaiton
-        
-        if 'gauss_norm' in self.normalize_type:
-            data=  (data - self.mean)/self.std
-        elif 'unit_norm' in self.normalize_type:
-            data = data/self.std
+            odata=self.load_otensor(idx)
+            if reversed_part:
+                odata = odata.clone() if isinstance(odata,torch.Tensor) else odata.copy()
+                odata[reversed_part] = -odata[reversed_part]
+            data = odata[self.channel_choice]
+            eg = torch if isinstance(data,torch.Tensor) else np
+            if '3D' in self.normalize_type:
+                # 3D should modify carefully
+                data[14*4-1] = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
+                total_precipitaiton = odata[4]
+                newdata = data[14*5-1].clone() if isinstance(data,torch.Tensor) else data[14*5-1].copy()
+                newdata[total_precipitaiton>0] = 100
+                newdata[data[14*5-1]>100]=data[14*5-1][data[14*5-1]>100]
+                data[14*5-1] = newdata
+                shape= data.shape
+                data = data.reshape(5,14,*shape[-2:])
+            else:
+                data[14*4-1]    = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
+                total_precipitaiton = odata[4]
+                data[14*5-1]    = total_precipitaiton
+            
+            if 'gauss_norm' in self.normalize_type:
+                data=  (data - self.mean)/self.std
+            elif 'unit_norm' in self.normalize_type:
+                data = data/self.std
 
         if self.use_time_stamp:
             return data, self.timestamp[idx]
@@ -892,6 +895,17 @@ class WeathBench7066(WeathBench71):
     datatimelist_pool={'train':np.arange(np.datetime64("1979-01-02"), np.datetime64("2017-01-01"), np.timedelta64(6, "h")),
                        'valid':np.arange(np.datetime64("2017-01-01"), np.datetime64("2018-01-01"), np.timedelta64(6, "h")),
                         'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(6, "h"))}
+    def __init__(self,**kargs):
+        use_offline_data = kargs.get('use_offline_data',0) 
+        if use_offline_data ==1:
+            print("use offline data mode <1>: only train use offline data")
+            self.use_offline_data = (kargs.get('split')=='train')
+        if use_offline_data ==2:
+            print("use offline data mode <2>: train/valid/test use offline data")
+            self.use_offline_data = 1
+
+        super().__init__(**kargs)
+
     def __len__(self):
         return len(self.dataset_tensor) - self.time_step*self.time_intervel + 1
     @staticmethod
