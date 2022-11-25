@@ -373,7 +373,7 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
     # we will also record the variance for each slot, assume the input is a time series of data
     # [ (B, P, W, H) -> (B, P, W, H) -> .... -> (B, P, W, H) ,(B, P, W, H)]
     # we would record the variance of each batch on the location (W,H)
-    clim = model.clim.detach().cpu()
+    clim = model.clim
     
     start = batch[0:model.history_length] # start must be a list
 
@@ -396,32 +396,30 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
 
 
         ### enter CPU computing
-        ltmv_true = dataset.inv_normlize_data([target])[0].detach().cpu()
-        ltmv_pred = ltmv_pred.detach().cpu()
+        ltmv_true = dataset.inv_normlize_data([target])[0]#.detach().cpu()
+        ltmv_pred = ltmv_pred#.detach().cpu()
         if len(clim.shape)!=len(ltmv_pred.shape):
             ltmv_pred = ltmv_pred.squeeze(-1)
             ltmv_true = ltmv_true.squeeze(-1) # temporary use this for timestamp input like [B, P, w,h,T]
 
-        if save_prediction_first_step is not None and i==model.history_length:
-            save_prediction_first_step[idxes] = ltmv_pred.detach().cpu()
-        if save_prediction_final_step is not None and i==len(batch) - 1:
-            save_prediction_final_step[idxes] = ltmv_pred.detach().cpu()
+        if save_prediction_first_step is not None and i==model.history_length:save_prediction_first_step[idxes] = ltmv_pred.detach().cpu()
+        if save_prediction_final_step is not None and i==len(batch) - 1:save_prediction_final_step[idxes] = ltmv_pred.detach().cpu()
 
         if snap_index is not None:
             snap_line.append([i, get_tensor_value(ltmv_pred,snap_index, time=i),'pred'])
             snap_line.append([i, get_tensor_value(ltmv_true,snap_index, time=i),'true'])
         
         statistic_dim = tuple(range(2,len(ltmv_true.shape))) # always assume (B,P,Z,W,H)
-        batch_variance_line_pred.append(ltmv_pred.std(dim=statistic_dim))
-        batch_variance_line_true.append(ltmv_true.std(dim=statistic_dim))
+        batch_variance_line_pred.append(ltmv_pred.std(dim=statistic_dim).detach().cpu())
+        batch_variance_line_true.append(ltmv_true.std(dim=statistic_dim).detach().cpu())
 
         #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
-        accu_series.append(compute_accu(ltmv_pred - clim, ltmv_true - clim))
+        accu_series.append(compute_accu(ltmv_pred - clim.to(ltmv_pred.device), ltmv_true - clim.to(ltmv_pred.device)).detach().cpu())
         rmse_v,rmse_map = compute_rmse(ltmv_pred , ltmv_true, return_map_also=True)
         rmse_series.append(rmse_v) #(B,70)
-        rmse_maps.append(rmse_map) #(70,32,64)
+        rmse_maps.append(rmse_map.detach().cpu()) #(70,32,64)
         hmse_value = compute_rmse(ltmv_pred[...,8:24,:], ltmv_true[...,8:24,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
-        hmse_series.append(hmse_value)
+        hmse_series.append(hmse_value.detach().cpu())
         #torch.cuda.empty_cache()
 
     
@@ -745,9 +743,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 assert isinstance(batch[0],torch.Tensor)
                 optimizer.grad_modifier.backward(model, batch[0], batch[1], strict=False)
                 Nodeloss1, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
-            iter_info_pool[f'train_loss_gpu{gpu}'] =  loss.item()
-            iter_info_pool[f'train_Nodeloss1_gpu{gpu}'] = Nodeloss1
-            iter_info_pool[f'train_Nodeloss2_gpu{gpu}'] = Nodeloss2
+            
             #GradientModifier().backward(model,x,y)
             #nan_count, skip = nan_diagnose_grad(model,nan_count,logsys)
             # if skip:
@@ -767,8 +763,10 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
                 if optimizer.grad_modifier is not None:
                     Nodeloss1, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
-                iter_info_pool[f'{status}_Nodeloss1_gpu{gpu}'] = Nodeloss1
-                iter_info_pool[f'{status}_Nodeloss2_gpu{gpu}'] = Nodeloss2
+        iter_info_pool={}
+        iter_info_pool[f'{status}_loss_gpu{gpu}']     =  loss.item()
+        iter_info_pool[f'{status}_Nodeloss1_gpu{gpu}'] = Nodeloss1
+        iter_info_pool[f'{status}_Nodeloss2_gpu{gpu}'] = Nodeloss2
         total_diff  += abs_loss.item()
         #total_num   += len(batch) - 1 #batch 
         total_num   += 1 
