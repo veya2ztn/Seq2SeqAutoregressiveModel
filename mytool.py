@@ -127,7 +127,7 @@ class Config(object):
         for key, val in config_dict.items():
             self.__setattr__(key, val)
 
-def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None):
+def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,weight_chose=None):
     from train.pretrain import main
     args = get_the_args(ckpt_path)
     if args is None:return
@@ -137,14 +137,22 @@ def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None):
     args.use_wandb = 'wandb_runtime'
     #args.batch_size=args.valid_batch_size= 4 
     if wandb_id is not None:args.wandb_id = wandb_id
-    if 'backbone.best.pt' in os.listdir(ckpt_path):
-        best_path = os.path.join(ckpt_path,'backbone.best.pt')
-    elif 'pretrain_latest.pt' in os.listdir(ckpt_path):
-        best_path = os.path.join(ckpt_path,'pretrain_latest.pt')
+    if weight_chose is None:
+        if 'backbone.best.pt' in os.listdir(ckpt_path):
+            best_path = os.path.join(ckpt_path,'backbone.best.pt')
+        elif 'pretrain_latest.pt' in os.listdir(ckpt_path):
+            best_path = os.path.join(ckpt_path,'pretrain_latest.pt')
+        else:
+            print(f"{ckpt_path}===>")
+            print("   no backbone.best.pt or pretrain_latest.pt, pass!")
+            return
     else:
-        print(f"{ckpt_path}===>")
-        print("   no backbone.best.pt or pretrain_latest.pt, pass!")
-        return
+        if weight_chose in os.listdir(ckpt_path):
+            best_path = os.path.join(ckpt_path,weight_chose)
+        else:
+            print(f"{ckpt_path}===>")
+            print("   no {weight_chose}, pass!")
+            return
     #best_path = os.path.join(ckpt_path,'pretrain_latest.pt')
     args.pretrain_weight = best_path
     args.time_step = step
@@ -191,7 +199,7 @@ def create_fourcast_table(ckpt_path):
     args = get_the_args(ckpt_path)
     args.mode = 'fourcast'
     args.gpu = args.local_rank = gpu  = local_rank = 0
-    args.data_root = "datasets/weatherbench"
+    #args.data_root = "datasets/weatherbench"
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
     args= parse_default_args(args)
     args.SAVE_PATH = ckpt_path
@@ -225,6 +233,7 @@ if __name__ == "__main__":
     parser.add_argument('--fourcast_step', default=4*24//6, type=int)
     parser.add_argument('--path_list_file',default="",type=str)
     parser.add_argument('--force_fourcast',default=0,type=int)
+    parser.add_argument('--weight_chose',default=None,type=str)
     args = parser.parse_known_args()[0]
 
     if args.path != "":
@@ -277,7 +286,7 @@ if __name__ == "__main__":
         #os.system(f"aws s3 --endpoint-url=http://10.140.2.204:80 --profile zhangtianning sync s3://FourCastNet/{trail_path}/ {trail_path}/")
         # print(trail_path)
         # print(os.listdir(trail_path))
-        if   args.mode == 'fourcast':run_fourcast(trail_path,step=args.fourcast_step,force_fourcast=args.force_fourcast)
+        if   args.mode == 'fourcast':run_fourcast(trail_path,step=args.fourcast_step,force_fourcast=args.force_fourcast,weight_chose=args.weight_chose)
         elif args.mode == 'tb2wandb':assign_trail_job(trail_path)
         elif args.mode == 'cleantmp':remove_trail_path(trail_path)
         elif args.mode == 'cleanwgt':remove_weight(trail_path)
