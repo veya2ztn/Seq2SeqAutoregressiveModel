@@ -1,11 +1,60 @@
 from model.afnonet import BaseModel
 import torch.nn as nn
 import torch
-
-
 from einops.layers.torch import Rearrange
 from copy import deepcopy as dcp
 from sympy.utilities.iterables import multiset_permutations
+
+
+try:
+    from networks.SWD_former import SWD_former,SWDfromer
+    class CK_SWDformer_3264(BaseModel):
+        def __init__(self,*args,**kargs):
+            super().__init__()
+            print("this is pre-set model, we disable all config")
+            self.backbone = SWD_former(patch_size= [1, 1],
+                                in_chans= 70,
+                                out_chans= 70,
+                                embed_dim= 768,
+                                window_size= (32,64),
+                                depths= [4, 4, 4],
+                                num_heads= [6, 6, 6],
+                                Weather_T=1,only_swin=True)
+        def forward(self,x):
+            return self.backbone(x)
+    class CK_SWDFlowformer(BaseModel):
+        def __init__(self,*args,**kargs):
+            super().__init__()
+            print("this is pre-set model, we disable all config")
+            self.backbone = SWD_former(patch_size= [1, 1],
+                                in_chans= 70,
+                                out_chans= 70,
+                                embed_dim= 768,
+                                window_size= (32,64),
+                                depths= [4, 4, 4],
+                                num_heads= [6, 6, 6],
+                                Weather_T=1,only_swin=True,use_flowatten=True)
+        def forward(self,x):
+            return self.backbone(x)
+
+    class CK_SWDFlowformerH128(BaseModel):
+        def __init__(self,*args,**kargs):
+            super().__init__()
+            print("this is pre-set model, we disable all config")
+            self.backbone = SWD_former(patch_size= [1, 1],
+                                in_chans= 70,
+                                out_chans= 70,
+                                embed_dim= 768,
+                                window_size= (32,64),
+                                depths= [4, 4, 4],
+                                num_heads= [128, 128, 128],
+                                Weather_T=1,only_swin=True,use_flowatten=True)
+        def forward(self,x):
+            return self.backbone(x)
+
+except:
+    class CK_SWDformer_3264(BaseModel):pass
+
 class ChannelShiftWide1(nn.Module):
     def __init__(self, img_size=(32,64), in_chans=70, out_chans=70,dropout_rate=0.1,**kargs):
         super().__init__()

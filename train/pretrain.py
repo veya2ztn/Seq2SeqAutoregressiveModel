@@ -666,7 +666,7 @@ class RandomSelectPatchFetcher:
 
 
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
-
+    
     if status == 'train':
         model.train()
         logsys.train()
