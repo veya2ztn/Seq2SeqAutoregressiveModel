@@ -701,7 +701,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     
     total_diff,total_num  = torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
     nan_count = 0
-    Nodeloss1, Nodeloss2 = 0 , 0
+    Nodeloss1 = Nodeloss2 = Nodeloss12 = -1
     while inter_b.update_step():
         #if inter_b.now>10:break
         step = inter_b.now
@@ -735,12 +735,15 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             
             if model.use_amp:
                 loss_scaler.scale(loss).backward()
-                loss_scaler.unscale_(optimizer) # do unscaler here for right gradient modify like clip or norm
+                
             else:
                 loss.backward()
 
             if optimizer.grad_modifier is not None:
-                assert not model.use_amp
+                #assert not model.use_amp
+                assert accumulation_steps == 1
+                if model.use_amp:
+                    loss_scaler.unscale_(optimizer) # do unscaler here for right gradient modify like clip or norm
                 assert len(batch)==2 # we now only allow one 
                 assert isinstance(batch[0],torch.Tensor)
                 optimizer.grad_modifier.backward(model, batch[0], batch[1], strict=False)
@@ -752,9 +755,15 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             #     optimizer.zero_grad()
             #     continue
             
-            if model.clip_grad:nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
+            if model.clip_grad:
+                if model.use_amp:
+                    assert accumulation_steps == 1
+                    loss_scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
+
             if (step+1) % accumulation_steps == 0:
                 if model.use_amp:
+                    
                     loss_scaler.step(optimizer)
                     loss_scaler.update()
                 else:
@@ -1212,7 +1221,8 @@ def create_logsys(args,save_config=True):
     if wandb_id is None:
         wandb_id = f"{project}-{group}-{job_type}-{name}"
         wandb_id = hashlib.md5(wandb_id.encode("utf-8")).hexdigest()+"the2"
-    args.wandb_id = wandb_id
+    #args.wandb_id = wandb_id #if we dont assign the wandb_id, the default is None 
+    #do not save the args.wandb_id in the config
     print(f"wandb id: {wandb_id}")
     _ = logsys.create_recorder(hparam_dict=hparam_dict,metric_dict={'best_loss': None},
                                 args=args,project = project,
@@ -1235,7 +1245,9 @@ def create_logsys(args,save_config=True):
         config_path = os.path.join(logsys.ckpt_root,'config.json')
         if not os.path.exists(config_path):
             with open(config_path,'w') as f:
-                json.dump(vars(args),f)
+                config = vars(args)
+                config['wandb_id']=""
+                json.dump(config,f)
     args.logsys = logsys
     return logsys
 

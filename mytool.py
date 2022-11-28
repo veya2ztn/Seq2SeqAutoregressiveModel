@@ -29,10 +29,10 @@ def assign_trail_job(trial_path,wandb_id=None, gpu=0):
     if args is None:return
     args.use_wandb    = 'wandb_runtime'
     args.wandb_id     = wandb_id
-    args.wandb_resume = 'must'
+    #args.wandb_resume = 'must'
     args.gpu          = gpu
     args.recorder_list = []
-    logsys = create_logsys(args, save_config=False,wandb_id=wandb_id)
+    logsys = create_logsys(args, save_config=False)
     epoch_pool  = {}
     test_pool   = {}
     iter_metric = []
