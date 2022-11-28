@@ -416,7 +416,7 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
         #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
         accu_series.append(compute_accu(ltmv_pred - clim.to(ltmv_pred.device), ltmv_true - clim.to(ltmv_pred.device)).detach().cpu())
         rmse_v,rmse_map = compute_rmse(ltmv_pred , ltmv_true, return_map_also=True)
-        rmse_series.append(rmse_v) #(B,70)
+        rmse_series.append(rmse_v.detach().cpu()) #(B,70)
         rmse_maps.append(rmse_map.detach().cpu()) #(70,32,64)
         hmse_value = compute_rmse(ltmv_pred[...,8:24,:], ltmv_true[...,8:24,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
         hmse_series.append(hmse_value.detach().cpu())
@@ -744,7 +744,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 assert len(batch)==2 # we now only allow one 
                 assert isinstance(batch[0],torch.Tensor)
                 optimizer.grad_modifier.backward(model, batch[0], batch[1], strict=False)
-                Nodeloss1, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
+                Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
             
             #GradientModifier().backward(model,x,y)
             #nan_count, skip = nan_diagnose_grad(model,nan_count,logsys)
@@ -764,10 +764,11 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             with torch.no_grad():
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
                 if optimizer.grad_modifier is not None:
-                    Nodeloss1, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
+                    Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
         iter_info_pool={}
         iter_info_pool[f'{status}_loss_gpu{gpu}']     =  loss.item()
         iter_info_pool[f'{status}_Nodeloss1_gpu{gpu}'] = Nodeloss1
+        iter_info_pool[f'{status}_Nodeloss12_gpu{gpu}'] = Nodeloss12
         iter_info_pool[f'{status}_Nodeloss2_gpu{gpu}'] = Nodeloss2
         total_diff  += abs_loss.item()
         #total_num   += len(batch) - 1 #batch 
@@ -857,27 +858,27 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
 
     property_names = test_dataset.vnames
     ## <============= ACCU ===============>
-    accu_list = torch.stack([p['accu'] for p in fourcastresult.values() if 'accu' in p]).numpy()
+    accu_list = torch.stack([p['accu'].cpu() for p in fourcastresult.values() if 'accu' in p]).numpy()
     total_num = len(accu_list)
     accu_list = accu_list.mean(0)# (fourcast_num,property_num)
     real_times = [(predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit for predict_time in range(len(accu_list))]
     save_and_log_table(accu_list,logsys, prefix+'accu_table', property_names, real_times)    
 
     ## <============= RMSE ===============>
-    rmse_list = torch.stack([p['rmse'] for p in fourcastresult.values() if 'rmse' in p]).mean(0)# (fourcast_num,property_num)
+    rmse_list = torch.stack([p['rmse'].cpu() for p in fourcastresult.values() if 'rmse' in p]).mean(0)# (fourcast_num,property_num)
     save_and_log_table(rmse_list,logsys, prefix+'rmse_table', property_names, real_times)       
     
     
     ## <============= HMSE ===============>
-    hmse_list = torch.stack([p['hmse'] for p in fourcastresult.values() if 'hmse' in p]).mean(0)# (fourcast_num,property_num)
+    hmse_list = torch.stack([p['hmse'].cpu() for p in fourcastresult.values() if 'hmse' in p]).mean(0)# (fourcast_num,property_num)
     if (hmse_list>0).all():
         save_and_log_table(rmse_list,logsys, prefix+'hmse_table', property_names, real_times)           
     
     ## <============= STD_Location ===============>
-    meanofstd = torch.stack([p['std_pred'] for p in fourcastresult.values() if 'std_pred' in p]).numpy().mean(0)# (B, (fourcast_num,property_num)
+    meanofstd = torch.stack([p['std_pred'].cpu() for p in fourcastresult.values() if 'std_pred' in p]).numpy().mean(0)# (B, (fourcast_num,property_num)
     save_and_log_table(meanofstd,logsys, prefix+'meanofstd_table', property_names, real_times)       
 
-    stdofstd = torch.stack([p['std_pred'] for p in fourcastresult.values() if 'std_pred' in p]).numpy().std(0)# (B, (fourcast_num,property_num)
+    stdofstd = torch.stack([p['std_pred'].cpu() for p in fourcastresult.values() if 'std_pred' in p]).numpy().std(0)# (B, (fourcast_num,property_num)
     save_and_log_table(stdofstd,logsys, prefix+'stdofstd_table', property_names, real_times)      
 
     
@@ -922,7 +923,9 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
                     #  TENSOR --> (P,N) 
                     for propery_name, property_along_location in zip(select_snap_property_name,tensor):
                         for pos_id, value in enumerate(property_along_location):
-                            location_x,location_y = select_snap_show_location[pos_id]
+                            
+                            location_x = select_snap_show_location[0][pos_id]
+                            location_y = select_snap_show_location[1][pos_id]
                             snap_tables.append([timestamp, label, predict_timestamp,propery_name,location_x,location_y,value])
                     
         logsys.add_table("snap_table", snap_tables , 0, ['start_time',"label","predict_time","propery","pos_x","pos_y","value"])
@@ -966,13 +969,14 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
         hmse_table = hmse_list[predict_time]
         hmse_table_unit = hmse_unit_list[predict_time]
         for name,accu,rmse,rmse_unit,hmse,hmse_unit in zip(property_names,accu_table,rmse_table, rmse_table_unit,hmse_table, hmse_table_unit):
-            if name not in collect_names:continue
+            
             info_pool[prefix + f'test_accu_{name}'] = accu.item()
             info_pool[prefix + f'test_rmse_{name}'] = rmse.item()
             info_pool[prefix + f'test_rmse_unit_{name}'] = rmse_unit.item()
             info_pool[prefix + f'test_hmse{name}']    = hmse.item()
             info_pool[prefix + f'test_hmse_unit_{name}'] = hmse_unit.item()
-            if real_time in [12, 24, 48, 72, 96, 120]:        
+            if real_time in [12, 24, 48, 72, 96, 120]:  
+                if name not in collect_names:continue      
                 info_pool[prefix + f'{real_time}_hours_test_rmse_unit_{name}'] = rmse_unit.item()
                 info_pool[prefix + f'{real_time}_hours_test_rmse_{name}'] = rmse.item()
                 info_pool[prefix + f'{real_time}_hours_test_hmse_{name}'] = hmse.item()
@@ -1308,9 +1312,10 @@ def build_optimizer(args,model):
     GDMode = {
         'NGmod_absolute': NGmod_absolute,
         'NGmod_delta_mean': NGmod_delta_mean,
-        'NGmod_absoluteNone': NGmod_absoluteNone
+        'NGmod_absoluteNone': NGmod_absoluteNone,
+        'NGmod_absolute_set_level':NGmod_absolute_set_level
     }
-    optimizer.grad_modifier = GDMode[GDMod_type](GDMod_lambda1, GDMod_lambda2) if GDMod_type != 'off' else None
+    optimizer.grad_modifier = GDMode[GDMod_type](GDMod_lambda1, GDMod_lambda2,L1_level=args.GDMod_L1_level,L2_level=args.GDMod_L2_level) if GDMod_type != 'off' else None
     
     lr_scheduler = None
     if args.sched:

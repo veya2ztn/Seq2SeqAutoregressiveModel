@@ -128,7 +128,7 @@ class Config(object):
             self.__setattr__(key, val)
 
 def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,weight_chose=None):
-    if "fourcastresult.gpu_0" in os.listdir(ckpt_path):return
+    #if "fourcastresult.gpu_0" in os.listdir(ckpt_path):return
     from train.pretrain import main
     args = get_the_args(ckpt_path)
     if args is None:return

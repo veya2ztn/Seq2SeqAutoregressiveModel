@@ -31,6 +31,8 @@ def get_args_parser():
     parser.add_argument('--GDMod_type', type=str, default='off')
     parser.add_argument('--GDMod_lambda1', type=float, default=1)
     parser.add_argument('--GDMod_lambda2', type=float, default=0)
+    parser.add_argument('--GDMod_L1_level', type=float, default=1)
+    parser.add_argument('--GDMod_L2_level', type=float, default=1)
     
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
