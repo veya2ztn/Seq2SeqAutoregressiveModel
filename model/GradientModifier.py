@@ -7,24 +7,28 @@ import torch
 import numpy as np
 
 class Nodal_GradientModifier:
-    def __init__(self, lambda1=1, lambda2=1, sample_times=10, do_unit_renormalize=False):
+    def __init__(self, lambda1=1, lambda2=1, sample_times=10, do_unit_renormalize=False,L1_level=1,L2_level=1):
         self.lambda1 = lambda1
         self.lambda2 = lambda2
         self.sample_times = sample_times 
         self.cotangents_sum_along_x_dimension = None
         self.do_unit_renormalize = do_unit_renormalize
-
-    def Normlization_Term_1(self, params, x):
+        self.L1_level = L1_level
+        self.L2_level = L2_level
+    def Normlization_Term_1(self, params, x, return_abs_value=False):
         if self.cotangents_sum_along_x_dimension is None or self.cotangents_sum_along_x_dimension.shape != x.shape:
             self.cotangents_sum_along_x_dimension = torch.ones_like(x)
-        values = ((functorch.jvp(lambda x: self.func_model(params, x),
-                  (x,), (self.cotangents_sum_along_x_dimension,))[1]-1)**2).mean()
+        tvalues= functorch.jvp(lambda x: self.func_model(params, x),
+                  (x,), (self.cotangents_sum_along_x_dimension,))[1]
+        values = ((tvalues-1)**2).mean()
         #(B, Outputdim) -> (1,)
         N = np.prod(x.shape[1:])
         if self.do_unit_renormalize:
             # the varation of L1 for iid normal distribution is around 2n^2 + 4n
             coef   = 2*np.power(N, 2) + 4*N
             values = values/np.sqrt(coef)
+        if return_abs_value:
+            return values, tvalues.abs().mean()
         return values
         
     def TrvJOJv_and_ETrAAT(self,params,x,cotangents_variable):
@@ -59,7 +63,7 @@ class Nodal_GradientModifier:
     def get_TrvJOJv_times(self,params,x,cotangents_variables):
         return vmap(self.get_TrvJOJv, (None, None, 0 ))(params, x,cotangents_variables).mean()
     
-    def inference(self,model,x,y, strict=True):
+    def inference(self,model,x,y, strict=True,return_abs_value=True):
         back_to_train_mode = model.training
         model.eval()
         buffers=[]
@@ -72,13 +76,19 @@ class Nodal_GradientModifier:
         #self.func_model, params = make_functional(model,disable_autograd_tracking=True)
         self.output_shape = y.shape
         #with torch.no_grad():  # may occur unknow error when using make ---> RuntimeError: Mask should be Bool Scalar TypeFloat
-        L1=self.Normlization_Term_1(params, x).item() if self.lambda1 != 0 else -1
+        L11=L12=-1
+        if self.lambda1 != 0:
+            if return_abs_value:
+                L11,L12=self.Normlization_Term_1(params, x,return_abs_value)
+                L11=L11.item()
+                L12=L12.item()
+            else:
+                L11=self.Normlization_Term_1(params, x,return_abs_value).item()
+        
         L2=self.Normlization_Term_2(params, x).item() if self.lambda2 != 0 else -1
         if back_to_train_mode:model.train()
-        return L1,L2
-    
-
-    
+        return L11,L12,L2
+        
     def backward(self,model, x, y, strict=True):
         
         model.eval()
@@ -116,6 +126,40 @@ class NGmod_absolute(Nodal_GradientModifier):
             values = values/np.sqrt(coef)
             # the varation of L2 for iid normal distribution is around 8n^3 + 24n^2 + 24n
         return values
+    
+
+
+class NGmod_absolute_set_level(NGmod_absolute):
+    def new_Normlization_Term_1(self, params, x):
+        return (self.Normlization_Term_1(params, x) - self.L1_level)**2
+    def backward(self,model, x, y, strict=True):
+        
+        model.eval()
+        buffers=[]
+        if not strict:buffers = list(model.buffers())
+        if len(buffers) > 0:
+            func_model,params, buffer = make_functional_with_buffers(model, disable_autograd_tracking=True)
+            self.func_model = lambda params, x: func_model(params, buffer, x)
+        else:
+            self.func_model, params = make_functional(model,disable_autograd_tracking=True)
+        
+        self.output_shape       = y.shape[1:]
+
+        with torch.no_grad():
+            if self.lambda1 != 0:
+                Derivation_Term_1 = jacrev(self.new_Normlization_Term_1, argnums=0)(params, x)
+            if self.lambda2 != 0:
+                Derivation_Term_2 = jacrev(self.Normlization_Term_2, argnums=0)(params, x)
+        model.train()
+        for i, param in enumerate(model.parameters()):
+            delta_p = 0
+            if self.lambda1 != 0:delta_p += self.lambda1*Derivation_Term_1[i]
+            if self.lambda2 != 0:delta_p += self.lambda2*Derivation_Term_2[i]
+            if param.grad is not None:
+                param.grad.data += delta_p
+            else:
+                param.grad = delta_p
+
 
 class NGmod_absoluteNone(NGmod_absolute):
     def backward(self,model, x, y, strict=True):
