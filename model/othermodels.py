@@ -33,7 +33,7 @@ try:
                                 window_size= (32,64),
                                 depths= [4, 4, 4],
                                 num_heads= [6, 6, 6],
-                                Weather_T=1,only_swin=True,use_flowatten=True)
+                                Weather_T=1,only_swin=True,use_flowatten=True,scale=100)
         def forward(self,x):
             return self.backbone(x)
 
