@@ -735,8 +735,10 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             
             if model.use_amp:
                 loss_scaler.scale(loss).backward()
+                loss_scaler.unscale_(optimizer) # do unscaler here for right gradient modify like clip or norm
             else:
                 loss.backward()
+
             if optimizer.grad_modifier is not None:
                 assert not model.use_amp
                 assert len(batch)==2 # we now only allow one 
