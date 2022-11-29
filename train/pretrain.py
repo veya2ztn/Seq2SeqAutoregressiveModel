@@ -56,6 +56,7 @@ def find_free_port():
     return s.getsockname()[1]  # Return the port number assigned.
 import random
 import traceback
+from mltool.visualization import *
 
 lr_for_mode={'pretrain':5e-4,'finetune':1e-4,'fourcast':1e-4}
 ep_for_mode={'pretrain':80,'finetune':50,'fourcast':50}
@@ -87,6 +88,9 @@ train_set={
 
 half_model = False
 
+#########################################
+########### metric computing ############
+#########################################
 def generate_latweight(w, device):
     # steph = 180.0 / h
     # latitude = np.arange(-90, 90, steph).astype(np.int)
@@ -126,6 +130,35 @@ def compute_rmse(pred, true, return_map_also=False):
         out = [out, torch.clamp((latweight*(pred - true)**2).sum(dim=(0)),0,1000)]
     return out
 
+
+#########################################
+########## normal forward step ##########
+#########################################
+
+def make_data_regular(batch,half_model=False):
+    # the input can be
+    # [
+    #   timestamp_1:[Field,Field_Dt,(physics_part) ],
+    #   timestamp_2:[Field,Field_Dt,(physics_part) ],
+    #     ...............................................
+    #   timestamp_n:[Field,Field_Dt,(physics_part) ]
+    # ]
+    # or
+    # [
+    #   timestamp_1:Field,
+    #   timestamp_2:Field,
+    #     ...............................................
+    #   timestamp_n:Field
+    # ]
+    if not isinstance(batch,(list,tuple)):
+        
+        batch = batch.half() if half_model else batch.float()
+        if len(batch.shape)==4:
+            channel_last = batch.shape[1] in [32,720] # (B, P, W, H )
+            if channel_last:batch = batch.permute(0,3,1,2)
+        return batch
+    else:
+        return [make_data_regular(x,half_model=half_model) for x in batch]
 
 def once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode):
     if not isinstance(end[0],(list,tuple)):end = [end]
@@ -287,7 +320,6 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
             target = target 
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
-
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
     if 'Patch' in dataset.__class__.__name__:
         return once_forward_patch(model,i,start,end,dataset,time_step_1_mode)
@@ -337,283 +369,6 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
     diff = diff/pred_step
     return loss, diff, iter_info_pool
 
-def get_tensor_value(tensor,snap_index,time = 0):
-    regist_batch_id_list, regist_feature_id_list, regist_position = snap_index
-
-    if isinstance(regist_position,dict):
-        regist_position = regist_position[time]
-    # regist_batch_id_list is a list for select batch id
-    # regist_feature_id_list is a list for select property id
-    # regist_position is a position, if is 2D, it should be (#select_points,) (#select_points,)
-    output_tensor = []
-    for regist_batch_id in regist_batch_id_list:
-        one_batch_tensor= []
-        for regist_feature_id in regist_feature_id_list:
-            if len(regist_position)==2:
-                location_tensor= tensor[regist_batch_id][regist_feature_id][regist_position[0],regist_position[1]]
-            elif len(regist_position)==3:
-                location_tensor= tensor[regist_batch_id,regist_feature_id,regist_position[0],regist_position[1],regist_position[2]]
-            else:
-                raise NotImplementedError
-            one_batch_tensor.append(location_tensor.detach().cpu())
-        output_tensor.append(torch.stack(one_batch_tensor))
-    return torch.stack(output_tensor)#(B,P,N)
-
-def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
-                    save_prediction_first_step=None,save_prediction_final_step=None,
-                    snap_index=None):
-    accu_series=[]
-    rmse_series=[]
-    rmse_maps = []
-    hmse_series=[]
-    extra_info = {}
-    time_step_1_mode=False
-    batch_variance_line_pred = [] 
-    batch_variance_line_true = []
-    # we will also record the variance for each slot, assume the input is a time series of data
-    # [ (B, P, W, H) -> (B, P, W, H) -> .... -> (B, P, W, H) ,(B, P, W, H)]
-    # we would record the variance of each batch on the location (W,H)
-    clim = model.clim
-    
-    start = batch[0:model.history_length] # start must be a list
-
-    
-    snap_line = []
-    
-
-    if snap_index is not None:  
-        for i,tensor in enumerate(start):
-            # each tensor is like (B, 70, 32, 64) or (B, P, Z, W, H)
-            snap_line.append([len(snap_line), get_tensor_value(tensor,snap_index, time=model.history_length),'input'])
-
-    for i in range(model.history_length,len(batch)):# i now is the target index
-        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
-        for extra_info_from_model in extra_info_from_model_list:
-            for key, val in extra_info_from_model.items():
-                if i not in extra_info:extra_info[i] = {}
-                if key not in extra_info[i]:extra_info[i][key] = []
-                extra_info[i][key].append(val)
-
-
-        ### enter CPU computing
-        ltmv_true = dataset.inv_normlize_data([target])[0]#.detach().cpu()
-        ltmv_pred = ltmv_pred#.detach().cpu()
-        if len(clim.shape)!=len(ltmv_pred.shape):
-            ltmv_pred = ltmv_pred.squeeze(-1)
-            ltmv_true = ltmv_true.squeeze(-1) # temporary use this for timestamp input like [B, P, w,h,T]
-
-        if save_prediction_first_step is not None and i==model.history_length:save_prediction_first_step[idxes] = ltmv_pred.detach().cpu()
-        if save_prediction_final_step is not None and i==len(batch) - 1:save_prediction_final_step[idxes] = ltmv_pred.detach().cpu()
-
-        if snap_index is not None:
-            snap_line.append([i, get_tensor_value(ltmv_pred,snap_index, time=i),'pred'])
-            snap_line.append([i, get_tensor_value(ltmv_true,snap_index, time=i),'true'])
-        
-        statistic_dim = tuple(range(2,len(ltmv_true.shape))) # always assume (B,P,Z,W,H)
-        batch_variance_line_pred.append(ltmv_pred.std(dim=statistic_dim).detach().cpu())
-        batch_variance_line_true.append(ltmv_true.std(dim=statistic_dim).detach().cpu())
-
-        #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
-        accu_series.append(compute_accu(ltmv_pred - clim.to(ltmv_pred.device), ltmv_true - clim.to(ltmv_pred.device)).detach().cpu())
-        rmse_v,rmse_map = compute_rmse(ltmv_pred , ltmv_true, return_map_also=True)
-        rmse_series.append(rmse_v.detach().cpu()) #(B,70)
-        rmse_maps.append(rmse_map.detach().cpu()) #(70,32,64)
-        hmse_value = compute_rmse(ltmv_pred[...,8:24,:], ltmv_true[...,8:24,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
-        hmse_series.append(hmse_value.detach().cpu())
-        #torch.cuda.empty_cache()
-
-    
-    accu_series = torch.stack(accu_series,1) # (B,fourcast_num,property_num)
-    rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,property_num)
-    hmse_series = torch.stack(hmse_series,1) # (B,fourcast_num,property_num)
-    batch_variance_line_pred = torch.stack(batch_variance_line_pred,1) # (B,fourcast_num,property_num)
-    batch_variance_line_true = torch.stack(batch_variance_line_true,1) # (B,fourcast_num,property_num)
-
-    
-    for idx, accu,rmse,hmse, std_pred,std_true in zip(idxes,accu_series,rmse_series,hmse_series,
-                                                batch_variance_line_pred,batch_variance_line_true):
-        #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
-        fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse,'std_pred':std_pred,'std_true':std_true,'snap_line':[],
-                                      "hmse":hmse}
-    
-    if snap_index is not None:
-        for batch_id,select_batch_id in enumerate(snap_index[0]):
-            for snap_each_fourcast_time in snap_line:
-                # each snap is tensor (b, p, L)
-                time_step, tensor, label = snap_each_fourcast_time
-                fourcastresult[idxes[select_batch_id].item()]['snap_line'].append([
-                    time_step,tensor[batch_id],label
-                ])
-            #  (p, L) -> (p, L) -> (p, L)
-    if "global_rmse_map" not in fourcastresult:
-        fourcastresult['global_rmse_map'] = rmse_maps # it is a map list (70,32,64) -> (70, 28,64) ->....
-    else:
-        fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],rmse_maps)]
-    return fourcastresult,extra_info
-
-
-def run_one_fourcast_iter_with_history(model, start, batch, idxes, fourcastresult):
-    accu_series=[]
-    rmse_series=[]
-    out = start
-    extra_info = {}
-    history_sum_true = history_sum_pred = batch[0].permute(0,2,3,1) if batch[0].shape[1]!=20 or batch[0].shape[1]!=12 else batch[0]
-    for i in range(1,len(batch)):
-        out   = model(out)
-        extra_loss = 0
-        if isinstance(out,(list,tuple)):
-            extra_loss=out[1]
-            for extra_info_from_model in out[2:]:
-                for key, val in extra_info_from_model.items():
-                    if i not in extra_info:extra_info[i] = {}
-                    if key not in extra_info[i]:extra_info[i][key] = []
-                    extra_info[i][key].append(val)
-            out = out[0]
-        ltmv_pred = out.permute(0,2,3,1)# (B, P, W, H ) -> # (B, W, H, P)
-        ltmv_true = batch[i].permute(0,2,3,1)# (B, P, W, H ) -> # (B, W, H, P)
-        history_sum_pred+=ltmv_pred
-        history_sum_true+=ltmv_true
-        history_mean_pred=history_sum_pred/(i+1)
-        history_mean_true=history_sum_true/(i+1)
-        ltmsv_pred = ltmv_pred - history_mean_pred
-        ltmsv_true = ltmv_true - history_mean_true
-        accu_series.append(compute_accu(ltmsv_pred, ltmsv_true).detach().cpu())
-        rmse_series.append(compute_rmse(ltmv_pred , ltmv_true ).detach().cpu())
-    accu_series = torch.stack(accu_series,1) # (B,fourcast_num,20)
-    rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,20)
-    for idx, accu,rmse in zip(idxes,accu_series,rmse_series):
-        #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
-        fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse}
-    return fourcastresult,extra_info
-
-
-def make_data_regular(batch,half_model=False):
-    # the input can be
-    # [
-    #   timestamp_1:[Field,Field_Dt,(physics_part) ],
-    #   timestamp_2:[Field,Field_Dt,(physics_part) ],
-    #     ...............................................
-    #   timestamp_n:[Field,Field_Dt,(physics_part) ]
-    # ]
-    # or
-    # [
-    #   timestamp_1:Field,
-    #   timestamp_2:Field,
-    #     ...............................................
-    #   timestamp_n:Field
-    # ]
-    if not isinstance(batch,(list,tuple)):
-        
-        batch = batch.half() if half_model else batch.float()
-        if len(batch.shape)==4:
-            channel_last = batch.shape[1] in [32,720] # (B, P, W, H )
-            if channel_last:batch = batch.permute(0,3,1,2)
-        return batch
-    else:
-        return [make_data_regular(x,half_model=half_model) for x in batch]
-
-
-
-def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None):
-    model.eval()
-    logsys.eval()
-    status     = 'test'
-    gpu        = dist.get_rank() if hasattr(model,'module') else 0
-    Fethcher   = Datafetcher
-    prefetcher = Fethcher(data_loader,next(model.parameters()).device)
-    batches = len(data_loader)
-    inter_b    = logsys.create_progress_bar(batches,unit=' img',unit_scale=data_loader.batch_size)
-    device = next(model.parameters()).device
-    data_cost = train_cost = rest_cost = 0
-    now = time.time()
-    model.clim = torch.Tensor(data_loader.dataset.clim_tensor).to(device)
-    fourcastresult={}
-    save_prediction_first_step = None#torch.zeros_like(data_loader.dataset.data)
-    save_prediction_final_step = None#torch.zeros_like(data_loader.dataset.data)
-    intervel = batches//100 + 1
-
-    with torch.no_grad():
-        inter_b.lwrite("load everything, start_validating......", end="\r")
-        while inter_b.update_step():
-            #if inter_b.now>10:break
-            data_cost += time.time() - now;now = time.time()
-            step        = inter_b.now
-            idxes,batch = prefetcher.next()
-            batch       = make_data_regular(batch,half_model)
-            # first sum should be (B, P, W, H )
-            the_snap_index_in_iter = None
-            if snap_index is not None:
-                select_start_timepoints = snap_index[0]
-                the_snap_index_in_iter=[[],snap_index[1],snap_index[2]]
-                the_snap_index_in_iter[0] = [batch_id for batch_id, idx in enumerate(idxes) if idx in select_start_timepoints]
-                if len(the_snap_index_in_iter[0]) == 0: the_snap_index_in_iter=None
-            #if the_snap_index_in_iter is None:continue
-            fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset,
-                                         save_prediction_first_step=save_prediction_first_step,
-                                         save_prediction_final_step=save_prediction_final_step,
-                                         snap_index=the_snap_index_in_iter)
-            train_cost += time.time() - now;now = time.time()
-            global_start = batch[0].clone()
-            for _ in range(random_repeat):
-                raise NotImplementedError
-                batch[0] = global_start*(1 + torch.randn_like(global_start)*0.05)
-                fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset)
-            
-            rest_cost += time.time() - now;now = time.time()
-            if (step+1) % intervel==0 or step==0:
-                for idx, val_pool in extra_info.items():
-                    for key, val in val_pool.items():
-                        logsys.record(f'test_{key}_each_fourcast_step', np.mean(val), idx, epoch_flag = 'time_step')
-                outstring=(f"epoch:fourcast iter:[{step:5d}]/[{len(data_loader)}] GPU:[{gpu}] cost:[Date]:{data_cost/intervel:.1e} [Train]:{train_cost/intervel:.1e} [Rest]:{rest_cost/intervel:.1e}")
-                inter_b.lwrite(outstring, end="\r")
-            #if inter_b.now >2:break
-    if save_prediction_first_step is not None:torch.save(save_prediction_first_step,os.path.join(logsys.ckpt_root,'save_prediction_first_step')) 
-    if save_prediction_final_step is not None:torch.save(save_prediction_final_step,os.path.join(logsys.ckpt_root,'save_prediction_final_step')) 
-    fourcastresult['snap_index'] = snap_index
-    return fourcastresult
-
-def nan_diagnose_weight(model,loss, nan_count,logsys):
-    skip = False
-    if torch.isnan(loss):
-        # we will check whether weight has nan 
-        bad_weight_name = []
-        bad_check = False
-        for name, p in model.named_parameters():
-            if torch.isnan(p).any():
-                bad_check    = True
-                bad_weight_name.append(name)
-        if bad_check:
-            logsys.info(f"the value is nan in weight:{bad_weight_name}")
-            raise optuna.TrialPruned()
-        else:
-            nan_count+=1
-            if nan_count>10:
-                logsys.info("too many nan happened")
-                raise optuna.TrialPruned()
-            logsys.info(f"detect nan, now at {nan_count}/10 warning level, pass....")   
-            skip = True
-    return loss, nan_count, skip
-
-def nan_diagnose_grad(model,nan_count,logsys):
-    skip = False
-    # we will check whether weight has nan 
-    bad_weight_name = []
-    bad_check = False
-    for name, p in model.named_parameters():
-        if p.grad is None:continue
-        if torch.isnan(p.grad).any():
-            bad_check    = True
-            bad_weight_name.append(name)
-    if bad_check:
-        logsys.info(f"the value is nan in weight.grad:{bad_weight_name}")
-        nan_count+=1
-        if nan_count>10:
-            logsys.info("too many nan happened")
-            raise
-        logsys.info(f"detect nan, now at {nan_count}/10 warning level, pass....")   
-        skip = True
-    return nan_count, skip
-
 class RandomSelectPatchFetcher:
     def __init__(self,data_loader,device):
         dataset = data_loader.dataset
@@ -661,7 +416,6 @@ class RandomSelectPatchFetcher:
         if len(out[0])==1:
             out = [t[0] for t in out]
         return out 
-
 
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     
@@ -806,30 +560,53 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     return loss_val
 
 
-def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
-    dataset_type   = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
-    train_dataset  = dataset_type(split="train" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,record_load_tensor=train_record_load,**args.dataset_kargs)
-    val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,record_load_tensor=valid_record_load,**args.dataset_kargs)
-    train_datasampler = DistributedSampler(train_dataset, shuffle=True) if args.distributed else None
-    val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
-    train_dataloader  = DataLoader(train_dataset, args.batch_size,   sampler=train_datasampler, num_workers=args.num_workers, pin_memory=True, drop_last=True)
-    val_dataloader    = DataLoader(val_dataset  , args.valid_batch_size, sampler=val_datasampler,   num_workers=args.num_workers, pin_memory=True, drop_last=False)
-    return   train_dataset,   val_dataset, train_dataloader, val_dataloader
+def nan_diagnose_weight(model,loss, nan_count,logsys):
+    skip = False
+    if torch.isnan(loss):
+        # we will check whether weight has nan 
+        bad_weight_name = []
+        bad_check = False
+        for name, p in model.named_parameters():
+            if torch.isnan(p).any():
+                bad_check    = True
+                bad_weight_name.append(name)
+        if bad_check:
+            logsys.info(f"the value is nan in weight:{bad_weight_name}")
+            raise optuna.TrialPruned()
+        else:
+            nan_count+=1
+            if nan_count>10:
+                logsys.info("too many nan happened")
+                raise optuna.TrialPruned()
+            logsys.info(f"detect nan, now at {nan_count}/10 warning level, pass....")   
+            skip = True
+    return loss, nan_count, skip
 
-def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
-    time_step = args.time_step if args.mode=='fourcast' else 3*24//6 + args.time_step
-    dataset_kargs = copy.deepcopy(args.dataset_kargs)
-    dataset_kargs['time_step'] = time_step
-    if dataset_kargs['time_reverse_flag'] in ['only_forward','random_forward_backward']:
-        dataset_kargs['time_reverse_flag'] = 'only_forward'
-    dataset_type = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
-    #print(dataset_kargs)
-    test_dataset = dataset_type(split="test", with_idx=True,dataset_tensor=test_dataset_tensor,record_load_tensor=test_record_load,**dataset_kargs)
-    assert hasattr(test_dataset,'clim_tensor')
-    test_datasampler  = DistributedSampler(test_dataset,  shuffle=False) if args.distributed else None
-    test_dataloader   = DataLoader(test_dataset, args.valid_batch_size, sampler=test_datasampler, num_workers=args.num_workers, pin_memory=False)
-    return   test_dataset,   test_dataloader
+def nan_diagnose_grad(model,nan_count,logsys):
+    skip = False
+    # we will check whether weight has nan 
+    bad_weight_name = []
+    bad_check = False
+    for name, p in model.named_parameters():
+        if p.grad is None:continue
+        if torch.isnan(p.grad).any():
+            bad_check    = True
+            bad_weight_name.append(name)
+    if bad_check:
+        logsys.info(f"the value is nan in weight.grad:{bad_weight_name}")
+        nan_count+=1
+        if nan_count>10:
+            logsys.info("too many nan happened")
+            raise
+        logsys.info(f"detect nan, now at {nan_count}/10 warning level, pass....")   
+        skip = True
+    return nan_count, skip
 
+
+
+#########################################
+######### fourcast forward step #########
+#########################################
 def save_and_log_table(_list, logsys, name, column, row=None):
     table= pd.DataFrame(_list.transpose(1,0),index=column, columns=row)
     new_row = [[a]+b for a,b in zip(row,_list.tolist())]
@@ -838,7 +615,211 @@ def save_and_log_table(_list, logsys, name, column, row=None):
     logsys.info(table);
     table.to_csv(os.path.join(logsys.ckpt_root,name))
 
-from mltool.visualization import *
+def get_tensor_value(tensor,snap_index,time = 0):
+    regist_batch_id_list, regist_feature_id_list, regist_position = snap_index
+
+    if isinstance(regist_position,dict):
+        regist_position = regist_position[time]
+    # regist_batch_id_list is a list for select batch id
+    # regist_feature_id_list is a list for select property id
+    # regist_position is a position, if is 2D, it should be (#select_points,) (#select_points,)
+    output_tensor = []
+    for regist_batch_id in regist_batch_id_list:
+        one_batch_tensor= []
+        for regist_feature_id in regist_feature_id_list:
+            if len(regist_position)==2:
+                location_tensor= tensor[regist_batch_id][regist_feature_id][regist_position[0],regist_position[1]]
+            elif len(regist_position)==3:
+                location_tensor= tensor[regist_batch_id,regist_feature_id,regist_position[0],regist_position[1],regist_position[2]]
+            else:
+                raise NotImplementedError
+            one_batch_tensor.append(location_tensor.detach().cpu())
+        output_tensor.append(torch.stack(one_batch_tensor))
+    return torch.stack(output_tensor)#(B,P,N)
+
+def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
+                    save_prediction_first_step=None,save_prediction_final_step=None,
+                    snap_index=None):
+    accu_series=[]
+    rmse_series=[]
+    rmse_maps = []
+    hmse_series=[]
+    extra_info = {}
+    time_step_1_mode=False
+    batch_variance_line_pred = [] 
+    batch_variance_line_true = []
+    # we will also record the variance for each slot, assume the input is a time series of data
+    # [ (B, P, W, H) -> (B, P, W, H) -> .... -> (B, P, W, H) ,(B, P, W, H)]
+    # we would record the variance of each batch on the location (W,H)
+    clim = model.clim
+    
+    start = batch[0:model.history_length] # start must be a list
+
+    
+    snap_line = []
+    
+
+    if snap_index is not None:  
+        for i,tensor in enumerate(start):
+            # each tensor is like (B, 70, 32, 64) or (B, P, Z, W, H)
+            snap_line.append([len(snap_line), get_tensor_value(tensor,snap_index, time=model.history_length),'input'])
+
+    for i in range(model.history_length,len(batch)):# i now is the target index
+        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
+        for extra_info_from_model in extra_info_from_model_list:
+            for key, val in extra_info_from_model.items():
+                if i not in extra_info:extra_info[i] = {}
+                if key not in extra_info[i]:extra_info[i][key] = []
+                extra_info[i][key].append(val)
+
+
+        ### enter CPU computing
+        ltmv_true = dataset.inv_normlize_data([target])[0]#.detach().cpu()
+        ltmv_pred = ltmv_pred#.detach().cpu()
+        if len(clim.shape)!=len(ltmv_pred.shape):
+            ltmv_pred = ltmv_pred.squeeze(-1)
+            ltmv_true = ltmv_true.squeeze(-1) # temporary use this for timestamp input like [B, P, w,h,T]
+
+        if save_prediction_first_step is not None and i==model.history_length:save_prediction_first_step[idxes] = ltmv_pred.detach().cpu()
+        if save_prediction_final_step is not None and i==len(batch) - 1:save_prediction_final_step[idxes] = ltmv_pred.detach().cpu()
+
+        if snap_index is not None:
+            snap_line.append([i, get_tensor_value(ltmv_pred,snap_index, time=i),'pred'])
+            snap_line.append([i, get_tensor_value(ltmv_true,snap_index, time=i),'true'])
+        
+        statistic_dim = tuple(range(2,len(ltmv_true.shape))) # always assume (B,P,Z,W,H)
+        batch_variance_line_pred.append(ltmv_pred.std(dim=statistic_dim).detach().cpu())
+        batch_variance_line_true.append(ltmv_true.std(dim=statistic_dim).detach().cpu())
+
+        #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
+        accu_series.append(compute_accu(ltmv_pred - clim.to(ltmv_pred.device), ltmv_true - clim.to(ltmv_pred.device)).detach().cpu())
+        rmse_v,rmse_map = compute_rmse(ltmv_pred , ltmv_true, return_map_also=True)
+        rmse_series.append(rmse_v.detach().cpu()) #(B,70)
+        rmse_maps.append(rmse_map.detach().cpu()) #(70,32,64)
+        hmse_value = compute_rmse(ltmv_pred[...,8:24,:], ltmv_true[...,8:24,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
+        hmse_series.append(hmse_value.detach().cpu())
+        #torch.cuda.empty_cache()
+
+    
+    accu_series = torch.stack(accu_series,1) # (B,fourcast_num,property_num)
+    rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,property_num)
+    hmse_series = torch.stack(hmse_series,1) # (B,fourcast_num,property_num)
+    batch_variance_line_pred = torch.stack(batch_variance_line_pred,1) # (B,fourcast_num,property_num)
+    batch_variance_line_true = torch.stack(batch_variance_line_true,1) # (B,fourcast_num,property_num)
+
+    
+    for idx, accu,rmse,hmse, std_pred,std_true in zip(idxes,accu_series,rmse_series,hmse_series,
+                                                batch_variance_line_pred,batch_variance_line_true):
+        #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
+        fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse,'std_pred':std_pred,'std_true':std_true,'snap_line':[],
+                                      "hmse":hmse}
+    
+    if snap_index is not None:
+        for batch_id,select_batch_id in enumerate(snap_index[0]):
+            for snap_each_fourcast_time in snap_line:
+                # each snap is tensor (b, p, L)
+                time_step, tensor, label = snap_each_fourcast_time
+                fourcastresult[idxes[select_batch_id].item()]['snap_line'].append([
+                    time_step,tensor[batch_id],label
+                ])
+            #  (p, L) -> (p, L) -> (p, L)
+    if "global_rmse_map" not in fourcastresult:
+        fourcastresult['global_rmse_map'] = rmse_maps # it is a map list (70,32,64) -> (70, 28,64) ->....
+    else:
+        fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],rmse_maps)]
+    return fourcastresult,extra_info
+
+def run_one_fourcast_iter_with_history(model, start, batch, idxes, fourcastresult):
+    accu_series=[]
+    rmse_series=[]
+    out = start
+    extra_info = {}
+    history_sum_true = history_sum_pred = batch[0].permute(0,2,3,1) if batch[0].shape[1]!=20 or batch[0].shape[1]!=12 else batch[0]
+    for i in range(1,len(batch)):
+        out   = model(out)
+        extra_loss = 0
+        if isinstance(out,(list,tuple)):
+            extra_loss=out[1]
+            for extra_info_from_model in out[2:]:
+                for key, val in extra_info_from_model.items():
+                    if i not in extra_info:extra_info[i] = {}
+                    if key not in extra_info[i]:extra_info[i][key] = []
+                    extra_info[i][key].append(val)
+            out = out[0]
+        ltmv_pred = out.permute(0,2,3,1)# (B, P, W, H ) -> # (B, W, H, P)
+        ltmv_true = batch[i].permute(0,2,3,1)# (B, P, W, H ) -> # (B, W, H, P)
+        history_sum_pred+=ltmv_pred
+        history_sum_true+=ltmv_true
+        history_mean_pred=history_sum_pred/(i+1)
+        history_mean_true=history_sum_true/(i+1)
+        ltmsv_pred = ltmv_pred - history_mean_pred
+        ltmsv_true = ltmv_true - history_mean_true
+        accu_series.append(compute_accu(ltmsv_pred, ltmsv_true).detach().cpu())
+        rmse_series.append(compute_rmse(ltmv_pred , ltmv_true ).detach().cpu())
+    accu_series = torch.stack(accu_series,1) # (B,fourcast_num,20)
+    rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,20)
+    for idx, accu,rmse in zip(idxes,accu_series,rmse_series):
+        #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
+        fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse}
+    return fourcastresult,extra_info
+
+def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None):
+    model.eval()
+    logsys.eval()
+    status     = 'test'
+    gpu        = dist.get_rank() if hasattr(model,'module') else 0
+    Fethcher   = Datafetcher
+    prefetcher = Fethcher(data_loader,next(model.parameters()).device)
+    batches = len(data_loader)
+    inter_b    = logsys.create_progress_bar(batches,unit=' img',unit_scale=data_loader.batch_size)
+    device = next(model.parameters()).device
+    data_cost = train_cost = rest_cost = 0
+    now = time.time()
+    model.clim = torch.Tensor(data_loader.dataset.clim_tensor).to(device)
+    fourcastresult={}
+    save_prediction_first_step = None#torch.zeros_like(data_loader.dataset.data)
+    save_prediction_final_step = None#torch.zeros_like(data_loader.dataset.data)
+    intervel = batches//100 + 1
+
+    with torch.no_grad():
+        inter_b.lwrite("load everything, start_validating......", end="\r")
+        while inter_b.update_step():
+            #if inter_b.now>10:break
+            data_cost += time.time() - now;now = time.time()
+            step        = inter_b.now
+            idxes,batch = prefetcher.next()
+            batch       = make_data_regular(batch,half_model)
+            # first sum should be (B, P, W, H )
+            the_snap_index_in_iter = None
+            if snap_index is not None:
+                select_start_timepoints = snap_index[0]
+                the_snap_index_in_iter=[[],snap_index[1],snap_index[2]]
+                the_snap_index_in_iter[0] = [batch_id for batch_id, idx in enumerate(idxes) if idx in select_start_timepoints]
+                if len(the_snap_index_in_iter[0]) == 0: the_snap_index_in_iter=None
+            #if the_snap_index_in_iter is None:continue
+            fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset,
+                                         save_prediction_first_step=save_prediction_first_step,
+                                         save_prediction_final_step=save_prediction_final_step,
+                                         snap_index=the_snap_index_in_iter)
+            train_cost += time.time() - now;now = time.time()
+            global_start = batch[0].clone()
+            for _ in range(random_repeat):
+                raise NotImplementedError
+                batch[0] = global_start*(1 + torch.randn_like(global_start)*0.05)
+                fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset)
+            
+            rest_cost += time.time() - now;now = time.time()
+            if (step+1) % intervel==0 or step==0:
+                for idx, val_pool in extra_info.items():
+                    for key, val in val_pool.items():
+                        logsys.record(f'test_{key}_each_fourcast_step', np.mean(val), idx, epoch_flag = 'time_step')
+                outstring=(f"epoch:fourcast iter:[{step:5d}]/[{len(data_loader)}] GPU:[{gpu}] cost:[Date]:{data_cost/intervel:.1e} [Train]:{train_cost/intervel:.1e} [Rest]:{rest_cost/intervel:.1e}")
+                inter_b.lwrite(outstring, end="\r")
+            #if inter_b.now >2:break
+    if save_prediction_first_step is not None:torch.save(save_prediction_first_step,os.path.join(logsys.ckpt_root,'save_prediction_first_step')) 
+    if save_prediction_final_step is not None:torch.save(save_prediction_final_step,os.path.join(logsys.ckpt_root,'save_prediction_final_step')) 
+    fourcastresult['snap_index'] = snap_index
+    return fourcastresult
 
 def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature']):
     prefix_pool={
@@ -1030,6 +1011,187 @@ def run_fourcast(args, model,logsys,test_dataloader=None):
         create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
     
     return 1
+
+
+#########################################
+######## nodal snape forward step #######
+#########################################
+
+def run_nodaloss_snap(model, batch, idxes, fourcastresult,dataset, property_select = [38,49]):
+    time_step_1_mode=False
+    L1meassures  = []
+    L2meassures  = []
+    start = batch[0:model.history_length] # start must be a list
+    with torch.no_grad():
+        for i in range(model.history_length,len(batch)):# i now is the target index
+            ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
+            func_model = lambda x:model(x)[:,]
+            L1meassure = vmap(the_Nodal_L1_meassure(func_model), (0))(start[-1].unsqueeze(1)) # (B, Pick, W,H)
+            L2meassure = vmap(the_Nodal_L2_meassure(func_model,chunk_size=1024), (0))(start[-1].unsqueeze(1))# (B, Pick, W,H)
+            
+            L1meassures.append(L1meassure.detach().cpu())
+            L2meassures.append(L2meassure.detach().cpu())
+
+    L1meassures = torch.stack(L1meassures,1) # (B, fourcast_num, Pick_property_num, W,H)
+    L2meassures = torch.stack(L2meassures,1) # (B, fourcast_num, Pick_property_num, W,H)
+
+    for idx, L1meassure,L2meassure in zip(idxes,L1meassures,L2meassures):
+        #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
+        fourcastresult[idx.item()] = {'L1meassure':L1meassure,"L2meassure":L2meassure}
+    return fourcastresult
+
+def snap_nodal_step(data_loader, model,logsys, property_select = [38,49],batch_limit=1):
+    model.eval()
+    logsys.eval()
+    status     = 'test'
+    gpu        = dist.get_rank() if hasattr(model,'module') else 0
+    Fethcher   = Datafetcher
+    prefetcher = Fethcher(data_loader,next(model.parameters()).device)
+    batches = len(data_loader)
+    inter_b    = logsys.create_progress_bar(batches,unit=' img',unit_scale=data_loader.batch_size)
+    device = next(model.parameters()).device
+    data_cost = train_cost = rest_cost = 0
+    now = time.time()
+    model.clim = torch.Tensor(data_loader.dataset.clim_tensor).to(device)
+    fourcastresult={}
+    intervel = batches//100 + 1
+    with torch.no_grad():
+        inter_b.lwrite("load everything, start_validating......", end="\r")
+        while inter_b.update_step():
+            step           = inter_b.now
+            idxes,batch    = prefetcher.next()
+            batch          = make_data_regular(batch,half_model)
+            fourcastresult = run_nodaloss_snap(model, batch, idxes, fourcastresult,data_loader.dataset, property_select = property_select)
+            if (step+1) % intervel==0 or step==0:
+                outstring=(f"epoch:fourcast iter:[{step:5d}]/[{len(data_loader)}] GPU:[{gpu}]")
+                inter_b.lwrite(outstring, end="\r")
+            if inter_b.now > batch_limit:break
+    return fourcastresult
+
+def run_nodalosssnap(args, model,logsys,test_dataloader=None,property_select=[38,49]):
+    import warnings
+    warnings.filterwarnings("ignore")
+    
+    if test_dataloader is None:test_dataset,  test_dataloader = get_test_dataset(args)
+    test_dataset = test_dataloader.dataset
+    logsys.info_log_path = os.path.join(logsys.ckpt_root, f'nodal_snap_on_{test_dataset.split}_dataset.info')
+    #args.force_fourcast=True
+    gpu       = dist.get_rank() if hasattr(model,'module') else 0
+    fourcastresult_path = os.path.join(logsys.ckpt_root,f"nodal_snap_on_{test_dataset.split}_dataset.gpu_{gpu}")
+
+    if not os.path.exists(fourcastresult_path) or  args.force_fourcast:
+        logsys.info(f"use dataset ==> {test_dataset.__class__.__name__}")
+        logsys.info("starting fourcast~!")
+        fourcastresult  = snap_nodal_step(test_dataloader, model,logsys, property_select = property_select,batch_limit=1)
+        fourcastresult['property_select'] = property_select
+        torch.save(fourcastresult,fourcastresult_path)
+        logsys.info(f"save fourcastresult at {fourcastresult_path}")
+    else:
+        logsys.info(f"load fourcastresult at {fourcastresult_path}")
+        fourcastresult = torch.load(fourcastresult_path)
+
+    if not args.distributed:
+        create_nodal_loss_snap_metric_table(fourcastresult, logsys,test_dataset)
+    
+    return 1
+
+def create_nodal_loss_snap_metric_table(fourcastresult, logsys,test_dataset):
+    prefix_pool={
+        'only_backward':"time_reverse_",
+        'only_forward':""
+    }
+    prefix = prefix_pool[test_dataset.time_reverse_flag]
+
+    if isinstance(fourcastresult,str):
+        # then it is the fourcastresult path
+        ROOT= fourcastresult
+        fourcastresult_list = [os.path.join(ROOT,p) for p in os.listdir(fourcastresult) if 'fourcastresult.gpu' in p]
+        fourcastresult={}
+        for save_path in fourcastresult_list:
+            tmp = torch.load(save_path)
+            for key,val in tmp.items():
+                if key not in fourcastresult:
+                    fourcastresult[key] = val
+
+    property_names = test_dataset.vnames
+    property_select= fourcastresult['property_select']
+    
+    L1meassures = torch.stack([p['L1meassure'].cpu() for p in fourcastresult.values() if 'L1meassure' in p]).numpy() #(B, fourcast_num, Pick_property_num, W,H)
+    L2meassures = torch.stack([p['L2meassure'].cpu() for p in fourcastresult.values() if 'L2meassure' in p]).numpy() #(B, fourcast_num, Pick_property_num, W,H)
+    
+    select_keys = [k for k in fourcastresult.keys() if isinstance(k,int)]
+
+    for meassure, metric_name in zip([L1meassures,L2meassures],['L1','L2']):
+        table = []
+        # the first thing is to record the L1 measure per (B,P,W,H) per fourcast_num
+        for fourcast_step, tensor_per_property in enumerate(meassure.permute(1,2,0,3,4).flatten(-3,-1)):
+            for property_id, tensor in enumerate(tensor_per_property):
+                property_name = property_names[property_select[property_id]]
+                for idx,value in enumerate(tensor):
+                    table.append([fourcast_step,property_name, idx, value.item()])
+        logsys.add_table(f"{metric_name}_table", table , 0, ['fourcast_step',"property","idx","value"])     
+
+    ## then we are going to plot the histgram
+    for meassure, metric_name in zip([L1meassures,L2meassures],['L1','L2']):
+        for fourcast_step, tensor_per_property in enumerate(meassure.permute(1,2,0,3,4).flatten(-3,-1)):
+            for property_id, tensor in enumerate(tensor_per_property):
+                property_name = property_names[property_select[property_id]]
+                data = [t.item() for t in tensor]
+                table = wandb.Table(data=data, columns=[metric_name])
+                wandb.log({f'histogram_{property_name}_{len(meassure)}': wandb.plot.histogram(table, metric_name,
+                    title=f"{metric_name} histram for {property_name} with {len(meassure)} batches")},step=fourcast_step)
+
+    ## then we are going to plot the heatmap
+
+    s_dir= os.path.join(logsys.ckpt_root,"figures")
+    for meassure, metric_name in zip([L1meassures,L2meassures],['L1','L2']):
+        for fourcast_step, tensor_per_property in enumerate(meassure.permute(1,2,0,3,4)):
+            for property_id, tensor in enumerate(tensor_per_property):
+                property_name = property_names[property_select[property_id]]
+                # tensor is (B, W, H), we only pick the first 
+                the_map = tensor[0]
+                start_time = select_keys[0]
+                vmin = min(the_map)
+                vmax = max(the_map)
+                name = f"{metric_name}_map_{property_name}_start_from_{start_time}"
+                spath= os.path.join(s_dir,name+f'.step{fourcast_step}.png')
+                plt.imshow(the_map.numpy(),vmin=vmin,vmax=vmax,cmap='gray')
+                plt.title(f"value range: {vmin:.3f}-{vmax:.3f}")
+                plt.xticks([]);plt.yticks([])
+                plt.savefig(spath)
+                plt.close()
+                logsys.wandblog({name:wandb.Image(spath)},step=fourcast_step)
+                
+    return
+
+def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
+    dataset_type   = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
+    train_dataset  = dataset_type(split="train" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,record_load_tensor=train_record_load,**args.dataset_kargs)
+    val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,record_load_tensor=valid_record_load,**args.dataset_kargs)
+    train_datasampler = DistributedSampler(train_dataset, shuffle=True) if args.distributed else None
+    val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
+    train_dataloader  = DataLoader(train_dataset, args.batch_size,   sampler=train_datasampler, num_workers=args.num_workers, pin_memory=True, drop_last=True)
+    val_dataloader    = DataLoader(val_dataset  , args.valid_batch_size, sampler=val_datasampler,   num_workers=args.num_workers, pin_memory=True, drop_last=False)
+    return   train_dataset,   val_dataset, train_dataloader, val_dataloader
+
+def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
+    time_step = args.time_step if args.mode=='fourcast' else 3*24//6 + args.time_step
+    dataset_kargs = copy.deepcopy(args.dataset_kargs)
+    dataset_kargs['time_step'] = time_step
+    if dataset_kargs['time_reverse_flag'] in ['only_forward','random_forward_backward']:
+        dataset_kargs['time_reverse_flag'] = 'only_forward'
+    dataset_type = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
+    #print(dataset_kargs)
+    test_dataset = dataset_type(split="test", with_idx=True,dataset_tensor=test_dataset_tensor,record_load_tensor=test_record_load,**dataset_kargs)
+    assert hasattr(test_dataset,'clim_tensor')
+    test_datasampler  = DistributedSampler(test_dataset,  shuffle=False) if args.distributed else None
+    test_dataloader   = DataLoader(test_dataset, args.valid_batch_size, sampler=test_datasampler, num_workers=args.num_workers, pin_memory=False)
+    return   test_dataset,   test_dataloader
+
+
+#########################################
+######## argument and config set #######
+#########################################
 
 
 def get_model_name(args):
@@ -1251,6 +1413,10 @@ def create_logsys(args,save_config=True):
     args.logsys = logsys
     return logsys
 
+#########################################
+############# main script ###############
+#########################################
+
 def build_model(args):
     #cudnn.enabled         = True
     cudnn.benchmark       = False # will search a best CNN realized way at beginning 
@@ -1337,7 +1503,6 @@ def build_optimizer(args,model):
 
     return optimizer,lr_scheduler,criterion
 
-
 def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     if local_rank==0:print(f"we are at mode={args.mode}")
@@ -1384,8 +1549,11 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     latest_ckpt_p = SAVE_PATH / 'pretrain_latest.pt'
     train_loss=-1
     if args.mode=='fourcast':
-        test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,
-                                      test_record_load=train_record_load)
+        test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
+        run_fourcast(args, model,logsys,test_dataloader)
+        return 1
+    elif args.mode=='snap_nodal_loss':
+        test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
         run_fourcast(args, model,logsys,test_dataloader)
         return 1
     else:
@@ -1445,7 +1613,6 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         if result_tensor is not None and local_rank==0:
             result_tensor[local_rank] = min_loss
     logsys.close()
-
 
 def create_memory_templete(args):
     train_dataset_tensor=valid_dataset_tensor=train_record_load=valid_record_load=None
@@ -1519,7 +1686,6 @@ def distributed_initial(args):
         args.world_size = 1
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
     return args
-
 
 def main(args=None):
     

@@ -224,6 +224,8 @@ def create_fourcast_table(ckpt_path):
     logsys.close()
 
 
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('parse tf.event file to wandb', add_help=False)
     parser.add_argument('--path',type=str,default="")

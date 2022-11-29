@@ -485,6 +485,7 @@ class LargeMLP_3D(AutoPatchModel3D):
         x = self.backbone(x.flatten(-4,-1)) # (B* W-4 * H,P)
         x = self.patches_to_image(x)
         return x
+
 from vit_pytorch import ViT
 class SimpleViT(AutoPatchModel2D):
     def __init__(self,img_size=None,patch_range=5,in_chans=20, out_chans=20,p=0.1,**kargs):
