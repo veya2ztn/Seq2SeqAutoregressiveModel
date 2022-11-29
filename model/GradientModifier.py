@@ -224,71 +224,128 @@ class NGmode_estimate2(Nodal_GradientModifier):
             np.sqrt(np.prod(list(self.output_shape)))
         return CorrelationTerm.mean()
 
-# class Nodal_GradientModifierBuff:
-#     def __init__(self,lambda1=1,lambda2=1,sample_times=10):
-#         self.lambda1 = lambda1
-#         self.lambda2 = lambda2
-#         self.sample_times = sample_times
-#         self.cotangents_sum_along_x_dimension = None
-#     def Normlization_Term_1(self,params,buffers,x):
-#         if self.cotangents_sum_along_x_dimension is None or self.cotangents_sum_along_x_dimension.shape!=x.shape:
-#             self.cotangents_sum_along_x_dimension = torch.ones_like(x)
-#         return ((functorch.jvp(lambda x:self.func_model(params,buffers,x), (x,), (self.cotangents_sum_along_x_dimension,))[1]-1)**2).mean()
-#     def TrvJOJv_and_ETrAAT(self,params,buffers,x,cotangents_variable):
-#         _, vJ_fn = functorch.vjp(lambda x:self.func_model(params,buffers,x), x)
-#         vJ   = vJ_fn(cotangents_variable)[0]
-#         dims = list(range(1,len(vJ.shape)))
-#         vJO  = vJ.sum(dims,keepdims=True)-vJ # <vJ|1-I|
-#         vJOJv= (vJO*vJ).sum(dim=dims)#should sum over all dimension except batch
-#         ETrAAT = functorch.jvp(lambda x:self.func_model(params,buffers,x), (x,), (vJO,))[1] # (B,Ouputdim)
-#         dims = list(range(1,len(ETrAAT.shape)))
-#         ETrAAT=ETrAAT.norm(dim=dims)
-#         return vJOJv, ETrAAT# DO NOT average the batch_size also
-#     def get_TrvJOJv(self,params,buffers,x,cotangents_variable):
-#         _, vJ_fn = functorch.vjp(lambda x:self.func_model(params,buffers,x), x)
-#         vJ   = vJ_fn(cotangents_variable)[0]
-#         dims = list(range(1,len(vJ.shape)))
-#         vJO  = vJ.sum(1,keepdims=True)-vJ # <vJ|1-I|
-#         vJOJv= (vJO*vJ).sum(dim=dims)#should sum over all dimension except batch
-#         return vJOJv
-#     def get_ETrAAT(self,params,buffers,x,cotangents_variable):
-#         _, vJ_fn = functorch.vjp(lambda x:self.func_model(params,buffers,x), x)
-#         vJ   = vJ_fn(cotangents_variable)[0]
-#         vJO  = vJ.sum(1,keepdims=True)-vJ # <vJ|1-I|
-#         ETrAAT = functorch.jvp(lambda x:self.func_model(params,buffers,x), (x,), (vJO,))[1] # (B,Ouputdim)
-#         dims = list(range(1,len(ETrAAT.shape)))
-#         ETrAAT=ETrAAT.norm(dim=dims)
-#         return ETrAAT
-#     def get_ETrAAT_times(self,params,buffers,x,cotangents_variables):
-#         return vmap(self.get_ETrAAT, (None, None, None,0 ), randomness='same')(params,buffers,x,cotangents_variables).mean()
-#     def get_TrvJOJv_times(self,params,buffers,x,cotangents_variables):
-#         return vmap(self.get_TrvJOJv, (None, None, None,0 ), randomness='same')(params,buffers,x,cotangents_variables).mean()
-#     def backward(self,model, x, y , return_Normlization_Term_1=False, return_Normlization_Term_2=False):
-#         self.func_model, params, buffers = make_functional_with_buffers(model)
-#         shape = y.shape
-#         cotangents_variables = torch.randint(2,(self.sample_times,*shape)).cuda()*2-1
-#         with torch.no_grad():
-#             if self.lambda1 != 0:
-#                 Derivation_Term_1 = jacrev(self.Normlization_Term_1, argnums=0)(params,buffers,x)
-#             if self.lambda2 != 0:
-#                 Derivation_Term_2 = jacrev(self.Normlization_Term_2, argnums=0)(params,buffers,x,cotangents_variables)
-#         for i, param in enumerate(model.parameters()):
-#             delta_p = 0
-#             if self.lambda1 != 0:delta_p += self.lambda1*Derivation_Term_1[i]
-#             if self.lambda2 != 0:delta_p += self.lambda2*Derivation_Term_2[i]
-#             if param.grad is not None:
-#                 param.grad.data += delta_p
-#             else:
-#                 param.grad = delta_p
-#         out=[]
-#         with torch.no_grad():
-#             if return_Normlization_Term_1: 
-#                 out.append(self.Normlization_Term_1(params,buffers,x).item())
-#             if return_Normlization_Term_2:
-#                 out.append(self.Normlization_Term_2(
-#                     params,buffers,x, cotangents_variables).item())
-#         return out
+from scipy.sparse import identity
+import sparse
+import torch
+from functorch._src.eager_transforms import *
+from functorch._src.eager_transforms import _vjp_with_argnums,_construct_standard_basis_for,_slice_argnums,_safe_zero_index
+def create_sparse_identity(flat_output, flat_output_numels):
+    assert isinstance(flat_output_numels,int)
+    assert isinstance(flat_output,(tuple,list))
+    coo= sparse.COO.from_scipy_sparse(identity(flat_output_numels))
+    coo= coo.reshape([flat_output_numels]+list(flat_output))
+#     values  = coo.data
+#     indices = coo.coords
+#     i = torch.LongTensor(indices)
+#     v = torch.FloatTensor(values)
+#     shape = coo.shape
+#     tensor= torch.sparse.FloatTensor(i, v, torch.Size(shape))
+    return coo
+def _construct_sparse_basis_for(flat_output, flat_output_numels):
+    return [create_sparse_identity(t.shape,s) for t,s in zip(flat_output,flat_output_numels)]
+def convert_to_torch_sparse(coo,device='cpu'):
+    values  = coo.data
+    indices = coo.coords
+    i = torch.LongTensor(indices).to(device)
+    v = torch.FloatTensor(values).to(device)
+    shape = coo.shape
+    return torch.sparse.FloatTensor(i, v, torch.Size(shape))
+def convert_to_torch(coo): 
+    return torch.FloatTensor(coo.todense())
 
-# class NGmod_absoluteBuff(Nodal_GradientModifierBuff):
-#     def Normlization_Term_2(self,params,buffers,x,cotangents_variables):
-#         return (((vmap(jacrev(self.func_model, argnums=1), (None, None , 0), randomness='same')(params,buffers,x)**2).sum(-1)-1)**2).mean()
+class Nodal2_measure:
+    def __init__(self,device,chunk_size=None):
+        self.device     = device
+        self.chunk_size = chunk_size
+        self.basis_this_chunk_sparse = None
+    def __call__(self,func: Callable, argnums: Union[int, Tuple[int]] = 0):
+        @wraps(func)
+        def wrapper_fn(*args):
+            chunk_size=self.chunk_size
+            has_aux = False
+            vjp_out = _vjp_with_argnums(func,*args, argnums=1, has_aux=has_aux)
+            output, vjp_fn = vjp_out
+            flat_output, output_spec = tree_flatten(output)
+            assert len(flat_output) == 1
+            flat_output_numels = tuple(out.numel() for out in flat_output)
+            
+            sum_axis = list(range(1,len(output.shape)))
+            sum_axis.reverse()
+            sum_axis = [-t for t in sum_axis]
+            
+            #device= flat_output[0].device
+            now = time.time()
+            if self.basis_this_chunk_sparse is None:
+                basis = _construct_sparse_basis_for(flat_output, flat_output_numels)[0]
+                if chunk_size is None:
+                    self.basis_this_chunk_sparse = convert_to_torch_sparse(basis,device=self.device)
+                else:
+                    start  = 0
+                    self.basis_this_chunk_sparse={}
+                    while start < len(basis):
+                        end = min(start+chunk_size, len(basis))
+                        self.basis_this_chunk_sparse[start,end] = convert_to_torch_sparse(basis[start:end],device=device)
+                        start = end 
+            print(f"create basis cost {time.time()-now}");now = time.time()
+            if chunk_size is None:
+                basis_this_chunk = self.basis_this_chunk_sparse.to_dense()
+                print(f"sparse to dense cost {time.time()-now}");now = time.time()
+                results = torch.sum((vmap(vjp_fn)(basis_this_chunk))**2,sum_axis)
+                print(f"computing cost {time.time()-now}");now = time.time()
+            else:
+                results= None
+                start  = 0
+                while start < len(basis):
+                    end = min(start+chunk_size, len(basis))
+                    basis_this_chunk = self.basis_this_chunk_sparse[start,end].to_dense()
+                    if results is None:
+                        results = torch.sum(vmap(vjp_fn)(basis_this_chunk)**2,sum_axis)
+                    else:
+                        results = torch.cat([results,torch.sum(vmap(vjp_fn)(basis_this_chunk)**2,sum_axis)])
+                    start = end
+            return results
+        return wrapper_fn
+        
+
+def the_Nodal_L2_meassure(func: Callable, argnums: Union[int, Tuple[int]] = 0, *, has_aux=False, chunk_size=None,sum_axis=[-3,-2,-1]):
+    @wraps(func)
+    def wrapper_fn(*args):
+        has_aux = False
+        vjp_out = _vjp_with_argnums(func,*args, argnums=argnums, has_aux=has_aux)
+        output, vjp_fn = vjp_out
+        flat_output, output_spec = tree_flatten(output)
+        assert len(flat_output) == 1
+        flat_output_numels = tuple(out.numel() for out in flat_output)
+        device= flat_output[0].device
+        basis = _construct_sparse_basis_for(flat_output, flat_output_numels)[0]
+        if chunk_size is None:
+            basis_this_chunk = convert_to_torch_sparse(basis,device=device).to_dense()
+            results = torch.sum((vmap(vjp_fn)(basis_this_chunk))**2,sum_axis)
+        else:
+            results= None
+            start  = 0
+            while start < len(basis):
+                end = min(start+chunk_size, len(basis))
+                #print(f"{start:4d} to {end:4d}")
+                basis_this_chunk = convert_to_torch_sparse(basis[start:end],device=device).to_dense()
+                #print("0")
+                if results is None:
+                    results = torch.sum(vmap(vjp_fn)(basis_this_chunk)**2,sum_axis)
+                    #print("1")
+                else:
+                    results = torch.cat([results,torch.sum(vmap(vjp_fn)(basis_this_chunk)**2,sum_axis)])
+                    #print("2")
+                start = end
+                #torch.cuda.empty_cache()
+        #print(f"result_cost:{time.time()-now}");now = time.time()
+        return results.reshape(flat_output[0].shape)
+    return wrapper_fn
+
+def the_Nodal_L1_meassure(func):
+    
+    @wraps(func)
+    def wrapper_fn(x):
+        cotangents_sum_along_x_dimension = torch.ones_like(x)
+        tvalues= functorch.jvp(func,(x,), (cotangents_sum_along_x_dimension,))[1]
+        return tvalues
+    return wrapper_fn
