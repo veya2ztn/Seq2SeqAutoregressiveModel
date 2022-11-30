@@ -1025,7 +1025,7 @@ class WeathBench7066PatchDataset(WeathBench7066):
         time_step_list= [idx+i*self.time_intervel for i in range(self.time_step)]
         if reversed_part:time_step_list = time_step_list[::-1]
         patch_idx_h = patch_idx_w = patch_idx_z = None
-        location = -1
+        location = None
         if self.cross_sample:
             center_h = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2) 
             center_w = np.random.randint(self.img_shape[-1])
