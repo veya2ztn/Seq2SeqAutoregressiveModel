@@ -94,7 +94,7 @@ def get_args_parser():
     parser.add_argument('--random_dataset',type=int,default=0)
     parser.add_argument('--num_workers',type=int,default=2)
     parser.add_argument('--use_offline_data',type=int,default=0)
-
+    parser.add_argument('--chunk_size',type=int,default=1024)
     
     # Fourcast Parameter
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')

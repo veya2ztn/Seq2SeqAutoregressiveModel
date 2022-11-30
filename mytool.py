@@ -168,7 +168,7 @@ def run_snap_nodal(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,w
     from train.pretrain import main
     args = get_the_args(ckpt_path)
     if args is None:return
-    args.mode      = 'fourcast_for_snap_nodal_loss'
+    args.mode      = 'fourcast_for_snap_nodal_loss' 
     args.fourcast  = True
     args.recorder_list = []
     args.use_wandb = 'wandb_runtime'
@@ -195,7 +195,7 @@ def run_snap_nodal(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,w
     args.time_step = step
     #args.data_root = "datasets/weatherbench"
     args.force_fourcast = force_fourcast
-    
+    args.wandb_id = None
     main(args)
 
 def get_the_args(ckpt_path):
@@ -339,12 +339,12 @@ if __name__ == "__main__":
         else:
             now_path = path_list_file
 
-    now_path = [
-        "checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_49_50-seed_73001",
-        "checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_50_07-seed_73001",
-        "checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_50_11-seed_73001",
-        "checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_50_15-seed_73001"
-    ]
+    # now_path = [
+    #     "checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_49_50-seed_73001",
+    #     "checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_50_07-seed_73001",
+    #     "checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_50_11-seed_73001",
+    #     "checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_50_15-seed_73001"
+    # ]
 
     print(f"we detect {len(now_path)} trail path; \n  from {now_path[0]} to \n  {now_path[-1]}")
     total_lenght = len(now_path)
