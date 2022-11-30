@@ -307,18 +307,18 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
             # (B,P,W,H) -> (B,P,W,H) mode
             pass
     else: #(B, P)
-        if ltmv_pred.shape[-1] == 1: # (B,P,5,5) -> (B,P) mode
-            if len(target.shape) == 4:
-                B,P,W,H=target.shape
-                target = target[...,W//2,H//2]
-            elif len(target.shape) == 5:
-                B,P,Z,W,H=target.shape
-                target = target[...,Z//2,W//2,H//2]  
-            else:
-                raise NotImplementedError
+        #if ltmv_pred.shape[-1] == 1: # (B,P,5,5) -> (B,P) mode
+        if len(target.shape) == 4:
+            B,P,W,H=target.shape
+            target = target[...,W//2,H//2]
+        elif len(target.shape) == 5:
+            B,P,Z,W,H=target.shape
+            target = target[...,Z//2,W//2,H//2]  
         else:
-            # (B,P,5,5) -> (B,P) mode
-            target = target 
+            raise NotImplementedError
+#         else:
+#             # (B,P,5,5) -> (B,P) mode
+#             target = target 
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
@@ -1238,7 +1238,8 @@ def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
         dataset_kargs['time_reverse_flag'] = 'only_forward'
     dataset_type = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
     #print(dataset_kargs)
-    test_dataset = dataset_type(split="test", with_idx=True,dataset_tensor=test_dataset_tensor,record_load_tensor=test_record_load,**dataset_kargs)
+    split = args.split if hasattr(args,'split') and args.split else "test"
+    test_dataset = dataset_type(split=split, with_idx=True,dataset_tensor=test_dataset_tensor,record_load_tensor=test_record_load,**dataset_kargs)
     assert hasattr(test_dataset,'clim_tensor')
     test_datasampler  = DistributedSampler(test_dataset,  shuffle=False) if args.distributed else None
     test_dataloader   = DataLoader(test_dataset, args.valid_batch_size, sampler=test_datasampler, num_workers=args.num_workers, pin_memory=False)

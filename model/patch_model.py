@@ -512,7 +512,6 @@ class SimpleViT(AutoPatchModel2D):
         x = self.patches_to_image(x)
         return x
     
-
 class PatchWrapper(AutoPatchModel2D):
     '''
     input is (B, P, patch_range_1,patch_range_2)
@@ -537,9 +536,6 @@ class PatchWrapper(AutoPatchModel2D):
         x = self.mlp(x.reshape(x.size(0), -1))
         x = self.patches_to_image(x)
         return x
-
-
-
 
 class PatchWrapper3D(AutoPatchModel3D):
     '''
