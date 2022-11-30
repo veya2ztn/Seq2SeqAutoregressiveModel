@@ -57,6 +57,7 @@ def find_free_port():
 import random
 import traceback
 from mltool.visualization import *
+import time
 
 lr_for_mode={'pretrain':5e-4,'finetune':1e-4,'fourcast':1e-4}
 ep_for_mode={'pretrain':80,'finetune':50,'fourcast':50}
@@ -945,7 +946,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
                 plt.xticks([]);plt.yticks([])
                 plt.savefig(spath)
                 plt.close()
-                logsys.wandblog({name:wandb.Image(spath)},step=i+big_step)
+                logsys.wandblog({name:wandb.Image(spath)})
                 
 
     info_pool_list = []
@@ -1017,20 +1018,36 @@ def run_fourcast(args, model,logsys,test_dataloader=None):
 ######## nodal snape forward step #######
 #########################################
 
+def donoting():
+    pass
+
 def run_nodaloss_snap(model, batch, idxes, fourcastresult,dataset, property_select = [38,49]):
     time_step_1_mode=False
     L1meassures  = []
     L2meassures  = []
+    L1meassure   = L2meassure = torch.zeros(1)
     start = batch[0:model.history_length] # start must be a list
+
     with torch.no_grad():
         for i in range(model.history_length,len(batch)):# i now is the target index
-            ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
-            func_model = lambda x:model(x)[:,]
-            L1meassure = vmap(the_Nodal_L1_meassure(func_model), (0))(start[-1].unsqueeze(1)) # (B, Pick, W,H)
-            L2meassure = vmap(the_Nodal_L2_meassure(func_model,chunk_size=1024), (0))(start[-1].unsqueeze(1))# (B, Pick, W,H)
-            
-            L1meassures.append(L1meassure.detach().cpu())
-            L2meassures.append(L2meassure.detach().cpu())
+            func_model = lambda x:model(x)[:,property_select]
+            if model.use_amp:
+                with torch.cuda.amp.autocast():
+                    ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
+                    now = time.time()
+                    L1meassure = vmap(the_Nodal_L1_meassure(func_model), (0))(start[-1].unsqueeze(1)) # (B, Pick, W,H)
+                    L2meassure = vmap(the_Nodal_L2_meassure(func_model,chunk_size=1024), (0))(start[-1].unsqueeze(1))# (B, Pick, W,H)
+                    print(f"step_{i:3d} L2 computing finish, cost:{time.time() - now }") 
+                    L1meassures.append(L1meassure.detach().cpu())
+                    L2meassures.append(L2meassure.detach().cpu())
+            else:
+                ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
+                now = time.time()
+                L1meassure = vmap(the_Nodal_L1_meassure(func_model), (0))(start[-1].unsqueeze(1)) # (B, Pick, W,H)
+                L2meassure = vmap(the_Nodal_L2_meassure(func_model,chunk_size=1024), (0))(start[-1].unsqueeze(1))# (B, Pick, W,H)
+                print(f"step_{i:3d} L2 computing finish, cost:{time.time() - now }") 
+                L1meassures.append(L1meassure.detach().cpu())
+                L2meassures.append(L2meassure.detach().cpu())
 
     L1meassures = torch.stack(L1meassures,1) # (B, fourcast_num, Pick_property_num, W,H)
     L2meassures = torch.stack(L2meassures,1) # (B, fourcast_num, Pick_property_num, W,H)
@@ -1082,7 +1099,7 @@ def run_nodalosssnap(args, model,logsys,test_dataloader=None,property_select=[38
     if not os.path.exists(fourcastresult_path) or  args.force_fourcast:
         logsys.info(f"use dataset ==> {test_dataset.__class__.__name__}")
         logsys.info("starting fourcast~!")
-        fourcastresult  = snap_nodal_step(test_dataloader, model,logsys, property_select = property_select,batch_limit=1)
+        fourcastresult  = snap_nodal_step(test_dataloader, model,logsys, property_select = property_select,batch_limit=args.batch_limit)
         fourcastresult['property_select'] = property_select
         torch.save(fourcastresult,fourcastresult_path)
         logsys.info(f"save fourcastresult at {fourcastresult_path}")
@@ -1105,7 +1122,7 @@ def create_nodal_loss_snap_metric_table(fourcastresult, logsys,test_dataset):
     if isinstance(fourcastresult,str):
         # then it is the fourcastresult path
         ROOT= fourcastresult
-        fourcastresult_list = [os.path.join(ROOT,p) for p in os.listdir(fourcastresult) if 'fourcastresult.gpu' in p]
+        fourcastresult_list = [os.path.join(ROOT,p) for p in os.listdir(fourcastresult) if 'nodal_snap_on_test_dataset.gpu' in p]
         fourcastresult={}
         for save_path in fourcastresult_list:
             tmp = torch.load(save_path)
@@ -1116,34 +1133,48 @@ def create_nodal_loss_snap_metric_table(fourcastresult, logsys,test_dataset):
     property_names = test_dataset.vnames
     property_select= fourcastresult['property_select']
     
-    L1meassures = torch.stack([p['L1meassure'].cpu() for p in fourcastresult.values() if 'L1meassure' in p]).numpy() #(B, fourcast_num, Pick_property_num, W,H)
-    L2meassures = torch.stack([p['L2meassure'].cpu() for p in fourcastresult.values() if 'L2meassure' in p]).numpy() #(B, fourcast_num, Pick_property_num, W,H)
-    
+    L1meassures = torch.stack([p['L1meassure'].cpu() for p in fourcastresult.values() if 'L1meassure' in p]) #(B, fourcast_num, Pick_property_num, W,H)
+    L2meassures = torch.stack([p['L2meassure'].cpu() for p in fourcastresult.values() if 'L2meassure' in p]) #(B, fourcast_num, Pick_property_num, W,H)
+    if len(L1meassures.shape)==6 and L1meassures.shape[2]==1:L1meassures=L1meassures[:,:,0]
+    if len(L2meassures.shape)==6 and L2meassures.shape[2]==1:L2meassures=L2meassures[:,:,0]
+
     select_keys = [k for k in fourcastresult.keys() if isinstance(k,int)]
 
+    print("create L1/L2 loss .................")
+    # the first thing is to record the L1 measure per (B,P,W,H) per fourcast_num
     for meassure, metric_name in zip([L1meassures,L2meassures],['L1','L2']):
-        table = []
-        # the first thing is to record the L1 measure per (B,P,W,H) per fourcast_num
         for fourcast_step, tensor_per_property in enumerate(meassure.permute(1,2,0,3,4).flatten(-3,-1)):
             for property_id, tensor in enumerate(tensor_per_property):
                 property_name = property_names[property_select[property_id]]
-                for idx,value in enumerate(tensor):
-                    table.append([fourcast_step,property_name, idx, value.item()])
-        logsys.add_table(f"{metric_name}_table", table , 0, ['fourcast_step',"property","idx","value"])     
+                value = torch.mean((tensor - 1)**2)
+                if torch.isnan(value):
+                    print(f"{metric_name}_loss_for_{property_name}_with_{len(meassure)}_batches_on_{test_dataset.split}_at_{fourcast_step}_step_is bad")
+                logsys.wandblog({f"{metric_name}_loss_for_{property_name}_with_{len(meassure)}_batches_on_{test_dataset.split}":value,'time_step':fourcast_step})     
 
+    print("create mean std .................")
+    # the first thing is to record the L1 measure per (B,P,W,H) per fourcast_num
+    for meassure, metric_name in zip([L1meassures,L2meassures],['L1','L2']):
+        table = []
+        for fourcast_step, tensor_per_property in enumerate(meassure.permute(1,2,0,3,4).flatten(-3,-1)):
+            for property_id, tensor in enumerate(tensor_per_property):
+                property_name = property_names[property_select[property_id]]
+                table.append([fourcast_step,property_name, idx, tensor.mean().item(),tensor.std().item()])
+        logsys.add_table(f"{metric_name}_table", table , 0, ['fourcast_step',"property","idx","mean","std"])     
+
+    print("create histgram .................")
     ## then we are going to plot the histgram
     for meassure, metric_name in zip([L1meassures,L2meassures],['L1','L2']):
         for fourcast_step, tensor_per_property in enumerate(meassure.permute(1,2,0,3,4).flatten(-3,-1)):
             for property_id, tensor in enumerate(tensor_per_property):
                 property_name = property_names[property_select[property_id]]
-                data = [t.item() for t in tensor]
+                data = [[t.item()] for t in tensor]
                 table = wandb.Table(data=data, columns=[metric_name])
-                wandb.log({f'histogram_{property_name}_{len(meassure)}': wandb.plot.histogram(table, metric_name,
-                    title=f"{metric_name} histram for {property_name} with {len(meassure)} batches")},step=fourcast_step)
+                wandb.log({f'{metric_name} histogram_{property_name}_{len(meassure)}': wandb.plot.histogram(table, metric_name,
+                    title=f"{metric_name} histram for {property_name} with {len(meassure)} batches")})
 
     ## then we are going to plot the heatmap
-
     s_dir= os.path.join(logsys.ckpt_root,"figures")
+    if not os.path.exists(s_dir):os.makedirs(s_dir)
     for meassure, metric_name in zip([L1meassures,L2meassures],['L1','L2']):
         for fourcast_step, tensor_per_property in enumerate(meassure.permute(1,2,0,3,4)):
             for property_id, tensor in enumerate(tensor_per_property):
@@ -1151,8 +1182,8 @@ def create_nodal_loss_snap_metric_table(fourcastresult, logsys,test_dataset):
                 # tensor is (B, W, H), we only pick the first 
                 the_map = tensor[0]
                 start_time = select_keys[0]
-                vmin = min(the_map)
-                vmax = max(the_map)
+                vmin = the_map.min()
+                vmax = the_map.max()
                 name = f"{metric_name}_map_{property_name}_start_from_{start_time}"
                 spath= os.path.join(s_dir,name+f'.step{fourcast_step}.png')
                 plt.imshow(the_map.numpy(),vmin=vmin,vmax=vmax,cmap='gray')
@@ -1160,7 +1191,7 @@ def create_nodal_loss_snap_metric_table(fourcastresult, logsys,test_dataset):
                 plt.xticks([]);plt.yticks([])
                 plt.savefig(spath)
                 plt.close()
-                logsys.wandblog({name:wandb.Image(spath)},step=fourcast_step)
+                logsys.wandblog({name:wandb.Image(spath)})
                 
     return
 
@@ -1175,7 +1206,7 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
     return   train_dataset,   val_dataset, train_dataloader, val_dataloader
 
 def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
-    time_step = args.time_step if args.mode=='fourcast' else 3*24//6 + args.time_step
+    time_step = args.time_step if "fourcast" in args.mode else 3*24//6 + args.time_step
     dataset_kargs = copy.deepcopy(args.dataset_kargs)
     dataset_kargs['time_step'] = time_step
     if dataset_kargs['time_reverse_flag'] in ['only_forward','random_forward_backward']:
@@ -1379,10 +1410,10 @@ def create_logsys(args,save_config=True):
     dirname,job_type = os.path.split(dirname)
     dirname,group    = os.path.split(dirname)
     dirname,project  = os.path.split(dirname)
-    wandb_id = args.wandb_id
-    if wandb_id is None:
-        wandb_id = f"{project}-{group}-{job_type}-{name}"
-        wandb_id = hashlib.md5(wandb_id.encode("utf-8")).hexdigest()+"the2"
+    wandb_id         = args.wandb_id
+    # if wandb_id is None:
+    #     wandb_id = f"{project}-{group}-{job_type}-{name}"
+    #     wandb_id = hashlib.md5(wandb_id.encode("utf-8")).hexdigest()+"the2"
     #args.wandb_id = wandb_id #if we dont assign the wandb_id, the default is None 
     #do not save the args.wandb_id in the config
     print(f"wandb id: {wandb_id}")
@@ -1535,7 +1566,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     args.pretrain_weight = args.pretrain_weight.strip()
     logsys.info(f"loading weight from {args.pretrain_weight}")
     start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
-                        only_model= (args.mode=='fourcast') or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu))
+                        only_model= ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu))
     if args.more_epoch_train:
         assert args.pretrain_weight
         print(f"detect more epoch training, we will do a copy processing for {args.pretrain_weight}")
@@ -1552,9 +1583,9 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
         run_fourcast(args, model,logsys,test_dataloader)
         return 1
-    elif args.mode=='snap_nodal_loss':
+    elif args.mode=='fourcast_for_snap_nodal_loss':
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
-        run_fourcast(args, model,logsys,test_dataloader)
+        run_nodalosssnap(args, model,logsys,test_dataloader)
         return 1
     else:
 
@@ -1619,7 +1650,7 @@ def create_memory_templete(args):
     if args.use_inmemory_dataset:
         assert args.dataset_type
         print("======== loading data as shared memory==========")
-        if not args.mode=='fourcast':
+        if not ('fourcast' in args.mode):
             print(f"create training dataset template, .....")
             train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='train' if not args.debug else 'test',
                             root=args.data_root,use_offline_data=args.use_offline_data,dataset_flag=args.dataset_flag)
