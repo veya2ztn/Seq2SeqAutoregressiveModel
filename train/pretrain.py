@@ -1021,7 +1021,7 @@ def run_fourcast(args, model,logsys,test_dataloader=None):
 def donoting():
     pass
 
-def run_nodaloss_snap(model, batch, idxes, fourcastresult,dataset, property_select = [38,49]):
+def run_nodaloss_snap(model, batch, idxes, fourcastresult,dataset, property_select = [38,49],chunk_size=1024):
     time_step_1_mode=False
     L1meassures  = []
     L2meassures  = []
@@ -1036,7 +1036,7 @@ def run_nodaloss_snap(model, batch, idxes, fourcastresult,dataset, property_sele
                     ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
                     now = time.time()
                     L1meassure = vmap(the_Nodal_L1_meassure(func_model), (0))(start[-1].unsqueeze(1)) # (B, Pick, W,H)
-                    L2meassure = vmap(the_Nodal_L2_meassure(func_model,chunk_size=1024), (0))(start[-1].unsqueeze(1))# (B, Pick, W,H)
+                    L2meassure = vmap(the_Nodal_L2_meassure(func_model,chunk_size=chunk_size), (0))(start[-1].unsqueeze(1))# (B, Pick, W,H)
                     print(f"step_{i:3d} L2 computing finish, cost:{time.time() - now }") 
                     L1meassures.append(L1meassure.detach().cpu())
                     L2meassures.append(L2meassure.detach().cpu())
@@ -1057,7 +1057,7 @@ def run_nodaloss_snap(model, batch, idxes, fourcastresult,dataset, property_sele
         fourcastresult[idx.item()] = {'L1meassure':L1meassure,"L2meassure":L2meassure}
     return fourcastresult
 
-def snap_nodal_step(data_loader, model,logsys, property_select = [38,49],batch_limit=1):
+def snap_nodal_step(data_loader, model,logsys, property_select = [38,49],batch_limit=1,chunk_size=1024):
     model.eval()
     logsys.eval()
     status     = 'test'
@@ -1078,7 +1078,8 @@ def snap_nodal_step(data_loader, model,logsys, property_select = [38,49],batch_l
             step           = inter_b.now
             idxes,batch    = prefetcher.next()
             batch          = make_data_regular(batch,half_model)
-            fourcastresult = run_nodaloss_snap(model, batch, idxes, fourcastresult,data_loader.dataset, property_select = property_select)
+            fourcastresult = run_nodaloss_snap(model, batch, idxes, fourcastresult,data_loader.dataset, 
+                                               property_select = property_select,chunk_size=chunk_size)
             if (step+1) % intervel==0 or step==0:
                 outstring=(f"epoch:fourcast iter:[{step:5d}]/[{len(data_loader)}] GPU:[{gpu}]")
                 inter_b.lwrite(outstring, end="\r")
@@ -1099,7 +1100,8 @@ def run_nodalosssnap(args, model,logsys,test_dataloader=None,property_select=[38
     if not os.path.exists(fourcastresult_path) or  args.force_fourcast:
         logsys.info(f"use dataset ==> {test_dataset.__class__.__name__}")
         logsys.info("starting fourcast~!")
-        fourcastresult  = snap_nodal_step(test_dataloader, model,logsys, property_select = property_select,batch_limit=args.batch_limit)
+        fourcastresult  = snap_nodal_step(test_dataloader, model,logsys, property_select = property_select,
+                                          batch_limit=args.batch_limit,chunk_size=args.chunk_size)
         fourcastresult['property_select'] = property_select
         torch.save(fourcastresult,fourcastresult_path)
         logsys.info(f"save fourcastresult at {fourcastresult_path}")
