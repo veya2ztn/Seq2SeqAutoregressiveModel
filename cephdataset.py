@@ -579,6 +579,7 @@ class WeathBench(BaseDataset):
     years_split={'train':range(1979, 2016),
            'valid':range(2016, 2018),
            'test':range(2018,2019),
+           'ftest':range(1979,1980),
             'all': range(1979, 2022),
             'debug':range(1979,1980)}
     single_vnames = ["2m_temperature",
@@ -602,7 +603,9 @@ class WeathBench(BaseDataset):
     reduce_Field_coef = np.array([1])
     datatimelist_pool={'train':np.arange(np.datetime64("1979-01-02"), np.datetime64("2016-01-01"), np.timedelta64(1, "h")),
                        'valid':np.arange(np.datetime64("2016-01-01"), np.datetime64("2018-01-01"), np.timedelta64(1, "h")),
-                        'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(1, "h"))}
+                        'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(1, "h")),
+                        'ftest':np.arange(np.datetime64("1979-01-02"), np.datetime64("1980-01-01"), np.timedelta64(1, "h")),
+                        }
     use_offline_data =False
     def __init__(self, split="train", mode='pretrain', channel_last=True, check_data=True,
                  root=None, time_step=2,
@@ -894,7 +897,8 @@ class WeathBench7066(WeathBench71):
     time_unit=6
     datatimelist_pool={'train':np.arange(np.datetime64("1979-01-02"), np.datetime64("2017-01-01"), np.timedelta64(6, "h")),
                        'valid':np.arange(np.datetime64("2017-01-01"), np.datetime64("2018-01-01"), np.timedelta64(6, "h")),
-                        'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(6, "h"))}
+                        'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(6, "h")),
+                        'ftest':np.arange(np.datetime64("1979-01-02"), np.datetime64("1980-01-01"), np.timedelta64(6, "h"))}
     def __init__(self,**kargs):
         use_offline_data = kargs.get('use_offline_data',0) 
         if use_offline_data ==1:
@@ -964,7 +968,7 @@ class WeathBench7066PatchDataset(WeathBench7066):
         self.random = kargs.get('random_dataset', False)
         self.use_position_idx = kargs.get('use_position_idx', False)
 
-    def get_item(self,idx,location=-1,reversed_part=False):
+    def get_item(self,idx,location=None,reversed_part=False):
         if self.use_offline_data:
             data =  self.dataset_tensor[idx]
         else:
@@ -996,7 +1000,7 @@ class WeathBench7066PatchDataset(WeathBench7066):
             elif 'unit_norm' in self.normalize_type:
                 data = data/self.std
 
-        if location != -1:
+        if location is not None:
             if '3D' in self.normalize_type:
                 assert patch_idx_z is not None
                 patch_idx_z, patch_idx_h, patch_idx_w = location
@@ -1004,6 +1008,8 @@ class WeathBench7066PatchDataset(WeathBench7066):
             else:
                 patch_idx_h, patch_idx_w = location
                 data = data[..., patch_idx_h, patch_idx_w]
+        else:
+            location = -1
         out = [data]
         if self.use_time_stamp:
             out.append(self.timestamp[idx])

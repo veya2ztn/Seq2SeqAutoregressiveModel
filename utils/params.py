@@ -34,7 +34,7 @@ def get_args_parser():
     parser.add_argument('--GDMod_L1_level', type=float, default=1)
     parser.add_argument('--GDMod_L2_level', type=float, default=1)
     parser.add_argument('--batch_limit', type=int, default=1)
-    
+    parser.add_argument('--split', type=str, default="")
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
                         #choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC','NaiveConvModel2D']
