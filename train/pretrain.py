@@ -1138,6 +1138,13 @@ def create_nodal_loss_snap_metric_table(fourcastresult, logsys,test_dataset):
     if len(L1meassures.shape)==6 and L1meassures.shape[2]==1:L1meassures=L1meassures[:,:,0]
     if len(L2meassures.shape)==6 and L2meassures.shape[2]==1:L2meassures=L2meassures[:,:,0]
 
+    print(L1meassures.shape)
+    print(L2meassures.shape)
+
+    for meassure, metric_name in zip([L1meassures,L2meassures],['L1','L2']):
+        if torch.isnan(meassure).any() or torch.isinf(meassure).any():
+            print(f"{metric_name}meassure has nan of inf")
+
     select_keys = [k for k in fourcastresult.keys() if isinstance(k,int)]
 
     print("create L1/L2 loss .................")
@@ -1162,25 +1169,41 @@ def create_nodal_loss_snap_metric_table(fourcastresult, logsys,test_dataset):
         logsys.add_table(f"{metric_name}_table", table , 0, ['fourcast_step',"property","idx","mean","std"])     
 
     print("create histgram .................")
+    s_dir= os.path.join(logsys.ckpt_root,"figures")
+    if not os.path.exists(s_dir):os.makedirs(s_dir)
     ## then we are going to plot the histgram
     for meassure, metric_name in zip([L1meassures,L2meassures],['L1','L2']):
-        for fourcast_step, tensor_per_property in enumerate(meassure.permute(1,2,0,3,4).flatten(-3,-1)):
-            for property_id, tensor in enumerate(tensor_per_property):
-                property_name = property_names[property_select[property_id]]
-                data = [[t.item()] for t in tensor]
-                table = wandb.Table(data=data, columns=[metric_name])
-                wandb.log({f'{metric_name} histogram_{property_name}_{len(meassure)}': wandb.plot.histogram(table, metric_name,
-                    title=f"{metric_name} histram for {property_name} with {len(meassure)} batches")})
-
+        for property_id, tensor_per_property in enumerate(meassure.permute(2,1,0,3,4).flatten(-3,-1)):
+            property_name = property_names[property_select[property_id]]
+            x_min = tensor_per_property.min()
+            x_max = tensor_per_property.max()
+            for fourcast_step, tensor in enumerate(tensor_per_property):
+                
+                data = tensor.numpy()
+                name = f'{metric_name}_histogram_{property_name}_{len(meassure)}'
+                if fourcast_step ==0:
+                    table = wandb.Table(data=data[:,None], columns=[metric_name])
+                    wandb.log({name+f"_at_time_step_{fourcast_step}": wandb.plot.histogram(table, metric_name,
+                        title=f"{metric_name} histram for {property_name} with {len(meassure)} batches"),'time_step':fourcast_step})
+                fig = plt.figure()
+                smoothhist(data)
+                plt.xlim(x_min,x_max)
+                spath= os.path.join(s_dir,name+f'.step{fourcast_step}.png')
+                plt.savefig(spath)
+                plt.close()
+                logsys.wandblog({name:fig})
     ## then we are going to plot the heatmap
     s_dir= os.path.join(logsys.ckpt_root,"figures")
     if not os.path.exists(s_dir):os.makedirs(s_dir)
     for meassure, metric_name in zip([L1meassures,L2meassures],['L1','L2']):
-        for fourcast_step, tensor_per_property in enumerate(meassure.permute(1,2,0,3,4)):
-            for property_id, tensor in enumerate(tensor_per_property):
-                property_name = property_names[property_select[property_id]]
+        for property_id, tensor_per_property in enumerate(meassure.permute(2,1,0,3,4)):
+            property_name = property_names[property_select[property_id]]
+            x_min = 0
+            x_max = 1.2
+            for fourcast_step, tensor in enumerate(tensor_per_property):
                 # tensor is (B, W, H), we only pick the first 
                 the_map = tensor[0]
+                #print(the_map.shape)
                 start_time = select_keys[0]
                 vmin = the_map.min()
                 vmax = the_map.max()

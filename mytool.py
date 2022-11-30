@@ -339,6 +339,12 @@ if __name__ == "__main__":
         else:
             now_path = path_list_file
 
+    now_path = [
+        "checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_49_50-seed_73001",
+        "checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_50_07-seed_73001",
+        "checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_50_11-seed_73001",
+        "checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_50_15-seed_73001"
+    ]
 
     print(f"we detect {len(now_path)} trail path; \n  from {now_path[0]} to \n  {now_path[-1]}")
     total_lenght = len(now_path)
