@@ -163,6 +163,41 @@ def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,wei
     if args.force_fourcast or 'rmse_table' not in os.listdir(ckpt_path):
         main(args)
 
+def run_snap_nodal(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,weight_chose=None):
+    #if "fourcastresult.gpu_0" in os.listdir(ckpt_path):return
+    from train.pretrain import main
+    args = get_the_args(ckpt_path)
+    if args is None:return
+    args.mode      = 'fourcast_for_snap_nodal_loss'
+    args.fourcast  = True
+    args.recorder_list = []
+    args.use_wandb = 'wandb_runtime'
+    #args.batch_size=args.valid_batch_size= 4 
+    if wandb_id is not None:args.wandb_id = wandb_id
+    if weight_chose is None:
+        if 'backbone.best.pt' in os.listdir(ckpt_path):
+            best_path = os.path.join(ckpt_path,'backbone.best.pt')
+        elif 'pretrain_latest.pt' in os.listdir(ckpt_path):
+            best_path = os.path.join(ckpt_path,'pretrain_latest.pt')
+        else:
+            print(f"{ckpt_path}===>")
+            print("   no backbone.best.pt or pretrain_latest.pt, pass!")
+            return
+    else:
+        if weight_chose in os.listdir(ckpt_path):
+            best_path = os.path.join(ckpt_path,weight_chose)
+        else:
+            print(f"{ckpt_path}===>")
+            print("   no {weight_chose}, pass!")
+            return
+    #best_path = os.path.join(ckpt_path,'pretrain_latest.pt')
+    args.pretrain_weight = best_path
+    args.time_step = step
+    #args.data_root = "datasets/weatherbench"
+    args.force_fourcast = force_fourcast
+    
+    main(args)
+
 def get_the_args(ckpt_path):
     from train.pretrain import get_args
     if len(os.listdir(ckpt_path))==0:
@@ -223,6 +258,40 @@ def create_fourcast_table(ckpt_path):
         logsys.wandblog(info_pool)
     logsys.close()
 
+def create_nodalsnap_table(ckpt_path):
+    #if "figures" in os.listdir(ckpt_path):return
+    if "nodal_snap_on_test_dataset.gpu_0" not in os.listdir(ckpt_path):return
+    from train.pretrain import create_nodal_loss_snap_metric_table,get_test_dataset,LoggingSystem,parse_default_args,create_logsys
+    import torch
+    # if 'rmse_unit_table' in os.listdir(ckpt_path):
+    #     return
+    args = get_the_args(ckpt_path)
+    args.mode = 'fourcast_for_snap_nodal_loss'
+    args.gpu = args.local_rank = gpu  = local_rank = 0
+    #args.data_root = "datasets/weatherbench"
+    ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
+    args= parse_default_args(args)
+    args.SAVE_PATH = ckpt_path
+    ########## inital log ###################
+    args.distributed = False
+    test_dataset,   test_dataloader = get_test_dataset(args)
+    #args.SAVE_PATH = './debug'
+    args.use_wandb = 'wandb_runtime'
+    args.wandb_id  = None
+    logsys = create_logsys(args,False)
+    info_pool_list = create_nodal_loss_snap_metric_table(ckpt_path, logsys,test_dataset)
+    # dirname = summary_dir= ckpt_path
+    # dirname,name     = os.path.split(dirname)
+    # dirname,job_type = os.path.split(dirname)
+    # dirname,group    = os.path.split(dirname)
+    # dirname,project  = os.path.split(dirname)
+    #torch.save( info_pool_list, os.path.join(args.SAVE_PATH,f'{project}_{job_type}_{name}'))
+    #torch.save( info_pool_list, os.path.join("debug",f'{project}_{job_type}_{name}'))
+    # for info_pool in info_pool_list:
+    #     #print(info_pool)
+    #     logsys.wandblog(info_pool)
+    logsys.close()
+
 
 
 
@@ -270,6 +339,12 @@ if __name__ == "__main__":
         else:
             now_path = path_list_file
 
+    now_path = [
+        "checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_49_50-seed_73001",
+        #"checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_50_07-seed_73001",
+        #"checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_50_11-seed_73001",
+        #"checkpoints/WeathBench7066/AFNONet/time_step_2_pretrain-2D706N_every_1_step/11_21_20_50_15-seed_73001"
+    ]
 
     print(f"we detect {len(now_path)} trail path; \n  from {now_path[0]} to \n  {now_path[-1]}")
     total_lenght = len(now_path)
@@ -278,6 +353,7 @@ if __name__ == "__main__":
     now_path = now_path[s*length:(s+1)*length]
     print(f"we process:\n  from  from {now_path[0]}\n to  {now_path[-1]}")
 
+    
     if args.mode == 'dryrun':exit()
     for trail_path in tqdm.tqdm(now_path):
         trail_path = trail_path.strip("/")
@@ -294,5 +370,7 @@ if __name__ == "__main__":
         elif args.mode == 'cleantmp':remove_trail_path(trail_path)
         elif args.mode == 'cleanwgt':remove_weight(trail_path)
         elif args.mode == 'createtb':create_fourcast_table(trail_path)
+        elif args.mode == 'snap_nodal':run_snap_nodal(trail_path,step=args.fourcast_step,force_fourcast=args.force_fourcast,weight_chose=args.weight_chose)
+        elif args.mode == 'createtb_nodalsnap':create_nodalsnap_table(trail_path)
         else:
             raise NotImplementedError
