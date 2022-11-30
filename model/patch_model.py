@@ -139,7 +139,8 @@ class AutoPatchModel2D(nn.Module):
     def __init__(self,img_size, patch_range):
         super().__init__()
         assert img_size is not None
-        self.img_size    = img_size
+        print(f"for 2D patch model, the img_size will be force set (32,64)")
+        self.img_size   = (32,64) 
         self.patch_range = patch_range
         self.center_index,self.around_index=get_center_around_indexes(self.patch_range,self.img_size)
         self.center_index_pool={}
@@ -361,7 +362,8 @@ class AutoPatchModel3D(nn.Module):
     def __init__(self,img_size, patch_range):
         super().__init__()
         assert img_size is not None
-        self.img_size    = img_size
+        print(f"for 2D patch model, the img_size will be force set (14,32,64)")
+        self.img_size    = (14,32,64)
         self.patch_range = patch_range
         self.center_index,self.around_index=get_center_around_indexes_3D(self.patch_range,self.img_size)
         self.center_index_pool={}
