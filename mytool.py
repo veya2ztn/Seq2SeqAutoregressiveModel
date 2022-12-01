@@ -164,7 +164,7 @@ def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,wei
         main(args)
 
 def run_snap_nodal(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,weight_chose=None):
-    #if "fourcastresult.gpu_0" in os.listdir(ckpt_path):return
+    if "fourcastresult.gpu_0" in os.listdir(ckpt_path) and not force_fourcast:return
     from train.pretrain import main
     args = get_the_args(ckpt_path)
     if args is None:return
@@ -259,7 +259,7 @@ def create_fourcast_table(ckpt_path):
     logsys.close()
 
 def create_nodalsnap_table(ckpt_path):
-    #if "figures" in os.listdir(ckpt_path):return
+    if "figures" in os.listdir(ckpt_path):return
     if "nodal_snap_on_test_dataset.gpu_0" not in os.listdir(ckpt_path):return
     from train.pretrain import create_nodal_loss_snap_metric_table,get_test_dataset,LoggingSystem,parse_default_args,create_logsys
     import torch
