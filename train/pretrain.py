@@ -135,6 +135,17 @@ def compute_rmse(pred, true, return_map_also=False):
 #########################################
 ########## normal forward step ##########
 #########################################
+def controlamp(use_amp):
+    if use_amp:
+        return autocast
+    else:
+        class fun():
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                return True
+        return fun
 
 def make_data_regular(batch,half_model=False):
     # the input can be
@@ -477,10 +488,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 batch=batch[:model.history_length -1 + time_truncate]
             
             # the normal initial method will cause numerial explore by using timestep > 4 senenrio.
-            if model.use_amp:
-                with torch.cuda.amp.autocast():
-                    loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
-            else:
+            with controlamp(model.use_amp)():
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
             loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
             if skip:continue
@@ -489,8 +497,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
             
             if model.use_amp:
-                loss_scaler.scale(loss).backward()
-                
+                loss_scaler.scale(loss).backward()    
             else:
                 loss.backward()
 
@@ -501,8 +508,9 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     loss_scaler.unscale_(optimizer) # do unscaler here for right gradient modify like clip or norm
                 assert len(batch)==2 # we now only allow one 
                 assert isinstance(batch[0],torch.Tensor)
-                optimizer.grad_modifier.backward(model, batch[0], batch[1], strict=False)
-                Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
+                with controlamp(model.use_amp)():
+                    optimizer.grad_modifier.backward(model, batch[0], batch[1], strict=False)
+                    Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
             
             #GradientModifier().backward(model,x,y)
             #nan_count, skip = nan_diagnose_grad(model,nan_count,logsys)
@@ -528,7 +536,9 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             with torch.no_grad():
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
                 if optimizer.grad_modifier is not None:
-                    Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
+                    with controlamp(model.use_amp)():
+                        Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
+                    
         iter_info_pool={}
         iter_info_pool[f'{status}_loss_gpu{gpu}']     =  loss.item()
         iter_info_pool[f'{status}_Nodeloss1_gpu{gpu}'] = Nodeloss1
@@ -1031,16 +1041,7 @@ def run_nodaloss_snap(model, batch, idxes, fourcastresult,dataset, property_sele
     with torch.no_grad():
         for i in range(model.history_length,len(batch)):# i now is the target index
             func_model = lambda x:model(x)[:,property_select]
-            if model.use_amp:
-                with torch.cuda.amp.autocast():
-                    ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
-                    now = time.time()
-                    L1meassure = vmap(the_Nodal_L1_meassure(func_model), (0))(start[-1].unsqueeze(1)) # (B, Pick, W,H)
-                    L2meassure = vmap(the_Nodal_L2_meassure(func_model,chunk_size=chunk_size), (0))(start[-1].unsqueeze(1))# (B, Pick, W,H)
-                    print(f"step_{i:3d} L2 computing finish, cost:{time.time() - now }") 
-                    L1meassures.append(L1meassure.detach().cpu())
-                    L2meassures.append(L2meassure.detach().cpu())
-            else:
+            with controlamp(model.use_amp)():
                 ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
                 now = time.time()
                 L1meassure = vmap(the_Nodal_L1_meassure(func_model), (0))(start[-1].unsqueeze(1)) # (B, Pick, W,H)

@@ -101,9 +101,9 @@ class Nodal_GradientModifier:
         vL2 = functorch.jvp(lambda x:self.func_model(params,x), (x,), (cotangents2,))[1] #(B, output_size)
         dims = list(range(1,len(vL1.shape)))
         coef = np.sqrt(np.prod(vL1.shape[1:]))
-        vL   = (vL1/coef*vL2).norm(dim=dims)**2
+        vL   = ((vL1/coef*vL2)**2).sum(dim=dims)
         vJ  = functorch.jvp(lambda x:self.func_model(params,x), (x,), (cotangents3,))[1] #(B, output_size)
-        vJ   = (vJ/coef).norm(dim=dims)**2
+        vJ   = ((vJ/coef)**2).sum(dim=dims)**2
         esitimate = vL - 2*vJ + 1 #(B, 1)
         return esitimate
 
@@ -159,7 +159,6 @@ class Nodal_GradientModifier:
                 param.grad.data += delta_p
             else:
                 param.grad = delta_p
-    
 
 class NGmod_absolute(Nodal_GradientModifier):
     def Normlization_Term_2(self,params,x):
@@ -208,10 +207,9 @@ class NGmod_estimate_L2(Nodal_GradientModifier):
         cotangents2s = torch.randint(0,2, (self.sample_times,*x.shape)).cuda()*2-1.0
         cotangents3s = torch.randint(0,2, (self.sample_times,*x.shape)).cuda()*2-1.0
         values = vmap(self.Estimate_L2_once, (None,None, 0,0,0))(params,x,cotangents1s,cotangents2s,cotangents3s).mean(0)
-        values = values.mean(0)
+        values = values.mean()
         return values
-
-
+        
 class NGmod_absoluteNone(NGmod_absolute):
     def backward(self,model, x, y, strict=True):
         pass
