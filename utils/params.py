@@ -33,6 +33,8 @@ def get_args_parser():
     parser.add_argument('--GDMod_lambda2', type=float, default=0)
     parser.add_argument('--GDMod_L1_level', type=float, default=1)
     parser.add_argument('--GDMod_L2_level', type=float, default=1)
+    parser.add_argument('--GDMod_sample_times', type=int, default=100)
+    
     parser.add_argument('--batch_limit', type=int, default=1)
     parser.add_argument('--split', type=str, default="")
     # Model parameters

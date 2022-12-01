@@ -7,7 +7,7 @@ import torch
 import numpy as np
 
 class Nodal_GradientModifier:
-    def __init__(self, lambda1=1, lambda2=1, sample_times=10, do_unit_renormalize=False,L1_level=1,L2_level=1):
+    def __init__(self, lambda1=1, lambda2=1, sample_times=100, do_unit_renormalize=False,L1_level=1,L2_level=1):
         self.lambda1 = lambda1
         self.lambda2 = lambda2
         self.sample_times = sample_times 
