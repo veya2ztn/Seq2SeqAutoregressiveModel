@@ -32,15 +32,19 @@ class Nodal_GradientModifier:
         return values
         
     def TrvJOJv_and_ETrAAT(self,params,x,cotangents_variable):
+        # compute projection on vector `cotangent` only once.
         _, vJ_fn = functorch.vjp(lambda x:self.func_model(params,x), x)
         vJ   = vJ_fn(cotangents_variable)[0]
         dims = list(range(1,len(vJ.shape)))
         vJO  = vJ.sum(dims,keepdims=True)-vJ # <vJ|1-I|
-        vJOJv= (vJO*vJ).sum(dim=dims)#should sum over all dimension except batch
+        vJOJv= (vJO*vJ).sum(dim=dims)# <vJ|1-I|Jv> #should sum over all dimension except batch
         #vJOJv= vJOJv/np.sqrt(torch.prod(self.output_shape).item())
         ETrAAT = functorch.jvp(lambda x:self.func_model(params,x), (x,), (vJO,))[1] # (B,Ouputdim)
+        # <vJ|1-I|J^T | J|1-I|J^Tv> = < k| J^T | J |k> where the  <k| = <vJ|
+        # the `ETrAAT` now is just the < k| J^T |
         dims = list(range(1,len(ETrAAT.shape)))
         ETrAAT=torch.sum(ETrAAT**2,dim=dims)
+        # the `ETrAAT` now is just the < k| J^T | J |k> 
         return vJOJv, ETrAAT# DO NOT average the batch_size also
     def get_TrvJOJv(self,params,x,cotangents_variable):
         _, vJ_fn = functorch.vjp(lambda x:self.func_model(params,x), x)
@@ -63,6 +67,46 @@ class Nodal_GradientModifier:
     def get_TrvJOJv_times(self,params,x,cotangents_variables):
         return vmap(self.get_TrvJOJv, (None, None, 0 ))(params, x,cotangents_variables).mean()
     
+    def Estimate_L2_once(self,params,x,cotangents1,cotangents2,cotangents3):
+        """$L2 =\sum_\gamma [\sum_\alpha (J_\alpha^{\gamma})^2-1]^2=||L_{k}^{\gamma}||^2- 2 ||J||_2^2$
+        Notice the ture L2 need a shift vaule equal to outshape
+        ----------------------------------------
+        import torch
+        from mltool.visualization import *
+        N = 10
+        J = torch.randn(N,N)
+        L = torch.einsum("ba,bc->bac",J,J).flatten(1,2)
+
+        esitmates=[]
+        for B in [1e2,1e3,1e4,1e5,1e6]:
+            for _ in range(10):
+                #a = torch.randint(0,2,size=(int(B),N))*2-1.0# <-- support [-1,1] or any random number 
+                #b = torch.randint(0,2,size=(int(B),N))*2-1.0# <-- support [-1,1] or any random number 
+                a = torch.randn(int(B),N)
+                b = torch.randn(int(B),N)
+                c = torch.randn(int(B),N)
+                v1= torch.einsum('ij,bj->bi',J,a)
+                v2= torch.einsum('ij,bj->bi',J,b)
+                v = v1*v2
+                v3= torch.einsum('ij,bi->bj',J,c)
+                esitmates.append(torch.mean(v.norm(dim=1)**2) - 2*torch.mean(v3.norm(dim=1)**2))
+        real_val = L.norm()**2- 2*J.norm()**2
+        xrange = list(range(len(esitmates)))
+        plt.plot(xrange, [real_val]*len(esitmates),'g')
+        plt.plot(xrange, esitmates,'r')
+        """
+        # in order to avoid large value, we will divide len(output_shape)
+        # this equal to make the offset value in L2 become 1
+        vL1 = functorch.jvp(lambda x:self.func_model(params,x), (x,), (cotangents1,))[1] #(B, output_size)
+        vL2 = functorch.jvp(lambda x:self.func_model(params,x), (x,), (cotangents2,))[1] #(B, output_size)
+        dims = list(range(1,len(vL1.shape)))
+        coef = np.sqrt(np.prod(vL1.shape[1:]))
+        vL   = (vL1/coef*vL2).norm(dim=dims)**2
+        vJ  = functorch.jvp(lambda x:self.func_model(params,x), (x,), (cotangents3,))[1] #(B, output_size)
+        vJ   = (vJ/coef).norm(dim=dims)**2
+        esitimate = vL - 2*vJ + 1 #(B, 1)
+        return esitimate
+
     def inference(self,model,x,y, strict=True,return_abs_value=True):
         back_to_train_mode = model.training
         model.eval()
@@ -127,8 +171,6 @@ class NGmod_absolute(Nodal_GradientModifier):
             # the varation of L2 for iid normal distribution is around 8n^3 + 24n^2 + 24n
         return values
     
-
-
 class NGmod_absolute_set_level(NGmod_absolute):
     def new_Normlization_Term_1(self, params, x):
         return (self.Normlization_Term_1(params, x) - self.L1_level)**2
@@ -160,15 +202,21 @@ class NGmod_absolute_set_level(NGmod_absolute):
             else:
                 param.grad = delta_p
 
+class NGmod_estimate_L2(Nodal_GradientModifier):
+    def Normlization_Term_2(self,params,x):
+        cotangents1s = torch.randint(0,2, (self.sample_times,*x.shape)).cuda()*2-1.0
+        cotangents2s = torch.randint(0,2, (self.sample_times,*x.shape)).cuda()*2-1.0
+        cotangents3s = torch.randint(0,2, (self.sample_times,*x.shape)).cuda()*2-1.0
+        values = vmap(self.Estimate_L2_once, (None,None, 0,0,0))(params,x,cotangents1s,cotangents2s,cotangents3s).mean(0)
+        values = values.mean(0)
+        return values
+
 
 class NGmod_absoluteNone(NGmod_absolute):
     def backward(self,model, x, y, strict=True):
         pass
 
-
-
 class NGmod_delta_mean(Nodal_GradientModifier):
-    
     def Normlization_Term_2(self,params,x):
         '''
         \sum_\beta\sum_{\alpha\neq\beta} J_\alpha^{\gamma}J_\beta^{\gamma}
@@ -183,19 +231,21 @@ class NGmod_delta_mean(Nodal_GradientModifier):
         return C.mean()
 
 
-class NGmode_estimate(Nodal_GradientModifier):
+
+
+class NGmode_estimate_delta(Nodal_GradientModifier):
     def Normlization_Term_2(self, params, x):
         Batch_size = x.size(0)
-#         work_index    = list(range(Batch_size))
-#         good_estimate = torch.zeros(Batch_size).to(x.device)
-#         while len(work_index)>0:
-#             cotangents_variables = torch.randint(2,(self.sample_times,len(work_index),*self.output_shape)).cuda()*2-1
-#             TrvJOJvs,ETrAATs = vmap(self.TrvJOJv_and_ETrAAT, (None, None, 0 ))(params, x[work_index],cotangents_variables)
-#             CorrelationTerm  = ETrAATs.mean(0) - TrvJOJvs.var(0)/2 #(B,)
-#             good_index = np.where(CorrelationTerm.detach().cpu().numpy()>0)[0].tolist()
-#             real_index = [work_index[idx] for idx in good_index]
-#             good_estimate[real_index]=CorrelationTerm[good_index]
-#             work_index = list(set(work_index) - set(real_index))
+        # work_index    = list(range(Batch_size))
+        # good_estimate = torch.zeros(Batch_size).to(x.device)
+        # while len(work_index)>0:
+        #     cotangents_variables = torch.randint(2,(self.sample_times,len(work_index),*self.output_shape)).cuda()*2-1
+        #     TrvJOJvs,ETrAATs = vmap(self.TrvJOJv_and_ETrAAT, (None, None, 0 ))(params, x[work_index],cotangents_variables)
+        #     CorrelationTerm  = ETrAATs.mean(0) - TrvJOJvs.var(0)/2 #(B,)
+        #     good_index = np.where(CorrelationTerm.detach().cpu().numpy()>0)[0].tolist()
+        #     real_index = [work_index[idx] for idx in good_index]
+        #     good_estimate[real_index]=CorrelationTerm[good_index]
+        #     work_index = list(set(work_index) - set(real_index))
         good_estimate = []
         while len(good_estimate) < Batch_size:
             i = len(good_estimate)
@@ -212,7 +262,7 @@ class NGmode_estimate(Nodal_GradientModifier):
         return good_estimate.mean()
 
 
-class NGmode_estimate2(Nodal_GradientModifier):
+class NGmode_estimate2_delta(Nodal_GradientModifier):
     def Normlization_Term_2(self, params, x):
         Batch_size = x.size(0)
         cotangents_variables = torch.randint(
@@ -223,6 +273,8 @@ class NGmode_estimate2(Nodal_GradientModifier):
         CorrelationTerm = CorrelationTerm / \
             np.sqrt(np.prod(list(self.output_shape)))
         return CorrelationTerm.mean()
+
+
 
 from scipy.sparse import identity
 import sparse
@@ -342,7 +394,6 @@ def the_Nodal_L2_meassure(func: Callable, argnums: Union[int, Tuple[int]] = 0, *
     return wrapper_fn
 
 def the_Nodal_L1_meassure(func):
-    
     @wraps(func)
     def wrapper_fn(x):
         cotangents_sum_along_x_dimension = torch.ones_like(x)
