@@ -137,7 +137,7 @@ def compute_rmse(pred, true, return_map_also=False):
 #########################################
 def controlamp(use_amp):
     if use_amp:
-        return autocast
+        return torch.cuda.amp.autocast():
     else:
         class fun():
             def __enter__(self):
