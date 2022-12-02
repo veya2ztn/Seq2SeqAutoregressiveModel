@@ -963,8 +963,9 @@ class WeathBench7066PatchDataset(WeathBench7066):
         
 
         if '3D' in self.normalize_type:
-            self.img_shape        = kargs.get('img_size',WeathBench7066PatchDataset.img_shape)
-            if isinstance(self.img_shape,str):self.img_shape=tuple([int(p) for p in self.img_shape.split(',')])
+            #self.img_shape        = kargs.get('img_size',WeathBench7066PatchDataset.img_shape)
+            #if isinstance(self.img_shape,str):self.img_shape=tuple([int(p) for p in self.img_shape.split(',')])
+            self.img_shape = (14,32,64)
             self.center_index,self.around_index = get_center_around_indexes_3D(self.patch_range,self.img_shape)
         else:
             self.center_index,self.around_index = get_center_around_indexes(self.patch_range,self.img_shape)
