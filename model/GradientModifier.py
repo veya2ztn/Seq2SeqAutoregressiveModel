@@ -101,7 +101,7 @@ class Nodal_GradientModifier:
         coef = np.sqrt(np.prod(vL1.shape[1:]))
         vL   = ((vL1/coef*vL2)**2).sum(dim=dims)
         vJ  = functorch.jvp(lambda x:self.func_model(params,x), (x,), (cotangents3,))[1] #(B, output_size)
-        vJ   = ((vJ/coef)**2).sum(dim=dims)**2
+        vJ   = ((vJ/coef)**2).sum(dim=dims)
         esitimate = vL - 2*vJ + 1 #(B, 1)
         return esitimate
     def inference(self,model,x,y, strict=True,return_abs_value=True):
