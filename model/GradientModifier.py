@@ -110,7 +110,7 @@ class Nodal_GradientModifier:
         buffers=[]
         if not strict:buffers = list(model.buffers())
         if len(buffers) > 0:
-            func_model,params, buffer = make_functional_with_buffers(model, disable_autograd_tracking=True)
+            self.func_model,params, buffer = make_functional_with_buffers(model, disable_autograd_tracking=True)
             self.func_model = lambda params, x: func_model(params, buffer, x)
         else:
             self.func_model, params = make_functional(model,disable_autograd_tracking=True)
