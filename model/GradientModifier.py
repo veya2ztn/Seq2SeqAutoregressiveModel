@@ -240,7 +240,7 @@ class NGmod_estimate_L2(Nodal_GradientModifier):
         cotangents3s = torch.randint(0,2, (self.sample_times,*x.shape)).cuda()*2-1.0
         values = vmap(self.Estimate_L2_once_model, (None,None, 0,0,0))(model,x,cotangents1s,cotangents2s,cotangents3s).mean(0)
         values = values.mean()
-        return values    
+        return values**2
 class NGmod_absoluteNone(NGmod_absolute):
     def backward(self,model, x, y, strict=True):
         pass
