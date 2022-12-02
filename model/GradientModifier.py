@@ -29,8 +29,7 @@ class Nodal_GradientModifier:
             values = values/np.sqrt(coef)
         if return_abs_value:
             return values, tvalues.abs().mean()
-        return values
-        
+        return values    
     def TrvJOJv_and_ETrAAT(self,params,x,cotangents_variable):
         # compute projection on vector `cotangent` only once.
         _, vJ_fn = functorch.vjp(lambda x:self.func_model(params,x), x)
@@ -66,7 +65,6 @@ class Nodal_GradientModifier:
         return vmap(self.get_ETrAAT, (None, None, 0 ))(params, x,cotangents_variables).mean()
     def get_TrvJOJv_times(self,params,x,cotangents_variables):
         return vmap(self.get_TrvJOJv, (None, None, 0 ))(params, x,cotangents_variables).mean()
-    
     def Estimate_L2_once(self,params,x,cotangents1,cotangents2,cotangents3):
         """$L2 =\sum_\gamma [\sum_\alpha (J_\alpha^{\gamma})^2-1]^2=||L_{k}^{\gamma}||^2- 2 ||J||_2^2$
         Notice the ture L2 need a shift vaule equal to outshape
@@ -106,7 +104,6 @@ class Nodal_GradientModifier:
         vJ   = ((vJ/coef)**2).sum(dim=dims)**2
         esitimate = vL - 2*vJ + 1 #(B, 1)
         return esitimate
-
     def inference(self,model,x,y, strict=True,return_abs_value=True):
         back_to_train_mode = model.training
         model.eval()
@@ -132,14 +129,13 @@ class Nodal_GradientModifier:
         L2=self.Normlization_Term_2(params, x).item() if self.lambda2 != 0 else -1
         if back_to_train_mode:model.train()
         return L11,L12,L2
-        
     def backward(self,model, x, y, strict=True):
         
         model.eval()
         buffers=[]
         if not strict:buffers = list(model.buffers())
         if len(buffers) > 0:
-            func_model,params, buffer = make_functional_with_buffers(model, disable_autograd_tracking=True)
+            self.func_model,params, buffer = make_functional_with_buffers(model, disable_autograd_tracking=True)
             self.func_model = lambda params, x: func_model(params, buffer, x)
         else:
             self.func_model, params = make_functional(model,disable_autograd_tracking=True)
@@ -156,20 +152,36 @@ class Nodal_GradientModifier:
             if self.lambda1 != 0:delta_p += self.lambda1*Derivation_Term_1[i]
             if self.lambda2 != 0:delta_p += self.lambda2*Derivation_Term_2[i]
             if param.grad is not None:
-                param.grad.data += delta_p
+                param.grad.detach().add_(delta_p.to(param.device)/2)# this coding style is for multiGPU usage
+                #param.grad.data += delta_p
             else:
-                param.grad = delta_p
+                param.grad = delta_p.to(param.device)
+    def getL1loss(self,model,x):
+        if self.cotangents_sum_along_x_dimension is None or self.cotangents_sum_along_x_dimension.shape != x.shape:
+            self.cotangents_sum_along_x_dimension = torch.ones_like(x)
+        tvalues= functorch.jvp(model,(x,), (self.cotangents_sum_along_x_dimension,))[1]
+        values = ((tvalues-1)**2).mean()
+        return values
+    def getL2loss(self,model,x):
+        raise NotImplementedError
 
 class NGmod_absolute(Nodal_GradientModifier):
     def Normlization_Term_2(self,params,x):
-        values = (((vmap(jacrev(self.func_model, argnums=1), (None, 0),randomness='same')(params, x)**2).sum(-1)-1)**2).mean()
+        dims   = [-t for t in range(1,len(x.shape))]
+        dims.reverse()                         
+        values = (((vmap(jacrev(self.func_model, argnums=1), (None, 0),randomness='same')(params, x)**2).sum(dim=dims)-1)**2).mean()
         N      = np.prod(x.shape[1:])
         if self.do_unit_renormalize: 
             coef = 8*np.power(N,3) + 24*np.power(N,2) + 24*N
             values = values/np.sqrt(coef)
             # the varation of L2 for iid normal distribution is around 8n^3 + 24n^2 + 24n
         return values
-    
+        
+    def getL2loss(self,model,x):
+        dims   = [-t for t in range(1,len(x.shape))]
+        dims.reverse()             
+        values = (((vmap(jacrev(model), (0,),randomness='same')(x,)**2).sum(dim=dims)-1)**2).mean()
+        return values
 class NGmod_absolute_set_level(NGmod_absolute):
     def new_Normlization_Term_1(self, params, x):
         return (self.Normlization_Term_1(params, x) - self.L1_level)**2
@@ -209,11 +221,29 @@ class NGmod_estimate_L2(Nodal_GradientModifier):
         values = vmap(self.Estimate_L2_once, (None,None, 0,0,0))(params,x,cotangents1s,cotangents2s,cotangents3s).mean(0)
         values = values.mean()
         return values
-        
+
+    def Estimate_L2_once_model(self,model,x,cotangents1,cotangents2,cotangents3):
+        # in order to avoid large value, we will divide len(output_shape)
+        # this equal to make the offset value in L2 become 1
+        vL1 = functorch.jvp(model, (x,), (cotangents1,))[1] #(B, output_size)
+        vL2 = functorch.jvp(model, (x,), (cotangents2,))[1] #(B, output_size)
+        dims = list(range(1,len(vL1.shape)))
+        coef = np.sqrt(np.prod(vL1.shape[1:]))
+        vL   = ((vL1/coef*vL2)**2).sum(dim=dims)
+        vJ  = functorch.jvp(model, (x,), (cotangents3,))[1] #(B, output_size)
+        vJ   = ((vJ/coef)**2).sum(dim=dims)**2
+        esitimate = vL - 2*vJ + 1 #(B, 1)
+        return esitimate
+    def getL2loss(self,model,x):
+        cotangents1s = torch.randint(0,2, (self.sample_times,*x.shape)).cuda()*2-1.0
+        cotangents2s = torch.randint(0,2, (self.sample_times,*x.shape)).cuda()*2-1.0
+        cotangents3s = torch.randint(0,2, (self.sample_times,*x.shape)).cuda()*2-1.0
+        values = vmap(self.Estimate_L2_once_model, (None,None, 0,0,0))(model,x,cotangents1s,cotangents2s,cotangents3s).mean(0)
+        values = values.mean()
+        return values    
 class NGmod_absoluteNone(NGmod_absolute):
     def backward(self,model, x, y, strict=True):
         pass
-
 class NGmod_delta_mean(Nodal_GradientModifier):
     def Normlization_Term_2(self,params,x):
         '''
@@ -227,6 +257,7 @@ class NGmod_delta_mean(Nodal_GradientModifier):
         C = torch.einsum('bij,jk,bik->bi',J,K,J) #(B,O)  L^\gamma
         C = (C**2).sum(-1) #(B) \sum_\gamma (L^\gamma)^2
         return C.mean()
+
 
 
 

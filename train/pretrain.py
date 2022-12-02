@@ -467,8 +467,9 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     
     total_diff,total_num  = torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
     nan_count = 0
-    Nodeloss1 = Nodeloss2 = Nodeloss12 = -1
+    Nodeloss1 = Nodeloss2 = Nodeloss12 = 0
     didunscale = False
+    grad_modifier = optimizer.grad_modifier
     while inter_b.update_step():
         #if inter_b.now>10:break
         step = inter_b.now
@@ -491,6 +492,17 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             # the normal initial method will cause numerial explore by using timestep > 4 senenrio.
             with controlamp(model.use_amp)():
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
+                
+                ## nodal loss
+                if grad_modifier is not None:
+                    if grad_modifier.lambda1!=0:
+                        Nodeloss1 = grad_modifier.getL1loss(model, batch[0])
+                        loss += grad_modifier.lambda1 * Nodeloss1
+                        Nodeloss1=Nodeloss1.item()
+                    if grad_modifier.lambda2!=0:
+                        Nodeloss2 = grad_modifier.getL2loss(model, batch[0])
+                        loss += grad_modifier.lambda2 * Nodeloss2
+                        Nodeloss2=Nodeloss2.item()
             loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
             if skip:continue
             loss /= accumulation_steps
@@ -502,17 +514,18 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             else:
                 loss.backward()
 
-            if optimizer.grad_modifier is not None:
-                #assert not model.use_amp
-                #assert accumulation_steps == 1
-                if model.use_amp and not didunscale:
-                    loss_scaler.unscale_(optimizer) # do unscaler here for right gradient modify like clip or norm
-                    didunscale = True
-                assert len(batch)==2 # we now only allow one 
-                assert isinstance(batch[0],torch.Tensor)
-                with controlamp(model.use_amp)():
-                    optimizer.grad_modifier.backward(model, batch[0], batch[1], strict=False)
-                    Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
+            # In order to use multiGPU train, I have to use Loss update scenario, suprisely, it is not worse than split scenario
+            # if optimizer.grad_modifier is not None:
+            #     #assert not model.use_amp
+            #     #assert accumulation_steps == 1 
+            #     if model.use_amp and not didunscale:
+            #         loss_scaler.unscale_(optimizer) # do unscaler here for right gradient modify like clip or norm
+            #         didunscale = True
+            #     assert len(batch)==2 # we now only allow one 
+            #     assert isinstance(batch[0],torch.Tensor)
+            #     with controlamp(model.use_amp)():
+            #         optimizer.grad_modifier.backward(model, batch[0], batch[1], strict=False)
+            #         Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
             
             #GradientModifier().backward(model,x,y)
             #nan_count, skip = nan_diagnose_grad(model,nan_count,logsys)
@@ -527,8 +540,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
 
             if (step+1) % accumulation_steps == 0:
-                if model.use_amp:
-                    
+                if model.use_amp:                  
                     loss_scaler.step(optimizer)
                     loss_scaler.update()
                     
@@ -1429,7 +1441,7 @@ def parse_default_args(args):
         args.snap_index.append([[15,15,15, 7, 7, 7,23,23,23],
                                 [15,31,45,15,31,45,15,31,45]])
 
-
+    args.real_batch_size = args.batch_size * args.accumulation_steps * args.ngpus_per_node *args.world_size
     return args
 
 def create_logsys(args,save_config=True):
@@ -1643,6 +1655,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         banner = logsys.banner_initial(args.epochs, args.SAVE_PATH)
         logsys.banner_show(0, args.SAVE_PATH)
         val_loss=1.234
+        train_loss = -1
         if args.tracemodel:logsys.wandb_watch(model,log_freq=100)
         for epoch in master_bar:
             if epoch < start_epoch:continue
@@ -1722,7 +1735,7 @@ def main_worker222(local_rank, ngpus_per_node, args,result_tensor=None,
         print(f"GPU:{local_rank}:start:{name}:{p.norm().item()}")
     device=p.device
     
-    grad_modifier = NGmod_absolute(100,0)
+    grad_modifier = NGmod_absolute(10000,0)
     optimizer = torch.optim.SGD(model.parameters(), 0.1)
 
     # =======================> start training <==========================
@@ -1731,18 +1744,24 @@ def main_worker222(local_rank, ngpus_per_node, args,result_tensor=None,
     optimizer.zero_grad()
     _input = _inputs[local_rank:local_rank+1].to(device)
     target = targets[local_rank:local_rank+1].to(device)
-    with torch.cuda.amp.autocast():
-        output = model(_input)
-        loss = loss_fn(output, target)
-    scaler.scale(loss).backward()
+    #with torch.cuda.amp.autocast():
+    output = model(_input)
+    loss = loss_fn(output, target) + grad_modifier.getL1loss(model, _input)
+
+    loss.backward()
+    #scaler.scale(loss).backward()
     
-    # scaler.unscale_(optimizer)
+    #scaler.unscale_(optimizer)
     # with torch.cuda.amp.autocast():
-    #     grad_modifier.backward(model, _input, output)
+    #grad_modifier.backward(model, _input, output)
+    
+    #nn.utils.clip_grad_norm_(model.parameters(),0.001)
+
     for name,p in model.named_parameters():
         print(f"GPU:{local_rank}:grad:{name}:{p.grad.norm().item()}")
-    scaler.step(optimizer)
-    scaler.update()
+    optimizer.step()
+    #scaler.step(optimizer)
+    #scaler.update()
     for name,p in model.named_parameters():
         print(f"GPU:{local_rank}:end:{name}:{p.norm().item()}")
 
