@@ -281,7 +281,7 @@ class PatchOverLapWrapper(AutoPatchOverLapModel2D):
     '''
 
     def __init__(self, args, backbone):
-        super().__init__(args.img_size,5)
+        super().__init__((32,64),5)
         self.backbone = backbone
         self.monitor = True
         self.img_size = (32, 64)
@@ -489,6 +489,7 @@ class LargeMLP_3D(AutoPatchModel3D):
         return x
 
 from vit_pytorch import ViT
+from vit_pytorch.vit import repeat
 class SimpleViT(AutoPatchModel2D):
     def __init__(self,img_size=None,patch_range=5,in_chans=20, out_chans=20,p=0.1,**kargs):
         super().__init__(img_size,patch_range)
@@ -513,7 +514,43 @@ class SimpleViT(AutoPatchModel2D):
         x = self.backbone(x)
         x = self.patches_to_image(x)
         return x
-    
+
+class OverLapLargeViT(POverLapTimePosBiasWrapper):
+    def __init__(self,img_size=None,patch_range=5,in_chans=77, out_chans=70,p=0.1,**kargs):
+        super().__init__(None,None)
+        self.in_chans=in_chans
+        self.out_chans=out_chans
+        self.backbone = ViT(image_size = (patch_range,patch_range),
+                    patch_size = 1,
+                    num_classes = self.out_chans,
+                    dim = 2024,
+                    depth = 16,
+                    heads = 6,
+                    mlp_dim = 768,
+                    channels= self.in_chans,
+                    dropout = 0.1,
+                    emb_dropout = 0.1
+            )
+
+    def forward(self, x, time_stamp, pos_stamp ):
+        '''
+        The input either (B,P,patch_range,patch_range) or (B,P,w,h)
+        The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
+        '''
+        #print(x.shape)
+        x = self.image_to_patches(x,time_stamp,pos_stamp)
+        x = self.backbone.to_patch_embedding(x)
+        b, n, _ = x.shape
+        cls_tokens = repeat(self.backbone.cls_token, '1 1 d -> b 1 d', b = b)
+        x  = torch.cat((cls_tokens, x), dim=1)
+        x += self.backbone.pos_embedding[:, :(n + 1)]
+        x  = self.backbone.dropout(x)
+        x  = self.backbone.transformer(x)[:,:-1] #(B, 25, dim)
+        x  = self.backbone.mlp_head(x)#(B, 25, 70)
+        x  = x.permute(0,2,1).reshape(-1,self.out_chans,self.patch_range,self.patch_range) #(B,70,5,5)
+        x  = self.patches_to_image(x)
+        return x
+
 class PatchWrapper(AutoPatchModel2D):
     '''
     input is (B, P, patch_range_1,patch_range_2)
