@@ -501,7 +501,8 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                         Nodeloss1=Nodeloss1.item()
                     if grad_modifier.lambda2!=0:
                         Nodeloss2 = grad_modifier.getL2loss(model, batch[0])
-                        loss += grad_modifier.lambda2 * Nodeloss2
+                        if Nodeloss2>0:
+                            loss += grad_modifier.lambda2 * Nodeloss2
                         Nodeloss2=Nodeloss2.item()
             loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
             if skip:continue
