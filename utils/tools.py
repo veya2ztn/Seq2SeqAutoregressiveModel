@@ -65,8 +65,10 @@ def save_model(model, epoch=0, step=0, optimizer=None, lr_scheduler=None, loss_s
             'step': step,
             'min_loss': min_loss
         }
-
-    torch.save(states, path)
+    # in case, the driver full we first do save and then mv 
+    tmp_path = str(path)+'.tmp'
+    torch.save(states, tmp_path)
+    os.system(f"mv {tmp_path} {path}")
 
 def get_patch_location_index(center,img_shape,patch_range):
         # we want to get the patch index around center with the self.patch_range
