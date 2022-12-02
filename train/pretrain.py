@@ -468,6 +468,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     total_diff,total_num  = torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
     nan_count = 0
     Nodeloss1 = Nodeloss2 = Nodeloss12 = -1
+    didunscale = False
     while inter_b.update_step():
         #if inter_b.now>10:break
         step = inter_b.now
@@ -503,9 +504,10 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
             if optimizer.grad_modifier is not None:
                 #assert not model.use_amp
-                assert accumulation_steps == 1
-                if model.use_amp:
+                #assert accumulation_steps == 1
+                if model.use_amp and not didunscale:
                     loss_scaler.unscale_(optimizer) # do unscaler here for right gradient modify like clip or norm
+                    didunscale = True
                 assert len(batch)==2 # we now only allow one 
                 assert isinstance(batch[0],torch.Tensor)
                 with controlamp(model.use_amp)():
@@ -529,9 +531,11 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     
                     loss_scaler.step(optimizer)
                     loss_scaler.update()
+                    
                 else:
                     optimizer.step()
                 optimizer.zero_grad()
+                didunscale = False
         else:
             with torch.no_grad():
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
@@ -539,11 +543,14 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     with controlamp(model.use_amp)():
                         Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
                     
-        iter_info_pool={}
-        iter_info_pool[f'{status}_loss_gpu{gpu}']     =  loss.item()
-        iter_info_pool[f'{status}_Nodeloss1_gpu{gpu}'] = Nodeloss1
-        iter_info_pool[f'{status}_Nodeloss12_gpu{gpu}'] = Nodeloss12
-        iter_info_pool[f'{status}_Nodeloss2_gpu{gpu}'] = Nodeloss2
+        
+        if logsys.do_iter_log > 0:
+            if logsys.do_iter_log ==  1:iter_info_pool={} # disable forward extra information
+            iter_info_pool[f'{status}_loss_gpu{gpu}']       =  loss.item()
+            if Nodeloss1  > 0:iter_info_pool[f'{status}_Nodeloss1_gpu{gpu}']  = Nodeloss1
+            if Nodeloss12 > 0:iter_info_pool[f'{status}_Nodeloss12_gpu{gpu}'] = Nodeloss12
+            if Nodeloss2  > 0:iter_info_pool[f'{status}_Nodeloss2_gpu{gpu}']  = Nodeloss2
+            
         total_diff  += abs_loss.item()
         #total_num   += len(batch) - 1 #batch 
         total_num   += 1 
@@ -790,7 +797,8 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None):
     fourcastresult={}
     save_prediction_first_step = None#torch.zeros_like(data_loader.dataset.data)
     save_prediction_final_step = None#torch.zeros_like(data_loader.dataset.data)
-    intervel = batches//100 + 1
+    # = 100
+    intervel = batches//logsys.log_trace_times + 1
 
     with torch.no_grad():
         inter_b.lwrite("load everything, start_validating......", end="\r")
@@ -1315,7 +1323,8 @@ def get_ckpt_path(args):
     if not hasattr(args,'train_set'):args.train_set='large'
     args.time_step  = ts_for_mode[args.mode] if not args.time_step else args.time_step
     model_name, datasetname, project_name = get_projectname(args)
-    if (args.pretrain_weight and args.mode!='finetune') or args.continue_train:
+    if args.continue_train:
+        assert args.pretrain_weight
         #args.mode = "finetune"
         SAVE_PATH = Path(os.path.dirname(args.pretrain_weight))
     else:
@@ -1457,7 +1466,8 @@ def create_logsys(args,save_config=True):
     # np.random.seed(args.seed)
     # cudnn.benchmark = True
     ## already done in logsys
-    
+    logsys.log_trace_times = 1 if "Patch" in args.dataset_type else 100
+    logsys.do_iter_log     = 0 if "Patch" in args.dataset_type else 1 
     args.logsys = ""
     if not args.debug and save_config:
         for key, val in vars(args).items():
@@ -1469,6 +1479,7 @@ def create_logsys(args,save_config=True):
                 config['wandb_id']=""
                 json.dump(config,f)
     args.logsys = logsys
+    
     return logsys
 
 #########################################
@@ -1597,6 +1608,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     logsys.info(f"loading weight from {args.pretrain_weight}")
     start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
                         only_model= ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu))
+    start_epoch = start_epoch if args.continue_train else 0
     if args.more_epoch_train:
         assert args.pretrain_weight
         print(f"detect more epoch training, we will do a copy processing for {args.pretrain_weight}")
@@ -1674,6 +1686,66 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         if result_tensor is not None and local_rank==0:
             result_tensor[local_rank] = min_loss
     logsys.close()
+
+def main_worker222(local_rank, ngpus_per_node, args,result_tensor=None,
+        train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
+    if local_rank==0:print(f"we are at mode={args.mode}")
+    ##### locate the checkpoint dir ###########
+    args.gpu = args.local_rank = gpu  = local_rank
+    ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
+    args= parse_default_args(args)
+    SAVE_PATH = get_ckpt_path(args)
+    args.SAVE_PATH  = str(SAVE_PATH)
+    ########## inital log ###################
+    #logsys = create_logsys(args)
+    
+
+    if args.distributed:
+        if args.dist_url == "env://" and args.rank == -1:
+            args.rank = int(os.environ["RANK"])
+        if args.multiprocessing_distributed:
+            # For multiprocessing distributed training, rank needs to be the
+            # global rank among all the processes
+            args.rank = args.rank * ngpus_per_node + local_rank
+        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,world_size=args.world_size, rank=args.rank)
+
+    data = torch.load("debug/data.pt")
+    _inputs = data["_input"]#torch.randn(1,2,5,5).cuda()
+    targets = data["target"]#torch.randn(1,3,5,5).cuda()
+    model = nn.Sequential(nn.Conv2d(2,3,3,padding=1),nn.ReLU(),nn.Linear(5,5))
+    model.load_state_dict(data['model'])
+    torch.cuda.set_device(args.gpu)
+    model.cuda(args.gpu)
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+    
+    for name,p in model.named_parameters():
+        print(f"GPU:{local_rank}:start:{name}:{p.norm().item()}")
+    device=p.device
+    
+    grad_modifier = NGmod_absolute(100,0)
+    optimizer = torch.optim.SGD(model.parameters(), 0.1)
+
+    # =======================> start training <==========================
+    scaler = torch.cuda.amp.GradScaler(enabled=True)
+    loss_fn = torch.nn.MSELoss()
+    optimizer.zero_grad()
+    _input = _inputs[local_rank:local_rank+1].to(device)
+    target = targets[local_rank:local_rank+1].to(device)
+    with torch.cuda.amp.autocast():
+        output = model(_input)
+        loss = loss_fn(output, target)
+    scaler.scale(loss).backward()
+    
+    # scaler.unscale_(optimizer)
+    # with torch.cuda.amp.autocast():
+    #     grad_modifier.backward(model, _input, output)
+    for name,p in model.named_parameters():
+        print(f"GPU:{local_rank}:grad:{name}:{p.grad.norm().item()}")
+    scaler.step(optimizer)
+    scaler.update()
+    for name,p in model.named_parameters():
+        print(f"GPU:{local_rank}:end:{name}:{p.norm().item()}")
+
 
 def create_memory_templete(args):
     train_dataset_tensor=valid_dataset_tensor=train_record_load=valid_record_load=None
