@@ -179,6 +179,7 @@ class AutoPatchModel2D(nn.Module):
         return self.center_around_index_table[img_shape][tgt_shape]
 
     def image_to_patches(self, x):
+        if len(x.shape) == 3:x=x.unsqueeze(0)
         assert len(x.shape)==4
         self.input_is_full_image = False
         good_input_shape = (self.patch_range,self.patch_range)
@@ -292,6 +293,7 @@ class PatchOverLapWrapper(AutoPatchOverLapModel2D):
         The input either (B,P,patch_range,patch_range) or (B,P,w,h)
         The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
         '''
+        
         x = self.image_to_patches(x)
         x = self.backbone(x)
         x = self.patches_to_image(x)
