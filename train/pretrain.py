@@ -555,13 +555,13 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     with controlamp(model.use_amp)():
                         Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
                     
-        
+        iter_info_pool={}
         if logsys.do_iter_log > 0:
             if logsys.do_iter_log ==  1:iter_info_pool={} # disable forward extra information
             iter_info_pool[f'{status}_loss_gpu{gpu}']       =  loss.item()
-            if Nodeloss1  > 0:iter_info_pool[f'{status}_Nodeloss1_gpu{gpu}']  = Nodeloss1
-            if Nodeloss12 > 0:iter_info_pool[f'{status}_Nodeloss12_gpu{gpu}'] = Nodeloss12
-            if Nodeloss2  > 0:iter_info_pool[f'{status}_Nodeloss2_gpu{gpu}']  = Nodeloss2
+        if Nodeloss1  > 0:iter_info_pool[f'{status}_Nodeloss1_gpu{gpu}']  = Nodeloss1
+        if Nodeloss12 > 0:iter_info_pool[f'{status}_Nodeloss12_gpu{gpu}'] = Nodeloss12
+        if Nodeloss2  > 0:iter_info_pool[f'{status}_Nodeloss2_gpu{gpu}']  = Nodeloss2
             
         total_diff  += abs_loss.item()
         #total_num   += len(batch) - 1 #batch 
