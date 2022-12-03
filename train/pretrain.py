@@ -505,7 +505,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                         if Nodeloss2>0:
                             loss += grad_modifier.lambda2 * Nodeloss2
                         Nodeloss2=Nodeloss2.item()
-            #loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
+            loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
             if skip:continue
             loss /= accumulation_steps
             
