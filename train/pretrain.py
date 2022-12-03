@@ -470,6 +470,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     Nodeloss1 = Nodeloss2 = Nodeloss12 = 0
     didunscale = False
     grad_modifier = optimizer.grad_modifier
+    skip = False
     while inter_b.update_step():
         #if inter_b.now>10:break
         step = inter_b.now
@@ -504,7 +505,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                         if Nodeloss2>0:
                             loss += grad_modifier.lambda2 * Nodeloss2
                         Nodeloss2=Nodeloss2.item()
-            loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
+            #loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
             if skip:continue
             loss /= accumulation_steps
             
