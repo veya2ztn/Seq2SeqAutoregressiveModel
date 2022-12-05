@@ -1283,6 +1283,7 @@ def get_model_name(args):
         model_name = "small_" + model_name
     model_name = f"ViT_in_bulk-{model_name}" if len(args.img_size)>2 else model_name
     model_name = f"{args.wrapper_model}-{model_name}" if args.wrapper_model else model_name
+    model_name = f"{model_name}_Patch_{args.patch_range}" if args.patch_range!=5 else model_name
     return model_name
 
 def get_datasetname(args):
@@ -1388,6 +1389,8 @@ def parse_default_args(args):
     if hasattr(args,'use_time_stamp') and args.use_time_stamp:dataset_kargs['use_time_stamp']= args.use_time_stamp
     if hasattr(args,'use_position_idx'):dataset_kargs['use_position_idx']= args.use_position_idx
     if hasattr(args,'random_dataset'):dataset_kargs['random_dataset']= args.random_dataset
+    dataset_kargs['patch_range']= args.patch_range
+    
     args.unique_up_sample_channel = args.unique_up_sample_channel if args.unique_up_sample_channel >0 else args.output_channel
     
 
