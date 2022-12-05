@@ -1438,7 +1438,7 @@ def parse_default_args(args):
 
 
     args.snap_index = [[0,40,80,12],  # 
-                       [38,49]        # property  Z500 and T850 
+                       [38,49,13,27,66]        # property  Z500 and T850 and v2m and u2m and h850
                        ]
     if 'Patch' in args.wrapper_model:
         args.snap_index.append({0:[[15],[15]],1:[[13],[15]],2:[[11],[15]],3:[[ 9],[15]],4:[[ 7],[15]],5:[[ 5],[15]]})
