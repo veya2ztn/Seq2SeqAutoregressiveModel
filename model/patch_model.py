@@ -206,35 +206,47 @@ class AutoPatchOverLapModel2D(AutoPatchModel2D):
     counting_matrix = None
     def patches_to_image(self,x):
         if self.input_is_full_image: 
-            B,W,H,P = self.input_shape_tmp
-            L     =  W+4
-            # (28, 32)
-            x = x.reshape(B,W,H,P,self.patch_range,self.patch_range)
-            x = torch.nn.functional.pad(x,(0,0, 0,0, 0,0, 0,0, 2,2))
-            #print(x.shape)
-            assert self.patch_range==5
+            assert self.patch_range%2 ==1
+            B,W,H,P  = self.input_shape_tmp
+            L     =  W + 2*(self.patch_range//2) #32
+            # counting_matrix[0]*=5
+            # counting_matrix[1]*=10
+            # counting_matrix[2]*=15
+            # counting_matrix[3]*=20
+            # counting_matrix[4:W]*=25
+            # counting_matrix[W]*=20
+            # counting_matrix[W+1]*=15
+            # counting_matrix[W+2]*=10
+            # counting_matrix[W+3]*=5
+            # w_idx   = np.arange(0,L)
+            # self.wes  = np.stack([w_idx, w_idx+1,w_idx+2, w_idx-1, w_idx-2],1)%L
+            # x_idx   = np.arange(H)
+            # self.xes = np.stack([x_idx, x_idx+1,x_idx+2, x_idx-1, x_idx-2],1)%H
+            # self.yes = np.array([[2,  1,  0,  3,  4]])
             if self.counting_matrix is None:
                 counting_matrix = torch.ones(L,H)
-                counting_matrix[0]*=5
-                counting_matrix[1]*=10
-                counting_matrix[2]*=15
-                counting_matrix[3]*=20
-                counting_matrix[4:W]*=25
-                counting_matrix[W]*=20
-                counting_matrix[W+1]*=15
-                counting_matrix[W+2]*=10
-                counting_matrix[W+3]*=5
-                self.counting_matrix = counting_matrix.unsqueeze(0).unsqueeze(0)
-            self.counting_matrix =self.counting_matrix.to(x.device)
-            
-            w_idx = np.arange(0,L)
-            wes   = np.stack([w_idx, w_idx+1,w_idx+2, w_idx-1, w_idx-2],1)%L
-            yes   = np.array([[2,  1,  0,  3,  4]])
-            x_idx = np.arange(H)
-            xes   = np.stack([x_idx, x_idx+1,x_idx+2, x_idx-1, x_idx-2],1)%H
-            x     = x[:, wes, :,:,yes,:].sum(1) #(4, B, H, P, PS)
-            x     = x[:, :, xes,:,yes].sum(1)#(H,W, B,P)   
+                for i in range(self.patch_range-1):
+                    counting_matrix[i]*= self.patch_range*(i+1)
+                    counting_matrix[W+i]*= self.patch_range*(self.patch_range-i-1)
+                counting_matrix[self.patch_range-1:W]*= self.patch_range*self.patch_range
+                self.counting_matrix = counting_matrix.unsqueeze(0).unsqueeze(0) #(1,1,32,64)
+                
+                Delta   = list(range(self.patch_range)) #[0,1,2,3,4]
+                self.yes  = np.array([Delta])
+                Delta   =  -np.array(Delta) + self.patch_range//2 #-->[2,1,0,-1,-2]
+                
+                w_idx   = np.arange(L)
+                self.wes  = np.stack([w_idx+d for d in Delta],1)%L
+                x_idx   = np.arange(H)
+                self.xes = np.stack([x_idx+d for d in Delta],1)%H
+                #print(self.yes)
+                #print(Delta)
+            x = x.reshape(B,W,H,P,self.patch_range,self.patch_range)
+            x = torch.nn.functional.pad(x,(0,0, 0,0, 0,0, 0,0, self.patch_range//2 , self.patch_range//2 )) # only extend W    
+            x     = x[:, self.wes, :,:,self.yes,:].sum(1) #(B, W, H, P, PS,PS) --> (W, B, H, P, PS)
+            x     = x[:, :, self.xes,:,self.yes].sum(1)  #(W, B, H, P, PS) --> (H, W, B, P)   
             x     = x.permute(2,3,1,0)#(B,P, W,H)   
+            self.counting_matrix =self.counting_matrix.to(x.device)
             x     = x/self.counting_matrix #(B,P, W,H)  / (1,1 , W,H)
         return x
     def patches_to_image_slow(self,x):
@@ -282,11 +294,12 @@ class PatchOverLapWrapper(AutoPatchOverLapModel2D):
     '''
 
     def __init__(self, args, backbone):
-        super().__init__((32,64),5)
+        patch_range = 5 if args is None else args.patch_range
+        super().__init__((32,64),patch_range)
         self.backbone = backbone
         self.monitor = True
         self.img_size = (32, 64)
-        self.patch_range = 5
+        self.patch_range = patch_range
         
     def forward(self, x):
         '''

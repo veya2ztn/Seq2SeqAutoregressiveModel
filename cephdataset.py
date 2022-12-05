@@ -955,7 +955,7 @@ class WeathBench7066PatchDataset(WeathBench7066):
         super().__init__(**kargs)
         self.cross_sample     = kargs.get('cross_sample', True) and (self.split == 'train')
         
-        self.patch_range      = patch_range = kargs.get('patch_range', 5)
+        self.patch_range      = patch_range = kargs.get('patch_range')
         #self.img_shape        = kargs.get('img_size',WeathBench7066PatchDataset.img_shape)
         #if isinstance(self.img_shape,str):self.img_shape=tuple([int(p) for p in self.img_shape.split(',')])
         self.img_shape       = WeathBench7066PatchDataset.img_shape
