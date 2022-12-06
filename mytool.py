@@ -241,11 +241,12 @@ def create_fourcast_table(ckpt_path):
     args= parse_default_args(args)
     args.SAVE_PATH = ckpt_path
     ########## inital log ###################
-    args.distributed = False
+    args.distributed = False 
     test_dataset,   test_dataloader = get_test_dataset(args)
     #args.SAVE_PATH = './debug'
     args.use_wandb = 'wandb_runtime'
     logsys = create_logsys(args,False)
+
     info_pool_list = create_fourcast_metric_table(ckpt_path, logsys,test_dataset)
     dirname = summary_dir= ckpt_path
     dirname,name     = os.path.split(dirname)
