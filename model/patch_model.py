@@ -443,6 +443,78 @@ class AutoPatchModel3D(nn.Module):
             x = x.reshape(B, Z, W, H, P).permute(0, 4, 1, 2,3) #(B, Z-2,W-2,H,P)  -> (B,P, Z-2,W-2,H)
         return x
 
+class AutoPatchOverLapModel3D(AutoPatchModel3D):
+    counting_matrix = None
+    def patches_to_image(self,x):
+        if self.input_is_full_image: 
+            assert self.patch_range%2 ==1
+            B, Z, W, H, P = self.input_shape_tmp
+            L   =  W + 2*(self.patch_range[1]//2) #32
+            Y   =  Z + 2*(self.patch_range[0]//2) #32
+            if self.counting_matrix is None:
+                counting_matrix = torch.ones(Y, L, H)
+                for i in range(self.patch_range-1):
+                    counting_matrix[i] *= self.patch_range*(i+1)
+                    counting_matrix[W+i]*= self.patch_range*(self.patch_range-i-1)
+                counting_matrix[self.patch_range-1:W]*= self.patch_range*self.patch_range
+                self.counting_matrix = counting_matrix.unsqueeze(0).unsqueeze(0) #(1,1,32,64)
+                
+                Delta   = list(range(self.patch_range)) #[0,1,2,3,4]
+                self.yes  = np.array([Delta])
+                Delta   =  -np.array(Delta) + self.patch_range//2 #-->[2,1,0,-1,-2]
+                
+                w_idx   = np.arange(L)
+                self.wes  = np.stack([w_idx+d for d in Delta],1)%L
+                x_idx   = np.arange(H)
+                self.xes = np.stack([x_idx+d for d in Delta],1)%H
+                #print(self.yes)
+                #print(Delta)
+            x = x.reshape(B,W,H,P,self.patch_range,self.patch_range)
+            x = torch.nn.functional.pad(x,(0,0, 0,0, 0,0, 0,0, self.patch_range//2 , self.patch_range//2 )) # only extend W    
+            x     = x[:, self.wes, :,:,self.yes,:].sum(1) #(B, W, H, P, PS,PS) --> (W, B, H, P, PS)
+            x     = x[:, :, self.xes,:,self.yes].sum(1)  #(W, B, H, P, PS) --> (H, W, B, P)   
+            x     = x.permute(2,3,1,0)#(B,P, W,H)   
+            self.counting_matrix =self.counting_matrix.to(x.device)
+            x     = x/self.counting_matrix #(B,P, W,H)  / (1,1 , W,H)
+        return x
+    def patches_to_image_slow(self,x):
+        if self.input_is_full_image: 
+            B,W,H,P = self.input_shape_tmp
+            # (28, 32)
+            x = x.reshape(B,W,H,P,self.patch_range,self.patch_range)
+            assert self.patch_range==5
+            assert not self.training
+            
+            x_idx = np.arange(H)
+            xes = np.stack([x_idx, x_idx+1,x_idx+2, x_idx-1, x_idx-2],1)%H
+            yes = np.array([[2,  1,  0,  3,  4]])
+            lines = []
+            end = W + 4 
+            for line_id in range(end): #(0 --> 32)
+                line = 0
+                if line_id < 4:
+                    for w_id in range(line_id+1):
+                        line += x[:, w_id, xes,:, line_id - w_id,yes].mean(1) #(H,B,P)
+                    line = line/(line_id + 1)
+                    line = line.permute(1,2,0).unsqueeze(2)#(B,P,1,H)      
+                elif line_id > end - 5:
+                    for w_id in range(line_id - end, 0): #(-3,-2,-1)
+                        line += x[:, w_id, xes,:, line_id - end -1 - w_id,yes].mean(1)#(H,B,P)       
+                    line = line/(end - line_id)
+                    line = line.permute(1,2,0).unsqueeze(2)#(B,P,1,H)       
+                elif line_id == 4:
+                    w_idx = np.arange(2,W-2)
+                    wes   = np.stack([w_idx, w_idx+1,w_idx+2, w_idx-1, w_idx-2],1)
+                    line  = x[:, wes, :,:,yes,:].mean(1) #(4,B, H, P, PS)
+                    line  = line[:, :, xes,:,yes].mean(1)#(H,B,P)   
+                    line  = line.permute(2,3,1,0)
+                else:
+                    continue
+                lines.append(line)
+            x = torch.cat(lines,2)
+
+        return x
+
 
 class LargeMLP(AutoPatchModel2D):
     '''
