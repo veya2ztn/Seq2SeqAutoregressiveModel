@@ -261,13 +261,15 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
     time_stamp = None
     pos = None
     assert len(start)==1
+
     if isinstance(start[-1],list):
         assert len(start[-1])<=3 # only allow tensor + time_stamp + pos
         tensor, time_stamp, pos = start[-1]
-        start = [tensor]
+        start_tensor = [tensor]
     
-    Field  = start[-1]
-    normlized_Field_list = dataset.do_normlize_data([start])[0]  #always use normlized input
+ 
+    Field  = start_tensor[-1]
+    normlized_Field_list = dataset.do_normlize_data([start_tensor])[0]  #always use normlized input
     normlized_Field    = normlized_Field_list[0] if len(normlized_Field_list)==1 else torch.stack(normlized_Field_list,2)
     
 
@@ -279,7 +281,8 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
     if model.training and model.input_noise_std and i==1:
         normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
 
-    if time_stamp is not None or pos is not None :
+
+    if (time_stamp is not None) or (pos is not None) :
         out   = model(normlized_Field,time_stamp,pos)
     else:
         out   = model(normlized_Field)
@@ -293,8 +296,8 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
 
     ltmv_pred = dataset.inv_normlize_data([out])[0]
     
-    if isinstance(start[0],(list,tuple)):
-        start = start[1:]+[[ltmv_pred, 0 , end[-1]]]
+    if isinstance(end,(list,tuple)):
+        start = start[1:] + [[ltmv_pred, end[1] ,end[2]]]
     else:
         start     = start[1:] + [ltmv_pred]
     #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
@@ -475,8 +478,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         #if inter_b.now>10:break
         step = inter_b.now
         batch = prefetcher.next()
-        #print(batch[0].shape)
-        #raise
+        
         if step < start_step:continue
         #batch = data_loader.dataset.do_normlize_data(batch)
         
@@ -835,11 +837,9 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None):
                                          save_prediction_final_step=save_prediction_final_step,
                                          snap_index=the_snap_index_in_iter)
             train_cost += time.time() - now;now = time.time()
-            global_start = batch[0].clone()
             for _ in range(random_repeat):
                 raise NotImplementedError
-                batch[0] = global_start*(1 + torch.randn_like(global_start)*0.05)
-                fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset)
+                fourcastresult,extra_info = run_one_fourcast_iter(model, [batch[0]*(1 + torch.randn_like(global_start)*0.05)]+batch[1:], idxes, fourcastresult,data_loader.dataset)
             
             rest_cost += time.time() - now;now = time.time()
             if (step+1) % intervel==0 or step==0:
