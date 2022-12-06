@@ -165,7 +165,7 @@ def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,wei
         main(args)
 
 def run_snap_nodal(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,weight_chose=None):
-    if "fourcastresult.gpu_0" in os.listdir(ckpt_path) and not force_fourcast:return
+    #if "fourcastresult.gpu_0" in os.listdir(ckpt_path) and not force_fourcast:return
     from train.pretrain import main
     args = get_the_args(ckpt_path)
     if args is None:return
