@@ -32,7 +32,7 @@ def assign_trail_job(trial_path,wandb_id=None, gpu=0):
     #args.wandb_resume = 'must'
     args.gpu          = gpu
     args.recorder_list = []
-    logsys = create_logsys(args, save_config=False)
+    logsys = create_logsys(args, save_config=False,flag="tb2wandb")
     epoch_pool  = {}
     test_pool   = {}
     iter_metric = []
@@ -197,6 +197,7 @@ def run_snap_nodal(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,w
     #args.data_root = "datasets/weatherbench"
     args.force_fourcast = force_fourcast
     args.wandb_id = None
+    args.SAVE_PATH= ckpt_path
     main(args)
 
 def get_the_args(ckpt_path):
@@ -245,7 +246,7 @@ def create_fourcast_table(ckpt_path):
     test_dataset,   test_dataloader = get_test_dataset(args)
     #args.SAVE_PATH = './debug'
     args.use_wandb = 'wandb_runtime'
-    logsys = create_logsys(args,False)
+    logsys = create_logsys(args,False,flag=args.mode)
 
     info_pool_list = create_fourcast_metric_table(ckpt_path, logsys,test_dataset)
     dirname = summary_dir= ckpt_path
@@ -280,7 +281,7 @@ def create_nodalsnap_table(ckpt_path):
     #args.SAVE_PATH = './debug'
     args.use_wandb = 'wandb_runtime'
     args.wandb_id  = None
-    logsys = create_logsys(args,False)
+    logsys = create_logsys(args,False,flag=args.mode)
     info_pool_list = create_nodal_loss_snap_metric_table(ckpt_path, logsys,test_dataset)
     # dirname = summary_dir= ckpt_path
     # dirname,name     = os.path.split(dirname)

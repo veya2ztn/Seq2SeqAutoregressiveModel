@@ -1339,7 +1339,7 @@ def get_ckpt_path(args):
     if not hasattr(args,'train_set'):args.train_set='large'
     args.time_step  = ts_for_mode[args.mode] if not args.time_step else args.time_step
     model_name, datasetname, project_name = get_projectname(args)
-    if args.continue_train or (args.mode in ['fourcast']):
+    if args.continue_train or ('fourcast' in args.mode):
         assert args.pretrain_weight
         #args.mode = "finetune"
         SAVE_PATH = Path(os.path.dirname(args.pretrain_weight))
@@ -1455,7 +1455,7 @@ def create_logsys(args,save_config=True):
     SAVE_PATH  = args.SAVE_PATH
     recorder_list = args.recorder_list if hasattr(args,'recorder_list') else ['tensorboard']
     logsys   = LoggingSystem(local_rank==0 or (not args.distributed),args.SAVE_PATH,seed=args.seed,
-                             use_wandb=args.use_wandb,recorder_list=recorder_list)
+                             use_wandb=args.use_wandb,recorder_list=recorder_list,flag=args.mode)
     hparam_dict={'patch_size':args.patch_size , 'lr':args.lr, 'batch_size':args.batch_size,
                                                    'model':args.model_type}
     metric_dict={'best_loss':None}
