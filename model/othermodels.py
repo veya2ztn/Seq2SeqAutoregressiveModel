@@ -13,8 +13,8 @@ try:
             super().__init__()
             print("this is pre-set model, we disable all config")
             self.backbone = SWD_former(patch_size= [1, 1],
-                                in_chans= 70,
-                                out_chans= 70,
+                                in_chans= kargs.get("in_chans",70),
+                                out_chans= ("out_chans",70),
                                 embed_dim= 768,
                                 window_size= (32,64),
                                 depths= [4, 4, 4],
@@ -27,8 +27,8 @@ try:
             super().__init__()
             print("this is pre-set model, we disable all config")
             self.backbone = SWD_former(patch_size= [1, 1],
-                                in_chans= 70,
-                                out_chans= 70,
+                                in_chans= kargs.get("in_chans",70),
+                                out_chans= ("out_chans",70),
                                 embed_dim= 768,
                                 window_size= (5,5),
                                 depths= [4, 4, 4],
@@ -41,8 +41,8 @@ try:
             super().__init__()
             print("this is pre-set model, we disable all config")
             self.backbone = SWD_former(patch_size= [1, 1],
-                                in_chans= 70,
-                                out_chans= 70,
+                                in_chans= kargs.get("in_chans",70),
+                                out_chans= ("out_chans",70),
                                 embed_dim= 768,
                                 window_size= (32,64),
                                 depths= [4, 4, 4],
@@ -56,8 +56,8 @@ try:
             super().__init__()
             print("this is pre-set model, we disable all config")
             self.backbone = SWD_former(patch_size= [1, 1],
-                                in_chans= 70,
-                                out_chans= 70,
+                                in_chans= kargs.get("in_chans",70),
+                                out_chans= ("out_chans",70),
                                 embed_dim= 768,
                                 window_size= (32,64),
                                 depths= [4, 4, 4],
