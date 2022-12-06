@@ -1338,7 +1338,7 @@ def get_ckpt_path(args):
     if not hasattr(args,'train_set'):args.train_set='large'
     args.time_step  = ts_for_mode[args.mode] if not args.time_step else args.time_step
     model_name, datasetname, project_name = get_projectname(args)
-    if args.continue_train:
+    if args.continue_train or args.mode in ['fourcast']:
         assert args.pretrain_weight
         #args.mode = "finetune"
         SAVE_PATH = Path(os.path.dirname(args.pretrain_weight))
