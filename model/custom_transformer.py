@@ -153,7 +153,7 @@ class ViT3D(nn.Module):
         b, n, _ = x.shape
 
         if self.use_time_embedding:
-            time_embedding = self.time_embedding(time_stamp).unsqueeze(1)
+            time_embedding = self.time_embedding(time_stamp).unsqueeze(1)            
             x = x + time_embedding #(B,T,L) + (B,1,L) -> (B,T,L)
         #x += self.pos_embedding[:, :(n + 1)] #remove time
         x = self.dropout(x)

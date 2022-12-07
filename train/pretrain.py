@@ -578,7 +578,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         if (step) % intervel==0 or step<30:
             for key, val in iter_info_pool.items():
                 logsys.record(key, val, epoch*batches + step, epoch_flag='iter')
-            outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [RUN Gmod]:{run_gmod}  abs_loss:{abs_loss.item():.4f} loss:{loss.item():.4f} cost:[Date]:{np.mean(data_cost):.1e} [Train]:{np.mean(train_cost):.1e} ")
+            outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [TIME LEN]:{len(batch)} [RUN Gmod]:{run_gmod}  abs_loss:{abs_loss.item():.4f} loss:{loss.item():.4f} cost:[Date]:{np.mean(data_cost):.1e} [Train]:{np.mean(train_cost):.1e} ")
             #print(data_loader.dataset.record_load_tensor.mean().item())
             data_cost  = []
             train_cost = []
@@ -1247,6 +1247,8 @@ def create_nodal_loss_snap_metric_table(fourcastresult, logsys,test_dataset):
 
 def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     dataset_type   = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
+    print(args.patch_range)
+    print(args.dataset_kargs)
     train_dataset  = dataset_type(split="train" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,record_load_tensor=train_record_load,**args.dataset_kargs)
     val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,record_load_tensor=valid_record_load,**args.dataset_kargs)
     train_datasampler = DistributedSampler(train_dataset, shuffle=True) if args.distributed else None
@@ -1391,7 +1393,7 @@ def parse_default_args(args):
     if hasattr(args,'use_time_stamp') and args.use_time_stamp:dataset_kargs['use_time_stamp']= args.use_time_stamp
     if hasattr(args,'use_position_idx'):dataset_kargs['use_position_idx']= args.use_position_idx
     if hasattr(args,'random_dataset'):dataset_kargs['random_dataset']= args.random_dataset
-    dataset_kargs['patch_range']= args.patch_range
+    
     
     args.unique_up_sample_channel = args.unique_up_sample_channel if args.unique_up_sample_channel >0 else args.output_channel
     
@@ -1404,6 +1406,10 @@ def parse_default_args(args):
     img_size   = args.img_size   = deal_with_tuple_string(args.img_size,img_size)
     patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,None)
     dataset_kargs['img_size'] = img_size
+    dataset_kargs['patch_range']= args.patch_range
+
+
+
     args.dataset_kargs = dataset_kargs
     
     # model_img_size= args.img_size
@@ -1418,7 +1424,7 @@ def parse_default_args(args):
         "in_chans": args.input_channel, 
         "out_chans": args.output_channel,
         "fno_blocks": args.fno_blocks,
-        "embed_dim": args.embed_dim if not args.debug else 16, 
+        "embed_dim": args.embed_dim if not args.debug else 32, 
         "depth": args.model_depth if not args.debug else 1,
         "debug_mode":args.debug,
         "double_skip":args.double_skip, 
@@ -1670,7 +1676,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if hasattr(model,'set_epoch'):model.set_epoch(epoch=epoch,epoch_total=args.epochs)
             if hasattr(model,'module') and hasattr(model.module,'set_epoch'):model.module.set_epoch(epoch=epoch,epoch_total=args.epochs)
             logsys.record('learning rate',optimizer.param_groups[0]['lr'],epoch, epoch_flag='epoch')
-            train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
+            #train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
             if (not args.more_epoch_train) and (lr_scheduler is not None):lr_scheduler.step(epoch)
             #torch.cuda.empty_cache()
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys,status='train') if 'small' in args.train_set else -1
