@@ -1285,7 +1285,7 @@ def get_model_name(args):
         model_name = "small_" + model_name
     model_name = f"ViT_in_bulk-{model_name}" if len(args.img_size)>2 else model_name
     model_name = f"{args.wrapper_model}-{model_name}" if args.wrapper_model else model_name
-    model_name = f"{model_name}_Patch_{args.patch_range}" if args.patch_range!="5" else model_name
+    model_name = f"{model_name}_Patch_{args.patch_range}" if args.patch_range else model_name
     return model_name
 
 def get_datasetname(args):
@@ -1402,7 +1402,7 @@ def parse_default_args(args):
     y_c        = args.output_channel= y_c if not args.output_channel else args.output_channel
     patch_size = args.patch_size = deal_with_tuple_string(args.patch_size,patch_size)
     img_size   = args.img_size   = deal_with_tuple_string(args.img_size,img_size)
-    patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,(5,5))
+    patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,None)
     dataset_kargs['img_size'] = img_size
     args.dataset_kargs = dataset_kargs
     
