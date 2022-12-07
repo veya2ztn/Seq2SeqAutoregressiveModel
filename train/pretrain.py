@@ -478,6 +478,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     while inter_b.update_step():
         #if inter_b.now>10:break
         step = inter_b.now
+        run_gmod= (step%10==0)
         batch = prefetcher.next()
         
         if step < start_step:continue
@@ -498,7 +499,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
                 
                 ## nodal loss
-                if grad_modifier is not None:
+                if grad_modifier is not None and run_gmod:
                     if grad_modifier.lambda1!=0:
                         Nodeloss1 = grad_modifier.getL1loss(model, batch[0])
                         loss += grad_modifier.lambda1 * Nodeloss1
@@ -577,7 +578,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         if (step) % intervel==0 or step<30:
             for key, val in iter_info_pool.items():
                 logsys.record(key, val, epoch*batches + step, epoch_flag='iter')
-            outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [TimeLeng]:{time_step_now:} GPU:[{gpu}] abs_loss:{abs_loss.item():.2f} loss:{loss.item():.2f} cost:[Date]:{np.mean(data_cost):.1e} [Train]:{np.mean(train_cost):.1e} ")
+            outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [RUN Gmod]:{run_gmod}  abs_loss:{abs_loss.item():.4f} loss:{loss.item():.4f} cost:[Date]:{np.mean(data_cost):.1e} [Train]:{np.mean(train_cost):.1e} ")
             #print(data_loader.dataset.record_load_tensor.mean().item())
             data_cost  = []
             train_cost = []
