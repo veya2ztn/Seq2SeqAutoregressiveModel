@@ -365,7 +365,7 @@ class ERA5CephSmallPatchDataset(ERA5CephSmallDataset):
             arrays[reversed_part] = -arrays[reversed_part]
         arrays = arrays[self.channel_pick]
         if self.cross_sample:
-            center_h = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2) 
+            center_h = np.random.randint(self.img_shape[-2] - (self.patch_range[-2]//2)*2) 
             center_w = np.random.randint(self.img_shape[-1])
             patch_idx_h,patch_idx_w = self.around_index[center_h,center_w]
             arrays = arrays[..., patch_idx_h, patch_idx_w]
@@ -955,7 +955,8 @@ class WeathBench7066PatchDataset(WeathBench7066):
         super().__init__(**kargs)
         self.cross_sample     = kargs.get('cross_sample', True) and (self.split == 'train')
         
-        self.patch_range      = patch_range = kargs.get('patch_range')
+        patch_range = kargs.get('patch_range',5)
+        
         #self.img_shape        = kargs.get('img_size',WeathBench7066PatchDataset.img_shape)
         #if isinstance(self.img_shape,str):self.img_shape=tuple([int(p) for p in self.img_shape.split(',')])
         self.img_shape       = WeathBench7066PatchDataset.img_shape
@@ -966,14 +967,16 @@ class WeathBench7066PatchDataset(WeathBench7066):
             #self.img_shape        = kargs.get('img_size',WeathBench7066PatchDataset.img_shape)
             #if isinstance(self.img_shape,str):self.img_shape=tuple([int(p) for p in self.img_shape.split(',')])
             self.img_shape = (14,32,64)
-            self.center_index,self.around_index = get_center_around_indexes_3D(self.patch_range,self.img_shape)
+            patch_range = patch_range if isinstance(patch_range,(list,tuple)) else (patch_range,patch_range,patch_range)
+            self.center_index,self.around_index = get_center_around_indexes_3D(patch_range,self.img_shape)
         else:
-            self.center_index,self.around_index = get_center_around_indexes(self.patch_range,self.img_shape)
+            patch_range = patch_range if isinstance(patch_range,(list,tuple)) else (patch_range,patch_range)
+            self.center_index,self.around_index = get_center_around_indexes(patch_range,self.img_shape)
         print(f"notice we will use around_index{self.around_index.shape} to patch data")
         self.channel_last                   = False
         self.random = kargs.get('random_dataset', False)
         self.use_position_idx = kargs.get('use_position_idx', False)
-
+        self.patch_range      = patch_range
     def get_item(self,idx,location=None,reversed_part=False):
         if self.use_offline_data:
             data =  self.dataset_tensor[idx]
@@ -1033,10 +1036,10 @@ class WeathBench7066PatchDataset(WeathBench7066):
         patch_idx_h = patch_idx_w = patch_idx_z = None
         location = None
         if self.cross_sample:
-            center_h = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2) 
+            center_h = np.random.randint(self.img_shape[-2] - (self.patch_range[-2]//2)*2) 
             center_w = np.random.randint(self.img_shape[-1])
             if '3D' in self.normalize_type:
-                center_z = np.random.randint(self.img_shape[-3] - (self.patch_range//2)*2) 
+                center_z      = np.random.randint(self.img_shape[-3] - (self.patch_range[-3]//2)*2) 
                 location      = self.around_index[center_z,center_h, center_w]
                 #location = self.center_index[:,center_z, center_h, center_w]
             else:

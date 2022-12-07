@@ -63,7 +63,7 @@ def get_args_parser():
     parser.set_defaults(random_time_step=False)
     parser.add_argument('--use_scalar_advection', action='store_true')
     parser.set_defaults(use_scalar_advection=False)
-    parser.add_argument('--patch_range', type=int, default=5, help='patch_range')
+    parser.add_argument('--patch_range', type=str, default="5", help='patch_range')
     
     #### fno parameters
     parser.add_argument('--fno-bias', action='store_true')
