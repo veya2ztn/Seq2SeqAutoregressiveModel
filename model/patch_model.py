@@ -8,7 +8,7 @@ from utils.tools import get_center_around_indexes,get_center_around_indexes_3D
 from vit_pytorch import ViT
 from vit_pytorch.vit import repeat
 from .custom_transformer import ViT3DTransformer, ViT3DFlowformer
-
+from einops import rearrange
 class AdaptiveBatchNorm2d(_BatchNorm):
     def _check_input_dim(self, input):
         if input.dim() != 4:
@@ -428,7 +428,7 @@ class AutoPatchModel3D(nn.Module):
     def image_to_patches(self, x):
         assert len(x.shape) == 5 #(B,P,Z,W,H)
         self.input_is_full_image = False
-        good_input_shape = self.patch_range
+        good_input_shape  = tuple(self.patch_range)
         now_input_shape  = tuple(x.shape[-3:])
         if now_input_shape != good_input_shape:
             self.input_is_full_image = True
@@ -485,9 +485,9 @@ class AutoPatchOverLapModel3D(AutoPatchModel3D):
                     self.patch_range[-3]//2 , self.patch_range[-3]//2,
                 )) #(B, X0, X1, X2, P, p0,p1,p2) --> (B, Y0, Y1, Y2, P, p0,p1,p2)
 
-            x = x[:, yes[0],      :,      :,:, pes[0],:,:].sum(1);print(x.shape)
-            x = x[:,      :, yes[1],      :,:, pes[1],:  ].sum(1);print(x.shape)
-            x = x[:,      :,      :, yes[2],:, pes[2]    ].sum(1);print(x.shape)  
+            x = x[:, yes[0],      :,      :,:, pes[0],:,:].sum(1)
+            x = x[:,      :, yes[1],      :,:, pes[1],:  ].sum(1)
+            x = x[:,      :,      :, yes[2],:, pes[2]    ].sum(1)
             # (B, Y0, Y1, Y2, P, p0,p1,p2)--> (Y0, B, Y1, Y2, P, p1,p2)
             # (Y0, B, Y1, Y2, P, p1,p2) --> (Y1, Y0, B, Y2, P, p2)
             # (Y1, Y0, B, Y2, P, p2) --> (Y2, Y1, Y0, B, P)
@@ -500,16 +500,17 @@ class AutoPatchOverLapModel3D(AutoPatchModel3D):
 class POverLapTimePosBias3D(AutoPatchOverLapModel3D):
     '''
     input is  (B, P, patch_z,patch_w,patch_h) tensor
-              (B, 3, patch_z,patch_w,patch_h) pos_stamp
+           (B, 3, patch_z,patch_w,patch_h) pos_stamp
     output is (B, P+3, patch_z,patch_w,patch_h)
     '''
     global_position_feature = None
     def get_direction_from_stamp(self,stamp):
-        w_pos_x    = stamp[:,0]/32*np.pi
-        h_pos_x    = stamp[:,1]/64*2*np.pi
-        x_direction = torch.stack([torch.cos(w_pos_x),
-                                   torch.sin(w_pos_x)*torch.cos(h_pos_x),
-                                   torch.cos(w_pos_x)*torch.sin(h_pos_x)],1) # (B, 3 ,patch_range_1,patch_range_2)
+        z_pos_x = stamp[:,0]/14 + 0.5
+        w_pos_x = stamp[:,1]/32*np.pi
+        h_pos_x = stamp[:,2]/64*2*np.pi
+        x_direction = torch.stack([z_pos_x*torch.cos(w_pos_x),
+                       z_pos_x*torch.sin(w_pos_x)*torch.cos(h_pos_x),
+                       z_pos_x*torch.cos(w_pos_x)*torch.sin(h_pos_x)],1) # (B, 3 ,patch_range_1,patch_range_2)
         return x_direction
 
     def image_to_patches(self, x , pos_stamp):
@@ -525,15 +526,16 @@ class POverLapTimePosBias3D(AutoPatchOverLapModel3D):
                         np.arange(self.img_size[0]),
                         np.arange(self.img_size[1]),
                         np.arange(self.img_size[2]))).transpose(0,2,1,3))
-                self.global_position_feature = self.get_direction_from_stamp(grid[None]) #(1, 3, W, H)
-            pos_feature  = self.global_position_feature.repeat(x.size(0),1,1,1).to(x.device) #(B, 3, W, H)
-            B,P,_,_ = x.shape
+                self.global_position_feature = self.get_direction_from_stamp(grid[None]) #(1, 3, Z,W, H)
+            pos_feature  = self.global_position_feature.repeat(x.size(0),1,1,1,1).to(x.device) #(B, 3, Z,W, H)
+            B,P,_,_,_ = x.shape
             x = torch.cat([x,pos_feature],1) #( B, 77, W, H)
-            x = x[...,around_index[:,:,0],around_index[:,:,1],around_index[:,:,2]] # (B,P,W-4,H,Patch,Patch)
-            x = x.permute(0,2,3,1,4,5)
-            _,W,H,_,_,_ = x.shape
-            self.input_shape_tmp=(B,W,H,P)
-            x = x.flatten(0,2) # (B* W-4 * H,P, Patch,Patch)
+            x = x[...,around_index[:,:,:,0],around_index[:,:,:,1],around_index[:,:,:,2]] # (B,P,Z,W-4,H,Patch,Patch)
+            B,_,Z,W,H,_,_,_ = x.shape
+            self.input_shape_tmp=(B,Z,W,H,P)
+            #x = x.permute(0,2,3,4,1,5,6)
+            x = rearrange(x,'B P Z W H p0 p1 p2 -> B (Z W H) P p0 p1 p2')        
+            #x = x.flatten(0,3) # (B* Z-4*W-4 * H,P, Patch,Patch)
         else:
             pos_feature = self.get_direction_from_stamp(pos_stamp)
             x = torch.cat([x,pos_feature],1) #( B, 77, Patch, Patch)
@@ -745,9 +747,9 @@ class POverLapTimePosVallinaViT(POverLapTimePosBias3D):
             image_size = patch_range,
             patch_size = 1,
             num_classes = self.out_chans,
-            dim = 2024,
-            depth = 16,
-            heads = 6,
+            dim  = kargs.get('embed_dim',768),
+            depth = kargs.get('model_depth',6),
+            heads = kargs.get('n_heads',6),
             mlp_dim = 768,
             channels= self.in_chans,
             dropout = 0.1,
@@ -760,8 +762,19 @@ class POverLapTimePosVallinaViT(POverLapTimePosBias3D):
         The input either (B,P,patch_range,patch_range) or (B,P,w,h)
         The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
         '''
-        #print(x.shape)
+
         x = self.image_to_patches(x,pos_stamp)
-        x = self.backbone(x,time_stamp)
+        if len(x.shape)>5: #(B, LargeP, P, p0, p1, p2)
+            assert not self.training
+            B, NUM = x.shape[:2]
+            time_stamp = time_stamp.unsqueeze(1).repeat(1,NUM,1).flatten(0,1)
+            x = x.flatten(0,1)
+            TheMinBatch=2048
+            if len(x)>TheMinBatch:
+              x = torch.cat([self.backbone(t1,t2) for t1,t2 in zip(torch.split(x,TheMinBatch),torch.split(time_stamp,TheMinBatch))])
+            else:
+                x = self.backbone(x,time_stamp)
+        else:   
+            x = self.backbone(x,time_stamp)
         x = self.patches_to_image(x)
         return x
