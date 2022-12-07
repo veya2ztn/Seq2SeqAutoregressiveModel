@@ -403,7 +403,7 @@ class RandomSelectPatchFetcher:
         self.timestamp = dataset.timestamp
     def next(self):
         if len(self.img_shape)==2:
-            center_h = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2,size=(self.batch_size,)) 
+            center_h = np.random.randint(self.img_shape[-2] - (self.patch_range[-2]//2)*2,size=(self.batch_size,)) 
             center_w = np.random.randint(self.img_shape[-1],size=(self.batch_size,))
             location = self.around_index[center_h, center_w] #(B,2,5,5) 
             patch_idx_h = location[:,0]#(B,5,5)
@@ -412,8 +412,8 @@ class RandomSelectPatchFetcher:
             batch_idx = np.random.randint(self.length,size=(self.batch_size,)).reshape(self.batch_size,1,1) #(B,1,1)
             data = [[self.data[batch_idx+i,:,patch_idx_h,patch_idx_w].permute(0,3,1,2).to(self.device)] for i in range(self.time_step)]
         elif len(self.img_shape)==3:
-            center_z    = np.random.randint(self.img_shape[-3] - (self.patch_range//2)*2,size=(self.batch_size,)) 
-            center_h    = np.random.randint(self.img_shape[-2] - (self.patch_range//2)*2,size=(self.batch_size,))  
+            center_z    = np.random.randint(self.img_shape[-3] - (self.patch_range[-3]//2)*2,size=(self.batch_size,)) 
+            center_h    = np.random.randint(self.img_shape[-2] - (self.patch_range[-2]//2)*2,size=(self.batch_size,))  
             center_w    = np.random.randint(self.img_shape[-1],size=(self.batch_size,)) 
             location    = self.around_index[center_z, center_h, center_w] #(B,2,5,5,5) 
             patch_idx_z = location[:,0]#(B,5,5,5)
@@ -1285,7 +1285,7 @@ def get_model_name(args):
         model_name = "small_" + model_name
     model_name = f"ViT_in_bulk-{model_name}" if len(args.img_size)>2 else model_name
     model_name = f"{args.wrapper_model}-{model_name}" if args.wrapper_model else model_name
-    model_name = f"{model_name}_Patch_{args.patch_range}" if args.patch_range!=5 else model_name
+    model_name = f"{model_name}_Patch_{args.patch_range}" if args.patch_range!="5" else model_name
     return model_name
 
 def get_datasetname(args):
@@ -1402,17 +1402,18 @@ def parse_default_args(args):
     y_c        = args.output_channel= y_c if not args.output_channel else args.output_channel
     patch_size = args.patch_size = deal_with_tuple_string(args.patch_size,patch_size)
     img_size   = args.img_size   = deal_with_tuple_string(args.img_size,img_size)
+    patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,(5,5))
     dataset_kargs['img_size'] = img_size
     args.dataset_kargs = dataset_kargs
     
-    model_img_size= args.img_size
-    if 'Patch' in args.wrapper_model:
-        if '3D' in args.wrapper_model:
-            model_img_size = tuple([5]*3)
-        else:
-            model_img_size = tuple([5]*2)
+    # model_img_size= args.img_size
+    # if 'Patch' in args.wrapper_model:
+    #     if '3D' in args.wrapper_model:
+    #         model_img_size = tuple([5]*3)
+    #     else:
+    #         model_img_size = tuple([5]*2)
     model_kargs={
-        "img_size": model_img_size, 
+        "img_size": args.img_size, 
         "patch_size": args.patch_size, 
         "in_chans": args.input_channel, 
         "out_chans": args.output_channel,
