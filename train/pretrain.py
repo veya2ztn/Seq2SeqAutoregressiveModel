@@ -653,7 +653,7 @@ def save_and_log_table(_list, logsys, name, column, row=None):
 
 def get_tensor_value(tensor,snap_index,time = 0):
     regist_batch_id_list, regist_feature_id_list, regist_position = snap_index
-
+    tensor = tensor[0] if isinstance(tensor,list) else tensor
     if isinstance(regist_position,dict):
         regist_position = regist_position[time]
     # regist_batch_id_list is a list for select batch id
@@ -1311,7 +1311,7 @@ def get_projectname(args):
     if hasattr(args,'history_length') and args.history_length !=1:project_name = f"history_{args.history_length}_"+project_name
     if hasattr(args,'time_reverse_flag') and args.time_reverse_flag !="only_forward":project_name = f"{args.time_reverse_flag}_"+project_name
     if hasattr(args,'time_intervel') and args.time_intervel:project_name = project_name + f"_every_{args.time_intervel}_step"
-    if hasattr(args,'random_dataset') and args.random_dataset:project_name = project_name + f"_random_dataset"
+    if hasattr(args,'cross_sample') and args.cross_sample:project_name = project_name + f"_random_dataset"
     return model_name, datasetname,project_name
 
 def deal_with_tuple_string(patch_size,defult=None):
@@ -1392,7 +1392,6 @@ def parse_default_args(args):
     if hasattr(args,'cross_sample'):dataset_kargs['cross_sample']= args.cross_sample
     if hasattr(args,'use_time_stamp') and args.use_time_stamp:dataset_kargs['use_time_stamp']= args.use_time_stamp
     if hasattr(args,'use_position_idx'):dataset_kargs['use_position_idx']= args.use_position_idx
-    if hasattr(args,'random_dataset'):dataset_kargs['random_dataset']= args.random_dataset
     
     
     args.unique_up_sample_channel = args.unique_up_sample_channel if args.unique_up_sample_channel >0 else args.output_channel
