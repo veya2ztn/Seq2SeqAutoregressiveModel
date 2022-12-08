@@ -850,7 +850,7 @@ class POverLapTimePosVallinaViT(POverLapTimePosBias3D):
             B, NUM = x.shape[:2]
             time_stamp = time_stamp.unsqueeze(1).repeat(1,NUM,1).flatten(0,1)
             x = x.flatten(0,1)
-            TheMinBatch=2048
+            TheMinBatch=2048*8
             if len(x)>TheMinBatch:
               x = torch.cat([self.backbone(t1,t2) for t1,t2 in zip(torch.split(x,TheMinBatch),torch.split(time_stamp,TheMinBatch))])
             else:
