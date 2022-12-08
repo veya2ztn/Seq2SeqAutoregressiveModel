@@ -953,7 +953,7 @@ class WeathBench7066PatchDataset(WeathBench7066):
     def __init__(self,**kargs):
         self.use_offline_data = kargs.get('use_offline_data',0) and kargs.get('split')=='train'
         super().__init__(**kargs)
-        self.cross_sample     = kargs.get('cross_sample', True) and (self.split == 'train')
+        self.cross_sample     = kargs.get('cross_sample', True) and ((self.split == 'train') or (kargs.get('debug', 0)))
         
         patch_range = kargs.get('patch_range',5)
         

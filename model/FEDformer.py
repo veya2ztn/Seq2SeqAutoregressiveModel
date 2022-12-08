@@ -7,6 +7,7 @@ from .Embedding import *
 from .afnonet import timer
 #timer = #timer(True)
 import copy
+
 def get_symmetry_index_in_fft_pannel(shape):
     shape    = np.array(shape)
     indexes  = np.stack([t.flatten() for t in np.meshgrid(*[range(s) for s in shape])])
@@ -246,7 +247,11 @@ class series_decomp_along_time(nn.Module):
         return self.backbone(x)
 
 
-class FourierBlockN(nn.Module):
+class FullFourierBlockN(nn.Module):
+    """
+    weight is (head, in_fea, out_fea, tokens) 
+    thus is a very large tensor.
+    """
     def __init__(self, in_channels=None, out_channels=None, space_dims=None, modes=None, 
                mode_select_method='random',
                head_num = 8,canonical_fft=True):
@@ -306,6 +311,130 @@ class FourierBlockN(nn.Module):
         if self.canonical_fft:out_ft = canonical_fft_freq(out_ft,fft_dim,indexes=self.canonical_index1,indexes2=self.canonical_index2)
         x = torch.fft.irfftn(out_ft, dim=fft_dim, s=space_dims, norm='ortho')
         return (x, None)
+
+class FourierBlockN(nn.Module):
+    """
+    weight is (head, in_fea, out_fea) 
+    share transformation each token then make layer deep
+    """
+    def __init__(self, in_channels=None, out_channels=None, space_dims=None, modes=None, 
+               mode_select_method='random',
+               head_num = 8,canonical_fft=True):
+        super().__init__()
+        print('fourier enhanced block used!')
+        """
+        ND Fourier block. It performs representation learning on frequency domain, 
+        It does FFT, linear transform, and Inverse FFT.    
+        The dims should be [Batch, head_num, in_channels,  *space_dims]
+        For example, 
+        - the 1D Fourier Block is [Batch, head_num, in_channels, length]
+        - the 2D Fourier Block is [Batch, head_num, in_channels,  w,  h]
+        """
+        # get modes on frequency domain
+
+        self.mask = get_frequency_modes_mask_rfft(space_dims, modes=modes, mode_select_method=mode_select_method)
+        print(f"create a mode filter shape={self.mask.shape} with {self.mask.sum()} mode activate")
+        # Notice in the original implement, authors project the picked mode to a dense frequency space 
+        # For example, in 1D case, if we chose to use the mode [0,w1,0,0,w4,0,w6,....]
+        # We will firstly gather them into [w1,w4,w6,....]
+        #    then pad to the orginal size [w1,w4,w6,0,0,0,....]
+        #    the do inverse Fourier Transform.
+        #    so, it is not a mask implement that we mask some frequency mode 
+        # Thus, the self.index is a tuple list like [(0,0,0),(0,0,1),...,] (in ND case)
+        #    who represent the frequency mode we want to keep.
+        # However, in N-D case, we cannot handle such frequency gathering processing.
+        # the only way is putting each mode marked as (k_x,k_y,k_z) into its own position
+        self.space_dims   = space_dims
+        self.in_channels  = in_channels
+        self.out_channels = out_channels
+        shape    = np.array(space_dims[:-1]) #omit the last one, which is half length from rfftn
+
+        indexes,indexes2 = get_symmetry_index_in_fft_pannel(shape)
+        self.canonical_index1=indexes
+        self.canonical_index2=indexes2
+
+        
+        self.scale = (1 / (in_channels * out_channels))
+        self.weights1 = nn.Parameter(
+            self.scale * torch.rand(head_num, in_channels // head_num, out_channels // head_num, 
+                                    dtype=torch.cfloat)) #<----------------
+        self.canonical_fft=canonical_fft
+    def forward(self, x, k=None, v=None, mask=None):
+        # the input must be [Batch, head_num, in_channels, *space_dims]
+        
+        space_dims = x.shape[3:]
+        assert space_dims == self.space_dims
+        fft_dim = tuple(range(3, 3 + len(space_dims)))
+        x_ft = torch.fft.rfftn(x, dim=fft_dim, norm='ortho')
+        x_ft_shape = list(x_ft.shape)
+        x_ft_shape[2] = self.weights1.shape[2]
+        out_ft = torch.zeros(*x_ft_shape, device=x.device, dtype=torch.cfloat)
+        # the x_ft[...,self.index] will convert 
+        #[Batch, head_num, in_channels, *space_dims] --> [Batch, head_num, in_channels, L]
+        out_ft[...,self.mask] = torch.einsum('bhil,hio->bhol',x_ft[...,self.mask],self.weights1)
+        if self.canonical_fft:out_ft = canonical_fft_freq(out_ft,fft_dim,indexes=self.canonical_index1,indexes2=self.canonical_index2)
+        x = torch.fft.irfftn(out_ft, dim=fft_dim, s=space_dims, norm='ortho')
+        return (x, None)
+
+
+
+class FullAttention(nn.Module):
+    def __init__(self, mask_flag=True, factor=5, scale=1, attention_dropout=0.1, output_attention=False):
+        super(FullAttention, self).__init__()
+        self.scale = scale
+        self.mask_flag = mask_flag
+        self.output_attention = output_attention
+        self.dropout = nn.Dropout(attention_dropout)
+
+    def forward(self, queries, keys, values, attn_mask):
+        B, L, H, E = queries.shape
+        _, S, _, D = values.shape
+        scale = self.scale 
+        scores = torch.einsum("blhe,bshe->bhls", queries, keys)
+        if self.mask_flag:
+            scores.masked_fill_(attn_mask.mask, -np.inf)
+
+        A = self.dropout(torch.softmax(scale * scores, dim=-1))
+        V = torch.einsum("bhls,bshd->blhd", A, values)
+
+        if self.output_attention:
+            return (V.contiguous(), A)
+        else:
+            return (V.contiguous(), None)
+
+class AttentionLayer(nn.Module):
+    def __init__(self, attention, d_model, n_heads, d_keys=None,
+                 d_values=None):
+        super(AttentionLayer, self).__init__()
+
+        d_keys = d_keys or (d_model // n_heads)
+        d_values = d_values or (d_model // n_heads)
+
+        self.inner_attention = attention
+        self.query_projection = nn.Linear(d_model, d_keys * n_heads)
+        self.key_projection = nn.Linear(d_model, d_keys * n_heads)
+        self.value_projection = nn.Linear(d_model, d_values * n_heads)
+        self.out_projection = nn.Linear(d_values * n_heads, d_model)
+        self.n_heads = n_heads
+
+    def forward(self, queries, keys, values, attn_mask):
+        B, L, _ = queries.shape
+        _, S, _ = keys.shape
+        H = self.n_heads
+
+        queries = self.query_projection(queries).view(B, L, H, -1)
+        keys = self.key_projection(keys).view(B, S, H, -1)
+        values = self.value_projection(values).view(B, S, H, -1)
+
+        out, attn = self.inner_attention(
+            queries,
+            keys,
+            values,
+            attn_mask
+        )
+        out = out.view(B, L, -1)
+
+        return self.out_projection(out), attn
 
 class CplxAdaptiveModReLU(nn.Module):
     r"""Applies soft thresholding to the complex modulus:
@@ -659,7 +788,7 @@ class FEDformer(nn.Module):
         self.modes       = modes
         self.label_len     = label_len
         self.pred_len      = pred_len
-        self.moving_avg     = (5,5,history_length//2) if moving_avg is None else moving_avg
+        self.moving_avg     = (2,2,history_length//2) if moving_avg is None else moving_avg
         self.seq_len = seq_len = history_length
         seq_len_dec = label_len + pred_len
         self.space_dims_encoder     = tuple(list(img_size)+[seq_len])
@@ -708,7 +837,7 @@ class FEDformer(nn.Module):
                 DecoderLayerN(
                     AutoCorrelationLayerN(decoder_self_att,embed_dim, self.n_heads,share_memory=self.share_memory),
                     AutoCorrelationLayerN(decoder_cross_att,embed_dim, self.n_heads,share_memory=self.share_memory),
-                    embed_dim,self.out_chans,
+                    embed_dim,self.in_chans,
                     moving_avg=self.moving_avg,dropout=self.dropout,
                     activation=self.activation,
                 )
@@ -738,15 +867,18 @@ class FEDformer(nn.Module):
             # the input forget to cat the label len, then we do here
             x_mark_dec = torch.cat([x_mark_enc[:,-self.label_len:],x_mark_dec],1)
 
-        channel_last = 0
-        if x_enc.shape[1:]==tuple([self.in_chans]+list(self.img_size)+[self.seq_len]):
-            channel_last = 1
-            permute_order= [0]+list(range(2,len(x_enc.shape)))+[1]
-            x_enc = x_enc.permute(*permute_order)
-        elif x_enc.shape[1:]==tuple([self.in_chans]+[self.seq_len]+list(self.img_size)):
-            channel_last = 2
-            permute_order= [0]+list(range(3,len(x_enc.shape)))+[2,1]
-            x_enc = x_enc.permute(*permute_order)
+        # channel_last = 0
+        # if x_enc.shape[1:]==tuple([self.in_chans]+list(self.img_size)+[self.seq_len]):
+        #     channel_last = 1
+        #     permute_order= [0]+list(range(2,len(x_enc.shape)))+[1]
+        #     x_enc = x_enc.permute(*permute_order)
+        # elif x_enc.shape[1:]==tuple([self.in_chans]+[self.seq_len]+list(self.img_size)):
+        #     channel_last = 2
+        #     permute_order= [0]+list(range(3,len(x_enc.shape)))+[2,1]
+        #     x_enc = x_enc.permute(*permute_order)
+        assert x_enc.shape[1:] == (*self.img_size, self.seq_len, self.in_chans)
+        
+
         #timer.restart(0)
         ## x_enc      -->  [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T1, in_channels]
         ## x_mark_enc -->  [Batch,  T1]
@@ -773,16 +905,12 @@ class FEDformer(nn.Module):
         seasonal_part, trend_part = self.decoder(dec_out, enc_out,x_mask=dec_self_mask, cross_mask=dec_enc_mask,trend=trend_init)
         #timer.record('decoder',level=0)
         # # final
-        dec_out = trend_part + seasonal_part
+
+        dec_out = trend_part[...,:self.out_chans] + seasonal_part[...,:self.out_chans]
+
         # dec_out = dec_out[..., -self.pred_len:, :]
         dec_out = dec_out[..., -self.pred_len:, :]
+
         #dec_out  = F.pad(dec_out,(2,2))
         # [B, L, D]
-        if channel_last == 1:
-            permute_order= [0,-1]+list(range(1,len(dec_out.shape)-1))# from (B,H,W,T,P) take [0,-1,1,2,3] to (B,P,H,W,T)
-            dec_out = dec_out.permute(*permute_order)
-        elif channel_last == 2:
-            permute_order= [0,-1,-2]+list(range(1,len(dec_out.shape)-2)) # from (B,h,W,T,P) take [0,-1,-2,1,2] to (B,P,T,H,W)
-            dec_out = dec_out.permute(*permute_order)
-        
         return dec_out
