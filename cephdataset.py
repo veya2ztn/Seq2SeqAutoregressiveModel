@@ -974,7 +974,7 @@ class WeathBench7066PatchDataset(WeathBench7066):
             self.center_index,self.around_index = get_center_around_indexes(patch_range,self.img_shape)
         print(f"notice we will use around_index{self.around_index.shape} to patch data")
         self.channel_last                   = False
-        self.random = kargs.get('random_dataset', False)
+        #self.random = kargs.get('random_dataset', False)
         self.use_position_idx = kargs.get('use_position_idx', False)
         self.patch_range      = patch_range
     def get_item(self,idx,location=None,reversed_part=False):
@@ -1011,7 +1011,6 @@ class WeathBench7066PatchDataset(WeathBench7066):
 
         if location is not None:
             if '3D' in self.normalize_type:
-                assert patch_idx_z is not None
                 patch_idx_z, patch_idx_h, patch_idx_w = location
                 data = data[..., patch_idx_z, patch_idx_h, patch_idx_w]
             else:
@@ -1028,8 +1027,7 @@ class WeathBench7066PatchDataset(WeathBench7066):
         return out
 
     def __getitem__(self,idx):
-        if self.random:
-            idx = np.random.randint(self.__len__())
+        #if self.random:idx = np.random.randint(self.__len__())
         reversed_part = self.do_time_reverse(idx)
         time_step_list= [idx+i*self.time_intervel for i in range(self.time_step)]
         if reversed_part:time_step_list = time_step_list[::-1]
