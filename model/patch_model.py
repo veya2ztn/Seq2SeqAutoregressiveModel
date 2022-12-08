@@ -8,7 +8,9 @@ from utils.tools import get_center_around_indexes,get_center_around_indexes_3D
 from vit_pytorch import ViT
 from vit_pytorch.vit import repeat
 from .custom_transformer import ViT3DTransformer, ViT3DFlowformer
+from .FEDformer import FEDformer
 from einops import rearrange
+
 class AdaptiveBatchNorm2d(_BatchNorm):
     def _check_input_dim(self, input):
         if input.dim() != 4:
@@ -291,32 +293,7 @@ class AutoPatchOverLapModel2D(AutoPatchModel2D):
 
         return x
 
-class PatchOverLapWrapper(AutoPatchOverLapModel2D):
-    '''
-    input is (B, P, patch_range_1,patch_range_2)
-    output is (B,P, patch_range_1,patch_range_2)
-    '''
-
-    def __init__(self, args, backbone):
-        patch_range = 5 if args is None else args.patch_range
-        super().__init__((32,64),patch_range)
-        self.backbone = backbone
-        self.monitor = True
-        self.img_size = (32, 64)
-        self.patch_range = patch_range
-        
-    def forward(self, x):
-        '''
-        The input either (B,P,patch_range,patch_range) or (B,P,w,h)
-        The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
-        '''
-        
-        x = self.image_to_patches(x)
-        x = self.backbone(x)
-        x = self.patches_to_image(x)
-        return x
-
-class POverLapTimePosBiasWrapper(PatchOverLapWrapper):
+class POverLapTimePosBias2D(AutoPatchOverLapModel2D):
     '''
     input is (B, P, patch_range_1,patch_range_2) tensor
              (B, 4) time_stamp
@@ -324,6 +301,7 @@ class POverLapTimePosBiasWrapper(PatchOverLapWrapper):
     output is (B,P, patch_range_1,patch_range_2)
     '''
     global_position_feature = None
+
     def get_direction_from_stamp(self,stamp):
         w_pos_x    = stamp[:,0]/32*np.pi
         h_pos_x    = stamp[:,1]/64*2*np.pi
@@ -363,6 +341,39 @@ class POverLapTimePosBiasWrapper(PatchOverLapWrapper):
         
         return x
 
+class PatchOverLapWrapper(AutoPatchOverLapModel2D):
+    '''
+    input is (B, P, patch_range_1,patch_range_2)
+    output is (B,P, patch_range_1,patch_range_2)
+    '''
+
+    def __init__(self, args, backbone):
+        patch_range = 5 if args is None else args.patch_range
+        super().__init__((32,64),patch_range)
+        self.backbone = backbone
+        self.monitor = True
+        self.img_size = (32, 64)
+        self.patch_range = patch_range
+        
+    def forward(self, x):
+        '''
+        The input either (B,P,patch_range,patch_range) or (B,P,w,h)
+        The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
+        '''
+        
+        x = self.image_to_patches(x)
+        x = self.backbone(x)
+        x = self.patches_to_image(x)
+        return x
+
+class POverLapTimePosBiasWrapper(POverLapTimePosBias2D):
+    def __init__(self, args, backbone):
+        patch_range = 5 if args is None else args.patch_range
+        super().__init__((32,64),patch_range)
+        self.backbone = backbone
+        self.monitor = True
+        self.img_size = (32, 64)
+        self.patch_range = patch_range
     def forward(self, x, time_stamp, pos_stamp ):
         '''
         The input either (B,P,patch_range,patch_range) or (B,P,w,h)
@@ -374,6 +385,76 @@ class POverLapTimePosBiasWrapper(PatchOverLapWrapper):
         #print(x.shape)
         x = self.patches_to_image(x)
         return x
+
+class POverLapTimePosFEDformer(POverLapTimePosBias2D):
+    '''
+    input is (B, P, patch_range_1,patch_range_2) tensor
+             (B, 2, patch_range_1,patch_range_2) pos_stamp
+             (B, 4) start_time_stamp
+             (B, 4) end_time_stamp
+    output is (B,P, patch_range_1,patch_range_2)
+    '''
+    def __init__(self, img_size=None,patch_range=5,in_chans=73, out_chans=70,**kargs):
+        super().__init__(img_size,patch_range)
+        self.in_chans=in_chans
+        self.out_chans=out_chans
+        self.patch_range = patch_range
+        self.backbone = FEDformer(img_size=(patch_range,patch_range), in_chans=in_chans,out_chans=out_chans, 
+                                  embed_dim=kargs.get('embed_dim',748), 
+                                  modes=kargs.get('modes',(4,4,6)), 
+                                  n_heads=kargs.get('n_heads', 24),
+                                  depth=kargs.get('model_depth',4),
+                                  history_length=kargs.get('history_length',16),
+                                  pred_len=kargs.get('pred_len',4),
+                                  label_len=kargs.get('label_len',4))
+
+    def image_to_patches(self, x,pos_stamp):
+        assert len(x.shape)==5 #(B, T, P, W, H)
+        Batch_size, Time_length = x.shape[:2]
+        x = x.flatten(0,1)
+        self.input_is_full_image = False
+        good_input_shape = (self.patch_range,self.patch_range)
+        now_input_shape  = tuple(x.shape[-2:])
+        if  now_input_shape!= good_input_shape:
+            self.input_is_full_image = True
+            around_index = self.around_index_depend_input(now_input_shape)
+            if self.global_position_feature is None:
+                grid = torch.Tensor(np.stack(np.meshgrid(np.arange(self.img_size[0]),np.arange(self.img_size[1]))).transpose(0,2,1)) #(2, 32, 64)
+                self.global_position_feature = self.get_direction_from_stamp(grid[None]) #(1, 3, W, H)
+            pos_feature  = self.global_position_feature.repeat(x.size(0),1,1,1).to(x.device) #(B, 3, W, H)
+            B,P,_,_ = x.shape
+            
+            x = torch.cat([x,pos_feature],1) #( B, 77, W, H)
+            x = x[...,around_index[:,:,0],around_index[:,:,1]] # (B,P,W-4,H,Patch,Patch)
+            x = x.permute(0,2,3,1,4,5)
+            _,W,H,PP,_,_ = x.shape
+            self.input_shape_tmp=(B,W,H,P)
+            x = x.flatten(0,2) # (B* W-4 * H,P, Patch,Patch)
+        else:
+            pos_stamp = pos_stamp.flatten(0,1)
+            pos_feature = self.get_direction_from_stamp(pos_stamp) # ( B, T, 73, Patch, Patch)
+            x = torch.cat([x,pos_feature],1) #( B, T, 73, Patch, Patch)
+        now_input_shape  = tuple(x.shape[-2:])
+        assert now_input_shape == good_input_shape
+        x = x.reshape(-1, Time_length, *x.shape[1:])
+        return x
+
+    def forward(self, x, pos_stamp, start_time_stamp, end_time_stamp ):
+        '''
+        The input either (B,P,patch_range,patch_range) or (B,P,w,h)
+        The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
+        '''
+        #print(x.shape)
+        shape = x.shape
+        x = self.image_to_patches(x,pos_stamp)
+        x = rearrange(x,'b t c w h -> b w h t c')
+        x = self.backbone(x,start_time_stamp, end_time_stamp)
+        x = rearrange(x,'b w h t c -> b t c w h')
+        x = x.flatten(0,1)
+        x = self.patches_to_image(x)
+        x = x.reshape(shape[0],-1,*shape[2:])
+        return x
+
 
 
 class AutoPatchModel3D(nn.Module):

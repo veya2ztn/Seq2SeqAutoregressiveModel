@@ -235,9 +235,9 @@ class NGmod_estimate_L2(Nodal_GradientModifier):
         esitimate = vL - 2*vJ + 1 #(B, 1)
         return esitimate
     def getL2loss(self,model,x):
-        cotangents1s = torch.randint(0,2, (self.sample_times,*x.shape)).cuda()*2-1.0
-        cotangents2s = torch.randint(0,2, (self.sample_times,*x.shape)).cuda()*2-1.0
-        cotangents3s = torch.randint(0,2, (self.sample_times,*x.shape)).cuda()*2-1.0
+        cotangents1s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
+        cotangents2s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
+        cotangents3s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
         values = vmap(self.Estimate_L2_once_model, (None,None, 0,0,0))(model,x,cotangents1s,cotangents2s,cotangents3s).mean(0)
         values = values.mean()
         return values.abs()

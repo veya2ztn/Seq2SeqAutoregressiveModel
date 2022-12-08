@@ -135,17 +135,6 @@ def compute_rmse(pred, true, return_map_also=False):
 #########################################
 ########## normal forward step ##########
 #########################################
-def controlamp(use_amp):
-    if use_amp:
-        return torch.cuda.amp.autocast
-    else:
-        class fun():
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc_val, exc_tb):
-                return True
-        return fun
 
 def make_data_regular(batch,half_model=False):
     # the input can be
@@ -336,9 +325,53 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
 #             target = target 
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
+def once_forward_patch_N2M(model,i,start,end,dataset,time_step_1_mode):
+    time_stamp = None
+    pos = None
+    assert len(start)==model.history_length
+    assert len(end)  ==model.pred_len
+    assert len(start[0])==3
+    assert len(end[0])==3
+    # start 
+    # [tensor (B,P,W,H), time_stamp (B,4), pos (B,2,W,H)]
+    # [tensor (B,P,W,H), time_stamp (B,4), pos (B,2,W,H)]
+    #         ..........
+    # [tensor (B,P,W,H), time_stamp (B,4), pos (B,2,W,H)]
+
+    # end 
+    # [tensor (B,P,W,H), time_stamp (B,4), pos (B,2,W,H)]
+    # [tensor (B,P,W,H), time_stamp (B,4), pos (B,2,W,H)]
+    #         ..........
+    # [tensor (B,P,W,H), time_stamp (B,4), pos (B,2,W,H)]
+    
+    assert isinstance(start[-1],list)
+    
+    tensor, start_time_stamp, start_pos = [torch.stack([s[i] for s in start],1) for i in range(len(start[-1]))] 
+    target,   end_time_stamp,   end_pos =  [torch.stack([s[i] for s in   end],1) for i in range(len(  end[-1]))] 
+    
+    out   = model(tensor, start_pos,start_time_stamp,end_time_stamp) #(B,T,P,W,H) (B,T,4) (B,T,2,W,H)
+
+    extra_loss = 0
+    extra_info_from_model_list = []
+    if isinstance(out,(list,tuple)):
+        extra_loss                 = out[1]
+        extra_info_from_model_list = out[2:]
+        out = out[0]
+
+    ltmv_pred = dataset.inv_normlize_data([out])[0] #(B,T,P,W,H)
+    
+    start = start[len(end):] + [[tensor, time_stamp, pos] for tensor,(_,time_stamp,pos) in zip(ltmv_pred.permute(1,0,2,3,4), end)]
+    
+    return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
+
+
+
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
     if 'Patch' in dataset.__class__.__name__:
-        return once_forward_patch(model,i,start,end,dataset,time_step_1_mode)
+        if model.pred_len > 1:
+            return once_forward_patch_N2M(model,i,start,end,dataset,time_step_1_mode)
+        else:
+            return once_forward_patch(model,i,start,end,dataset,time_step_1_mode)
     elif hasattr(dataset,'use_time_stamp') and dataset.use_time_stamp:
         return once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode)
     else:
@@ -359,8 +392,11 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
         raise
     pred_step = 0
     start = batch[0:model.history_length] # start must be a list
-    for i in range(model.history_length,len(batch)):# i now is the target index
-        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
+    
+    for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
+        end = batch[i:i+model.pred_len]
+        end = end[0] if len(end) == 1 else end
+        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
         if extra_loss !=0:
             iter_info_pool[f'{status}_extra_loss_gpu{gpu}_timestep{i}'] = extra_loss.item()
         for extra_info_from_model in extra_info_from_model_list:
@@ -490,12 +526,12 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         if status == 'train':
             if hasattr(model,'set_step'):model.set_step(step=step,epoch=epoch)
             if hasattr(model,'module') and hasattr(model.module,'set_step'):model.module.set_step(step=step,epoch=epoch)
-            if model.train_mode =='pretrain':
-                time_truncate = max(min(epoch//3,data_loader.dataset.time_step),2)
-                batch=batch[:model.history_length -1 + time_truncate]
+            # if model.train_mode =='pretrain':
+            #     time_truncate = max(min(epoch//3,data_loader.dataset.time_step),2)
+            #     batch=batch[:model.history_length -1 + time_truncate]
             
             # the normal initial method will cause numerial explore by using timestep > 4 senenrio.
-            with controlamp(model.use_amp)():
+            with torch.cuda.amp.autocast(enabled=model.use_amp):
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
                 
                 ## nodal loss
@@ -558,7 +594,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             with torch.no_grad():
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
                 if optimizer.grad_modifier is not None:
-                    with controlamp(model.use_amp)():
+                    with torch.cuda.amp.autocast(enabled=model.use_amp):
                         Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
                     
         iter_info_pool={}
@@ -699,9 +735,11 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
         for i,tensor in enumerate(start):
             # each tensor is like (B, 70, 32, 64) or (B, P, Z, W, H)
             snap_line.append([len(snap_line), get_tensor_value(tensor,snap_index, time=model.history_length),'input'])
-
-    for i in range(model.history_length,len(batch)):# i now is the target index
-        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
+    
+    for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
+        end = batch[i:i+model.pred_len]
+        end = end[0] if len(end) == 1 else end
+        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
         for extra_info_from_model in extra_info_from_model_list:
             for key, val in extra_info_from_model.items():
                 if i not in extra_info:extra_info[i] = {}
@@ -1065,7 +1103,7 @@ def run_nodaloss_snap(model, batch, idxes, fourcastresult,dataset, property_sele
     with torch.no_grad():
         for i in range(model.history_length,len(batch)):# i now is the target index
             func_model = lambda x:model(x)[:,property_select]
-            with controlamp(model.use_amp)():
+            with torch.cuda.amp.autocast(enabled=model.use_amp):
                 ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
                 now = time.time()
                 L1meassure = vmap(the_Nodal_L1_meassure(func_model), (0))(start[-1].unsqueeze(1)) # (B, Pick, W,H)
@@ -1247,8 +1285,6 @@ def create_nodal_loss_snap_metric_table(fourcastresult, logsys,test_dataset):
 
 def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     dataset_type   = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
-    print(args.patch_range)
-    print(args.dataset_kargs)
     train_dataset  = dataset_type(split="train" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,record_load_tensor=train_record_load,**args.dataset_kargs)
     val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,record_load_tensor=valid_record_load,**args.dataset_kargs)
     train_datasampler = DistributedSampler(train_dataset, shuffle=True) if args.distributed else None
@@ -1406,7 +1442,7 @@ def parse_default_args(args):
     patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,None)
     dataset_kargs['img_size'] = img_size
     dataset_kargs['patch_range']= args.patch_range
-
+    dataset_kargs['debug']= args.debug
 
 
     args.dataset_kargs = dataset_kargs
@@ -1420,6 +1456,7 @@ def parse_default_args(args):
     model_kargs={
         "img_size": args.img_size, 
         "patch_size": args.patch_size, 
+        "patch_range":args.patch_range,
         "in_chans": args.input_channel, 
         "out_chans": args.output_channel,
         "fno_blocks": args.fno_blocks,
@@ -1546,7 +1583,7 @@ def build_model(args):
     model.random_time_step_train = args.random_time_step
     model.input_noise_std = args.input_noise_std
     model.history_length=args.history_length
-    model.use_amp = args.use_amp
+    model.use_amp = bool(args.use_amp)
     model.clip_grad= args.clip_grad
     model.pred_len = args.pred_len
     model.accumulation_steps = args.accumulation_steps
