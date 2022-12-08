@@ -1287,7 +1287,7 @@ def get_model_name(args):
         model_name = "small_" + model_name
     model_name = f"ViT_in_bulk-{model_name}" if len(args.img_size)>2 else model_name
     model_name = f"{args.wrapper_model}-{model_name}" if args.wrapper_model else model_name
-    model_name = f"{model_name}_Patch_{args.patch_range}" if args.patch_range else model_name
+    model_name = f"{model_name}_Patch_{args.patch_range if not isinstance(args.patch_range,(list,tuple)) else ','.join(list())}" if args.patch_range else model_name
     return model_name
 
 def get_datasetname(args):
@@ -1676,7 +1676,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if hasattr(model,'set_epoch'):model.set_epoch(epoch=epoch,epoch_total=args.epochs)
             if hasattr(model,'module') and hasattr(model.module,'set_epoch'):model.module.set_epoch(epoch=epoch,epoch_total=args.epochs)
             logsys.record('learning rate',optimizer.param_groups[0]['lr'],epoch, epoch_flag='epoch')
-            #train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
+            train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
             if (not args.more_epoch_train) and (lr_scheduler is not None):lr_scheduler.step(epoch)
             #torch.cuda.empty_cache()
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys,status='train') if 'small' in args.train_set else -1
