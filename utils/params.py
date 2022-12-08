@@ -34,6 +34,7 @@ def get_args_parser():
     parser.add_argument('--GDMod_L1_level', type=float, default=1)
     parser.add_argument('--GDMod_L2_level', type=float, default=1)
     parser.add_argument('--GDMod_sample_times', type=int, default=100)
+    parser.add_argument('--log_trace_times', type=int, default=1)
     
     parser.add_argument('--batch_limit', type=int, default=1)
     parser.add_argument('--split', type=str, default="")
