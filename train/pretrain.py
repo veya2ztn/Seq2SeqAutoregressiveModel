@@ -597,10 +597,11 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     with torch.cuda.amp.autocast(enabled=model.use_amp):
                         Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
                     
-        iter_info_pool={}
         if logsys.do_iter_log > 0:
             if logsys.do_iter_log ==  1:iter_info_pool={} # disable forward extra information
             iter_info_pool[f'{status}_loss_gpu{gpu}']       =  loss.item()
+        else:
+            iter_info_pool={}
         if Nodeloss1  > 0:iter_info_pool[f'{status}_Nodeloss1_gpu{gpu}']  = Nodeloss1
         if Nodeloss12 > 0:iter_info_pool[f'{status}_Nodeloss12_gpu{gpu}'] = Nodeloss12
         if Nodeloss2  > 0:iter_info_pool[f'{status}_Nodeloss2_gpu{gpu}']  = Nodeloss2
@@ -1529,7 +1530,7 @@ def create_logsys(args,save_config=True):
     # cudnn.benchmark = True
     ## already done in logsys
     logsys.log_trace_times = 1 if "Patch" in args.dataset_type else 100
-    logsys.do_iter_log     = 0 if "Patch" in args.dataset_type else 1 
+    logsys.do_iter_log     = args.do_iter_log
     args.logsys = ""
     if not args.debug and save_config:
         for key, val in vars(args).items():
