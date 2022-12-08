@@ -1347,7 +1347,7 @@ def get_projectname(args):
     if hasattr(args,'history_length') and args.history_length !=1:project_name = f"history_{args.history_length}_"+project_name
     if hasattr(args,'time_reverse_flag') and args.time_reverse_flag !="only_forward":project_name = f"{args.time_reverse_flag}_"+project_name
     if hasattr(args,'time_intervel') and args.time_intervel:project_name = project_name + f"_every_{args.time_intervel}_step"
-    if hasattr(args,'cross_sample') and args.cross_sample:project_name = project_name + f"_random_dataset"
+    #if hasattr(args,'cross_sample') and args.cross_sample:project_name = project_name + f"_random_dataset"
     return model_name, datasetname,project_name
 
 def deal_with_tuple_string(patch_size,defult=None):
@@ -1671,6 +1671,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
                         only_model= ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu))
     start_epoch = start_epoch if args.continue_train else 0
+
     if args.more_epoch_train:
         assert args.pretrain_weight
         print(f"detect more epoch training, we will do a copy processing for {args.pretrain_weight}")
