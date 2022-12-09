@@ -154,20 +154,26 @@ class AutoPatchModel2D(nn.Module):
         self.center_index_pool[img_size]=self.center_index
         self.around_index_pool[img_size]=self.around_index
 
+    def create_center_around_index(self,img_shape):
+        patch_range = self.patch_range if isinstance(self.patch_range,(list,tuple)) else (self.patch_range,self.patch_range)
+        img_shape = tuple(img_shape)
+        h_range = range(patch_range[-2]//2, img_shape[-2] - (patch_range[-2]//2))
+        if img_shape[-1] != self.img_size[-1]: # if is not 64, then we disable peroid boundary
+            w_range = range(patch_range[-1]//2, img_shape[-1] - (patch_range[-1]//2))
+        else:
+            w_range = range(img_shape[-1]) 
+        center_index,around_index=get_center_around_indexes(patch_range,img_shape, h_range, w_range)
+        self.center_index_pool[img_shape]=center_index
+        self.around_index_pool[img_shape]=around_index
+        
     def center_index_depend_input(self, img_shape):
         if img_shape not in self.center_index_pool:
-            img_shape = tuple(img_shape)
-            center_index,around_index=get_center_around_indexes(self.patch_range,img_shape)
-            self.center_index_pool[img_shape]=center_index
-            self.around_index_pool[img_shape]=around_index
+            self.create_center_around_index(img_shape)
         return self.center_index_pool[img_shape]
 
     def around_index_depend_input(self, img_shape):
         if img_shape not in self.around_index_pool:
-            img_shape = tuple(img_shape)
-            center_index,around_index=get_center_around_indexes(self.patch_range,img_shape)
-            self.center_index_pool[img_shape]=center_index
-            self.around_index_pool[img_shape]=around_index
+            self.create_center_around_index(img_shape)
         return self.around_index_pool[img_shape]
 
     def get_center_index_depend_on(self, tgt_shape, img_shape):
@@ -209,52 +215,153 @@ class AutoPatchModel2D(nn.Module):
 
 class AutoPatchOverLapModel2D(AutoPatchModel2D):
     counting_matrix = None
+    counting_matrixes = {}
+    yeses = {}
+    peses = {}
+    
+    # def patches_to_image(self,x):
+    #     """
+    #     Should split to two types:
+    #     1. if the output tensor is  (32,64), then it has global period symmetry
+    #     2. if the output tensor is bigger patch like (8,8), the it means in finetune phase and don't have peroid symmetry. 
+    #     """
+    #     if self.input_is_full_image: 
+    #         assert self.patch_range%2 ==1
+    #         B,W,H,P  = self.input_shape_tmp
+    #         L     =  W + 2*(self.patch_range//2) #32
+    #         # counting_matrix[0]*=5
+    #         # counting_matrix[1]*=10
+    #         # counting_matrix[2]*=15
+    #         # counting_matrix[3]*=20
+    #         # counting_matrix[4:W]*=25
+    #         # counting_matrix[W]*=20
+    #         # counting_matrix[W+1]*=15
+    #         # counting_matrix[W+2]*=10
+    #         # counting_matrix[W+3]*=5
+    #         # w_idx   = np.arange(0,L)
+    #         # self.wes  = np.stack([w_idx, w_idx+1,w_idx+2, w_idx-1, w_idx-2],1)%L
+    #         # x_idx   = np.arange(H)
+    #         # self.xes = np.stack([x_idx, x_idx+1,x_idx+2, x_idx-1, x_idx-2],1)%H
+    #         # self.yes = np.array([[2,  1,  0,  3,  4]])
+    #         if self.counting_matrix is None:
+    #             #counting_matrix = torch.ones(L,H)
+    #             #for i in range(self.patch_range-1):
+    #             #    counting_matrix[i]*= self.patch_range*(i+1)
+    #             #    counting_matrix[W+i]*= self.patch_range*(self.patch_range-i-1)
+    #             #counting_matrix[self.patch_range-1:W]*= self.patch_range*self.patch_range
+    #             #self.counting_matrix = counting_matrix.unsqueeze(0).unsqueeze(0) #(1,1,32,64)
+    #             self.counting_matrix = torch.nn.functional.conv2d(torch.ones(1,1,W,H + 2*(self.patch_range//2)),torch.ones(1,1,self.patch_range,self.patch_range),padding=(2*(self.patch_range//2),0),stride=1)
+            
+    #             Delta   = list(range(self.patch_range)) #[0,1,2,3,4]
+    #             self.yes  = np.array([Delta])
+    #             Delta   =  -np.array(Delta) + self.patch_range//2 #-->[2,1,0,-1,-2]
+                
+    #             w_idx   = np.arange(L)
+    #             self.wes  = np.stack([w_idx+d for d in Delta],1)%L
+    #             x_idx   = np.arange(H)
+    #             self.xes = np.stack([x_idx+d for d in Delta],1)%H
+    #             #print(self.yes)
+    #             #print(Delta)
+    #         x = x.reshape(B,W,H,P,self.patch_range,self.patch_range)
+    #         x = torch.nn.functional.pad(x,(0,0, 0,0, 0,0, 0,0, self.patch_range//2 , self.patch_range//2 )) # only extend W    
+    #         x     = x[:, self.wes, :,:,self.yes,:].sum(1) #(B, W, H, P, PS,PS) --> (W, B, H, P, PS)
+    #         x     = x[:, :, self.xes,:,self.yes].sum(1)  #(W, B, H, P, PS) --> (H, W, B, P)   
+    #         x     = x.permute(2,3,1,0)#(B,P, W,H)   
+    #         self.counting_matrix =self.counting_matrix.to(x.device)
+    #         x     = x/self.counting_matrix #(B,P, W,H)  / (1,1 , W,H)
+    #     return x
+    
     def patches_to_image(self,x):
         if self.input_is_full_image: 
-            assert self.patch_range%2 ==1
-            B,W,H,P  = self.input_shape_tmp
-            L     =  W + 2*(self.patch_range//2) #32
-            # counting_matrix[0]*=5
-            # counting_matrix[1]*=10
-            # counting_matrix[2]*=15
-            # counting_matrix[3]*=20
-            # counting_matrix[4:W]*=25
-            # counting_matrix[W]*=20
-            # counting_matrix[W+1]*=15
-            # counting_matrix[W+2]*=10
-            # counting_matrix[W+3]*=5
-            # w_idx   = np.arange(0,L)
-            # self.wes  = np.stack([w_idx, w_idx+1,w_idx+2, w_idx-1, w_idx-2],1)%L
-            # x_idx   = np.arange(H)
-            # self.xes = np.stack([x_idx, x_idx+1,x_idx+2, x_idx-1, x_idx-2],1)%H
-            # self.yes = np.array([[2,  1,  0,  3,  4]])
-            if self.counting_matrix is None:
-                #counting_matrix = torch.ones(L,H)
-                #for i in range(self.patch_range-1):
-                #    counting_matrix[i]*= self.patch_range*(i+1)
-                #    counting_matrix[W+i]*= self.patch_range*(self.patch_range-i-1)
-                #counting_matrix[self.patch_range-1:W]*= self.patch_range*self.patch_range
-                #self.counting_matrix = counting_matrix.unsqueeze(0).unsqueeze(0) #(1,1,32,64)
-                self.counting_matrix = torch.nn.functional.conv2d(torch.ones(1,1,W,H + 2*(self.patch_range//2)),torch.ones(1,1,self.patch_range,self.patch_range),padding=(2*(self.patch_range//2),0),stride=1)
-
-                Delta   = list(range(self.patch_range)) #[0,1,2,3,4]
-                self.yes  = np.array([Delta])
-                Delta   =  -np.array(Delta) + self.patch_range//2 #-->[2,1,0,-1,-2]
-                
-                w_idx   = np.arange(L)
-                self.wes  = np.stack([w_idx+d for d in Delta],1)%L
-                x_idx   = np.arange(H)
-                self.xes = np.stack([x_idx+d for d in Delta],1)%H
-                #print(self.yes)
-                #print(Delta)
-            x = x.reshape(B,W,H,P,self.patch_range,self.patch_range)
-            x = torch.nn.functional.pad(x,(0,0, 0,0, 0,0, 0,0, self.patch_range//2 , self.patch_range//2 )) # only extend W    
-            x     = x[:, self.wes, :,:,self.yes,:].sum(1) #(B, W, H, P, PS,PS) --> (W, B, H, P, PS)
-            x     = x[:, :, self.xes,:,self.yes].sum(1)  #(W, B, H, P, PS) --> (H, W, B, P)   
-            x     = x.permute(2,3,1,0)#(B,P, W,H)   
-            self.counting_matrix =self.counting_matrix.to(x.device)
-            x     = x/self.counting_matrix #(B,P, W,H)  / (1,1 , W,H)
+            B,X0,X1,P  = self.input_shape_tmp
+            if X1 == self.img_size[-1]:
+                x = self.patches_to_image_full(x)
+            else:
+                x = self.patches_to_image_adapt(x)
         return x
+    def patches_to_image_adapt(self,x):
+        # the goal is to recovery (LargeBatch,LargeBatch) from (LargeBatch - 2,LargeBatch -2, Patch_Size, Patch_Size)
+        patch_range = self.patch_range if isinstance(self.patch_range,(list,tuple)) else (self.patch_range,self.patch_range)
+        assert (patch_range[0]%2 ==1) and (patch_range[1]%2 ==1) 
+        B,X0,X1,P  = self.input_shape_tmp
+        # assume X2 is peroidic
+        Y0 = X0+ 2*(patch_range[0]//2) #14
+        Y1 = X1+ 2*(patch_range[1]//2) #32
+        if (X0,X1) not in self.counting_matrixes:
+            self.counting_matrixes[X0,X1] = torch.nn.functional.conv2d(
+                torch.ones(1,1,X0,X1),
+                torch.ones(1,1,*patch_range),
+                padding=(2*(patch_range[0]//2),2*(patch_range[1]//2)),
+                stride=1)
+            self.yeses[X0,X1] = {}
+            self.peses[X0,X1] = {}
+            for idx, (p, Y) in enumerate(zip(patch_range,(Y0,Y1))):
+                pes  = np.arange(p)
+                Delta= np.arange(p//2,-p//2,-1)
+                yes  = np.arange(Y)
+                yes  = np.stack([yes+d for d in Delta],1)%Y
+                self.yeses[X0,X1][idx]=yes
+                self.peses[X0,X1][idx]=pes
+
+        counting_matrix =self.counting_matrixes[X0,X1].to(x.device)
+
+        yes = self.yeses[X0,X1]
+        pes = self.peses[X0,X1]
+        x = x.reshape(B,X0,X1,P,*patch_range)
+        x = torch.nn.functional.pad(x,(
+                0,0,   0,0,   0,0, 
+                patch_range[-1]//2 , patch_range[-1]//2,
+                patch_range[-2]//2 , patch_range[-2]//2,
+            )) #(B, X0, X1, P, p0,p1) --> (B, Y0, Y1, P, p0,p1)
+
+        x = x[:, yes[0],      :,      :, pes[0],:].sum(1) # (B, Y0, Y1, P, p0,p1)--> (Y0, B, Y1, P, p1)
+        x = x[:,      :, yes[1],      :, pes[1], ].sum(1) # (Y0, B, Y1, P, p1)--> (Y1, Y0, B, P)
+        x = x.permute(2,3,1,0)#(B,P, W,H)   
+        x = x/counting_matrix #(B,P, W,H)  / (1,1 , W,H)
+        return x
+
+    def patches_to_image_full(self,x):
+        # the goal is to recovery (LargeBatch,LargeBatch) from (LargeBatch - 2,LargeBatch -2, Patch_Size, Patch_Size)
+        patch_range = self.patch_range if isinstance(self.patch_range,(list,tuple)) else (self.patch_range,self.patch_range)
+        assert (patch_range[0]%2 ==1) and (patch_range[1]%2 ==1) 
+        B,X0,X1,P  = self.input_shape_tmp
+        # assume X2 is peroidic
+        Y0 = X0 + 2*(patch_range[0]//2) #14
+        Y1 = X1  #32
+        assert Y1 == self.img_size[-1]
+        if (Y0,Y1) not in self.counting_matrixes:
+            self.counting_matrixes[Y0,Y1] = torch.nn.functional.conv2d(
+                torch.ones(1,1,X0,X1+2*(patch_range[1]//2)),
+                torch.ones(1,1,*patch_range),
+                padding=(2*(patch_range[0]//2),0),
+                stride=1)
+
+            self.yeses[Y0,Y1] = {}
+            self.peses[Y0,Y1] = {}
+            for idx, (p, Y) in enumerate(zip(patch_range,(Y0,Y1))):
+                pes  = np.arange(p)
+                Delta= np.arange(p//2,-p//2,-1)
+                yes  = np.arange(Y)
+                yes  = np.stack([yes+d for d in Delta],1)%Y
+                self.yeses[Y0,Y1][idx]=yes
+                self.peses[Y0,Y1][idx]=pes
+
+        counting_matrix =self.counting_matrixes[Y0,Y1].to(x.device)
+
+        yes = self.yeses[Y0,Y1]
+        pes = self.peses[Y0,Y1]
+        x = x.reshape(B,X0,X1,P,*patch_range)
+        x = torch.nn.functional.pad(x,(
+                0,0,   0,0,   0,0,  0, 0,
+                patch_range[-2]//2 , patch_range[-2]//2,
+            )) #(B, X0, X1, P, p0,p1) --> (B, Y0, Y1, P, p0,p1)
+
+        x = x[:, yes[0],      :,      :, pes[0],:].sum(1) # (B, Y0, Y1, P, p0,p1)--> (Y0, B, Y1, P, p1)
+        x = x[:,      :, yes[1],      :, pes[1], ].sum(1) # (Y0, B, Y1, P, p1)--> (Y1, Y0, B, P)
+        x = x.permute(2,3,1,0)#(B,P, W,H)   
+        x = x/counting_matrix #(B,P, W,H)  / (1,1 , W,H)
+        return x
+
     def patches_to_image_slow(self,x):
         if self.input_is_full_image: 
             B,W,H,P = self.input_shape_tmp
@@ -321,9 +428,12 @@ class POverLapTimePosBias2D(AutoPatchOverLapModel2D):
             if self.global_position_feature is None:
                 grid = torch.Tensor(np.stack(np.meshgrid(np.arange(self.img_size[0]),np.arange(self.img_size[1]))).transpose(0,2,1)) #(2, 32, 64)
                 self.global_position_feature = self.get_direction_from_stamp(grid[None]) #(1, 3, W, H)
-            pos_feature  = self.global_position_feature.repeat(x.size(0),1,1,1).to(x.device) #(B, 3, W, H)
+            if torch.all(pos_stamp==-1):
+                pos_feature = self.global_position_feature.repeat(x.size(0),1,1,1).to(x.device) #(B, 3, W, H)
+            else:
+                pos_feature = self.get_direction_from_stamp(pos_stamp)
             B, T = time_stamp.shape
-            time_feature= time_stamp.reshape(B,T,1,1).repeat(1,1,self.img_size[0],self.img_size[1])#(B, 4, W, H)
+            time_feature= time_stamp.reshape(B,T,1,1).repeat(1,1,*x.shape[-2:])#(B, 4, W, H)
             B,P,_,_ = x.shape
             x = torch.cat([x,pos_feature,time_feature],1) #( B, 77, W, H)
             x = x[...,around_index[:,:,0],around_index[:,:,1]] # (B,P,W-4,H,Patch,Patch)
