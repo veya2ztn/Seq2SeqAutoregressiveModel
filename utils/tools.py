@@ -83,7 +83,7 @@ def get_patch_location_index(center,img_shape,patch_range):
     assert center[-2] >= patch_range[-2]//2
     assert center[-2] <= img_shape[-2] - (patch_range[-2]//2)
     delta  = [list(range(-(patch_range[0]//2),patch_range[0]//2+1))] + \
-            [list(range(-(patch_range[1]//2),patch_range[1]//2+1))] 
+             [list(range(-(patch_range[1]//2),patch_range[1]//2+1))] 
     delta = np.meshgrid(*delta)
     pos  = [c+dc for c,dc in zip(center,delta)]
     pos[-1]= pos[-1]%img_shape[-1] # perodic
