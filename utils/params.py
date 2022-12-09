@@ -66,6 +66,7 @@ def get_args_parser():
     parser.set_defaults(use_scalar_advection=False)
     parser.add_argument('--patch_range', type=str, default=None, help='patch_range')
     parser.add_argument('--dataset_patch_range', type=str, default=None, help='dataset_patch_range')
+    parser.add_argument('--criterion', type=str, default='mse', help='criterion')
     
     #### fno parameters
     parser.add_argument('--fno-bias', action='store_true')
