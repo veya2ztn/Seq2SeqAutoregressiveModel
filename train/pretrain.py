@@ -404,7 +404,10 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
         
         ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
 
-        abs_loss = criterion(ltmv_pred,target)
+        if isinstance(criterion,(dict,list)):
+            abs_loss = criterion[pred_step](ltmv_pred,target)
+        else:
+            abs_loss = criterion(ltmv_pred,target)
         iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
         if status != "train":
             iter_info_pool[f'{status}_accu_gpu{gpu}_timestep{i}']     =  compute_accu(ltmv_pred,target).mean().item()
@@ -515,7 +518,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         step = inter_b.now
         run_gmod= (step%10==0)
         batch = prefetcher.next()
-        
+        #[print(t[0].shape) for t in batch]
         if step < start_step:continue
         #batch = data_loader.dataset.do_normlize_data(batch)
         
@@ -1313,6 +1316,11 @@ def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
 ######## argument and config set #######
 #########################################
 
+def tuple2str(_tuple):
+    if isinstance(_tuple,(list,tuple)):
+        return '.'.join([str(t) for t in (_tuple)])
+    else:
+        return _tuple
 
 def get_model_name(args):
     model_name = args.model_type
@@ -1323,7 +1331,7 @@ def get_model_name(args):
         model_name = "small_" + model_name
     model_name = f"ViT_in_bulk-{model_name}" if len(args.img_size)>2 else model_name
     model_name = f"{args.wrapper_model}-{model_name}" if args.wrapper_model else model_name
-    model_name = f"{model_name}_Patch_{args.patch_range if not isinstance(args.patch_range,(list,tuple)) else '.'.join([str(t) for t in (args.patch_range)])}" if args.patch_range else model_name
+    model_name = f"{model_name}_Patch_{tuple2str(args.patch_range)}" if args.patch_range else model_name
     return model_name
 
 def get_datasetname(args):
@@ -1342,12 +1350,15 @@ def get_projectname(args):
     datasetname  = get_datasetname(args)
 
     project_name = f"{args.mode}-{args.train_set}"
-    if hasattr(args,'random_time_step') and args.random_time_step:project_name = 'random_step_'+project_name 
-    if hasattr(args,'time_step') and args.time_step:              project_name = f"time_step_{args.time_step}_" +project_name 
-    if hasattr(args,'history_length') and args.history_length !=1:project_name = f"history_{args.history_length}_"+project_name
+    if hasattr(args,'random_time_step') and args.random_time_step:project_name = 'rd_sp_'+project_name 
+    if hasattr(args,'time_step') and args.time_step:              project_name = f"ts_{args.time_step}_" +project_name 
+    if hasattr(args,'history_length') and args.history_length !=1:project_name = f"his_{args.history_length}_"+project_name
     if hasattr(args,'time_reverse_flag') and args.time_reverse_flag !="only_forward":project_name = f"{args.time_reverse_flag}_"+project_name
-    if hasattr(args,'time_intervel') and args.time_intervel:project_name = project_name + f"_every_{args.time_intervel}_step"
+    if hasattr(args,'time_intervel') and args.time_intervel:project_name = project_name + f"_per_{args.time_intervel}_step"
+    if args.patch_range != args.dataset_patch_range and args.patch_range and args.dataset_patch_range: 
+        project_name = project_name + f"_P{tuple2str(args.dataset_patch_range)}_for_P{tuple2str(args.patch_range)}"
     #if hasattr(args,'cross_sample') and args.cross_sample:project_name = project_name + f"_random_dataset"
+    #print(project_name)
     return model_name, datasetname,project_name
 
 def deal_with_tuple_string(patch_size,defult=None):
@@ -1507,7 +1518,7 @@ def create_logsys(args,save_config=True):
     dirname,job_type = os.path.split(dirname)
     dirname,group    = os.path.split(dirname)
     dirname,project  = os.path.split(dirname)
-    wandb_id         = args.wandb_id
+    wandb_id         = None
     # if wandb_id is None:
     #     wandb_id = f"{project}-{group}-{job_type}-{name}"
     #     wandb_id = hashlib.md5(wandb_id.encode("utf-8")).hexdigest()+"the2"
@@ -1604,6 +1615,24 @@ def update_experiment_info(experiment_hub_path,epoch,args):
     except:
         pass
 
+class CenterWeightMSE(nn.Module):
+    def __init__(self, center_range, boundary):
+        super().__init__()
+        self.boundary = boundary
+        self.center_range = center_range
+        center_x = (boundary-1)//2
+        center_y = (boundary-1)//2
+        weight   = torch.zeros(boundary,boundary)
+        for i in range(boundary):
+            for j in range(boundary):
+                weight[i,j] =  np.sqrt((i - center_x)**2 + (j - center_y)**2)/(10.0*center_range/boundary)
+        self.weight = weight.reshape(1,1,boundary,boundary)
+    def forward(self, pred, real):
+        if real.shape[-2:] != (self.boundary,self.boundary):
+            return torch.mean((pred - real)**2)
+        else:
+            return torch.mean(((pred-real)*self.weight.to(pred.device))**2)
+
 def build_optimizer(args,model):
     if args.opt == 'adamw':
         param_groups    = timm.optim.optim_factory.param_groups_weight_decay(model, args.weight_decay)
@@ -1632,7 +1661,12 @@ def build_optimizer(args,model):
     if args.sched:
         lr_scheduler, _ = create_scheduler(args, optimizer)
 
-    criterion       = nn.MSELoss()
+    if args.criterion == 'mse':
+        criterion       = nn.MSELoss()
+    elif args.criterion == 'pred_time_weighted_mse':
+        print(args.dataset_patch_range)
+        criterion=[ CenterWeightMSE(args.dataset_patch_range - i, args.dataset_patch_range) for i in range(args.time_step - args.history_length)]
+
 
     return optimizer,lr_scheduler,criterion
 
