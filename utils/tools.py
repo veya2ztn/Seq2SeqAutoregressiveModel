@@ -80,20 +80,21 @@ def get_patch_location_index(center,img_shape,patch_range):
     #   (i-1,j+1) (i ,j+1) (i+1,j+1)
     # notice our data is on the sphere, this mean the center in H should be in [-boundary+patch_range, boundary-patch_range]
     # and the position in W is perodic.
-    assert center[-2] >= patch_range[-2]//2
+    assert center[-2] >= (patch_range[-2]-1)//2
     assert center[-2] <= img_shape[-2] - (patch_range[-2]//2)
-    delta  = [list(range(-(patch_range[0]//2),patch_range[0]//2+1))] + \
-             [list(range(-(patch_range[1]//2),patch_range[1]//2+1))] 
+    delta  = [list(range(-(patch_range[0]//2),patch_range[0]//2 + patch_range[0]%2))] + \
+             [list(range(-(patch_range[1]//2),patch_range[1]//2 + patch_range[1]%2))] 
     delta = np.meshgrid(*delta)
     pos  = [c+dc for c,dc in zip(center,delta)]
     pos[-1]= pos[-1]%img_shape[-1] # perodic
     pos = np.stack(pos).transpose(0,2,1)
     return pos
 
+
 def get_center_around_indexes(patch_range,img_shape, h_range=None, w_range=None):
     #assert isinstance(patch_range,(tuple,list))
     patch_range = patch_range if isinstance(patch_range,(list,tuple)) else (patch_range,patch_range)
-    hlist   = range(patch_range[-2]//2, img_shape[-2] - (patch_range[-2]//2)) if h_range is None else h_range
+    hlist   = range((patch_range[-2]-1)//2, img_shape[-2] - patch_range[-2]//2 ) if h_range is None else h_range
     wlist   = range(img_shape[-1]) if w_range is None else w_range
     xes,yes = np.meshgrid(hlist,wlist)
     coor    = np.stack([xes,yes],-1).reshape(-1,2)

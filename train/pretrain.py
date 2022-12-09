@@ -365,7 +365,6 @@ def once_forward_patch_N2M(model,i,start,end,dataset,time_step_1_mode):
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 
-
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
     if 'Patch' in dataset.__class__.__name__:
         if model.pred_len > 1:
@@ -631,7 +630,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     loss_val = total_diff/ total_num
     loss_val = loss_val.item()
     return loss_val
-
+ 
 
 def nan_diagnose_weight(model,loss, nan_count,logsys):
     skip = False
@@ -1441,11 +1440,10 @@ def parse_default_args(args):
     patch_size = args.patch_size = deal_with_tuple_string(args.patch_size,patch_size)
     img_size   = args.img_size   = deal_with_tuple_string(args.img_size,img_size)
     patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,None)
+    dataset_patch_range = args.dataset_patch_range = deal_with_tuple_string(args.dataset_patch_range,None)
     dataset_kargs['img_size'] = img_size
-    dataset_kargs['patch_range']= args.patch_range
+    dataset_kargs['patch_range']= dataset_patch_range if dataset_patch_range else patch_range
     dataset_kargs['debug']= args.debug
-
-
     args.dataset_kargs = dataset_kargs
     
     # model_img_size= args.img_size
