@@ -301,7 +301,7 @@ def create_nodalsnap_table(ckpt_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('parse tf.event file to wandb', add_help=False)
     parser.add_argument('--path',type=str,default="")
-    parser.add_argument('--mode',type=str,default="dryrun")
+    parser.add_argument('--moded',type=str,default="dryrun")
     parser.add_argument('--level', default=1, type=int)
     parser.add_argument('--divide', default=1, type=int)
     parser.add_argument('--part', default=0, type=int)
@@ -357,7 +357,7 @@ if __name__ == "__main__":
     print(f"we process:\n  from  from {now_path[0]}\n to  {now_path[-1]}")
 
     
-    if args.mode == 'dryrun':exit()
+    if args.moded == 'dryrun':exit()
     for trail_path in tqdm.tqdm(now_path):
         trail_path = trail_path.strip("/")
         if len(os.listdir(trail_path))==0:
@@ -368,12 +368,12 @@ if __name__ == "__main__":
         #os.system(f"aws s3 --endpoint-url=http://10.140.2.204:80 --profile zhangtianning sync s3://FourCastNet/{trail_path}/ {trail_path}/")
         # print(trail_path)
         # print(os.listdir(trail_path))
-        if   args.mode == 'fourcast':run_fourcast(trail_path,step=args.fourcast_step,force_fourcast=args.force_fourcast,weight_chose=args.weight_chose)
-        elif args.mode == 'tb2wandb':assign_trail_job(trail_path)
-        elif args.mode == 'cleantmp':remove_trail_path(trail_path)
-        elif args.mode == 'cleanwgt':remove_weight(trail_path)
-        elif args.mode == 'createtb':create_fourcast_table(trail_path)
-        elif args.mode == 'snap_nodal':run_snap_nodal(trail_path,step=args.fourcast_step,force_fourcast=args.force_fourcast,weight_chose=args.weight_chose)
-        elif args.mode == 'createtb_nodalsnap':create_nodalsnap_table(trail_path)
+        if   args.moded == 'fourcast':run_fourcast(trail_path,step=args.fourcast_step,force_fourcast=args.force_fourcast,weight_chose=args.weight_chose)
+        elif args.moded == 'tb2wandb':assign_trail_job(trail_path)
+        elif args.moded == 'cleantmp':remove_trail_path(trail_path)
+        elif args.moded == 'cleanwgt':remove_weight(trail_path)
+        elif args.moded == 'createtb':create_fourcast_table(trail_path)
+        elif args.moded == 'snap_nodal':run_snap_nodal(trail_path,step=args.fourcast_step,force_fourcast=args.force_fourcast,weight_chose=args.weight_chose)
+        elif args.moded == 'createtb_nodalsnap':create_nodalsnap_table(trail_path)
         else:
             raise NotImplementedError
