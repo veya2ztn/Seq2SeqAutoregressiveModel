@@ -172,7 +172,7 @@ def run_snap_nodal(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,w
     args.mode      = 'fourcast_for_snap_nodal_loss' 
     args.fourcast  = True
     args.recorder_list = []
-    args.use_wandb = 'wandb_runtime'
+    #args.use_wandb = 'wandb_runtime'
     #args.batch_size=args.valid_batch_size= 4 
     if wandb_id is not None:args.wandb_id = wandb_id
     if weight_chose is None:
