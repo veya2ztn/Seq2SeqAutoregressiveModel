@@ -519,7 +519,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     while inter_b.update_step():
         #if inter_b.now>10:break
         step = inter_b.now
-        run_gmod= (step%10==0)
+        run_gmod= (step%grad_modifier.ngmod_freq==0) if grad_modifier is not None else False
         batch = prefetcher.next()
         #[print(t[0].shape) for t in batch]
         if step < start_step:continue
@@ -1672,7 +1672,7 @@ def build_optimizer(args,model):
     optimizer.grad_modifier = GDMode[GDMod_type](GDMod_lambda1, GDMod_lambda2,
         sample_times=args.GDMod_sample_times,
         L1_level=args.GDMod_L1_level,L2_level=args.GDMod_L2_level) if GDMod_type != 'off' else None
-    
+    if optimizer is not None:optimizer.grad_modifier.ngmod_freq = args.ngmod_freq
     lr_scheduler = None
     if args.sched:
         lr_scheduler, _ = create_scheduler(args, optimizer)
