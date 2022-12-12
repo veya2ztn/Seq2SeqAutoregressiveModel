@@ -225,6 +225,7 @@ def remove_trail_path(trial_path):
         'accu_table' not in trail_file_list and
         'rmse_table' not in trail_file_list and
         'rmse_unit' not in trail_file_list):
+        #os.system(f"ls {trail_path}")
         os.system(f"rm -rf {trail_path}")
 
 def create_fourcast_table(ckpt_path):
@@ -327,11 +328,13 @@ if __name__ == "__main__":
     
 
 
-    #now_path = [
-    #    "checkpoints/WeathBench71/small_AFNONet/history_6_time_step_7_pretrain-2D70N_every_6_step/09_29_13_44_49-seed_43796",        
-    #    "checkpoints/WeathBench71/small_AFNONet/history_6_time_step_7_pretrain-2D70N_every_12_step/09_29_14_28_06-seed_97967",
-    #    "checkpoints/WeathBench71/small_AFNONet/history_6_time_step_7_pretrain-2D70N_every_24_step/09_29_14_28_06-seed_26333-pollution",
-    #]
+    now_path = [
+"checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/time_step_3_finetune-2D70N_every_1_step/12_08_22_54_06-seed_2018",
+"checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/time_step_4_pretrain-2D70N_every_1_step/12_08_22_57_30-seed_2018",
+"checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/ts_3_finetune-2D70N_per_1_step_P9_for_P7/12_11_14_12_28-seed_2018",
+"checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/ts_3_pretrain-2D70N_per_1_step_P9_for_P7/12_09_19_38_22-seed_2018  ",
+"checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/ts_4_pretrain-2D70N_per_1_step_P10_for_P7/12_09_19_39_37-seed_2018"
+    ]
     now_path_pool = None
     if 'json' in args.path_list_file:
         with open(args.path_list_file, 'r') as f:

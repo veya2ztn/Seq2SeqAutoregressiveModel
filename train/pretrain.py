@@ -89,6 +89,9 @@ train_set={
 
 half_model = False
 
+
+
+
 #########################################
 ########### metric computing ############
 #########################################
@@ -1286,13 +1289,26 @@ def create_nodal_loss_snap_metric_table(fourcastresult, logsys,test_dataset):
                 
     return
 
+
+def seed_worker(worker_id):# Multiprocessing randomnes for multiGPU train #https://pytorch.org/docs/stable/notes/randomness.html
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+
 def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     dataset_type   = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
-    train_dataset  = dataset_type(split="train" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,record_load_tensor=train_record_load,**args.dataset_kargs)
-    val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,record_load_tensor=valid_record_load,**args.dataset_kargs)
+    
+    train_dataset  = dataset_type(split="train" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,
+                                  record_load_tensor=train_record_load,**args.dataset_kargs)
+    val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,
+                                  record_load_tensor=valid_record_load,**args.dataset_kargs)
     train_datasampler = DistributedSampler(train_dataset, shuffle=True) if args.distributed else None
     val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
-    train_dataloader  = DataLoader(train_dataset, args.batch_size,   sampler=train_datasampler, num_workers=args.num_workers, pin_memory=True, drop_last=True)
+    g = torch.Generator()
+    g.manual_seed(args.seed)
+    train_dataloader  = DataLoader(train_dataset, args.batch_size,   sampler=train_datasampler, num_workers=args.num_workers, pin_memory=True,
+                                   drop_last=True,worker_init_fn=seed_worker,generator=g)
     val_dataloader    = DataLoader(val_dataset  , args.valid_batch_size, sampler=val_datasampler,   num_workers=args.num_workers, pin_memory=True, drop_last=False)
     return   train_dataset,   val_dataset, train_dataloader, val_dataloader
 
