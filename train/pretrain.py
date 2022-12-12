@@ -520,6 +520,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         #if inter_b.now>10:break
         step = inter_b.now
         run_gmod= (step%grad_modifier.ngmod_freq==0) if grad_modifier is not None else False
+        run_gmod= (step%grad_modifier.intervel==0) if grad_modifier is not None else 0
         batch = prefetcher.next()
         #[print(t[0].shape) for t in batch]
         if step < start_step:continue

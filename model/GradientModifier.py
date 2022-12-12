@@ -156,7 +156,12 @@ class Nodal_GradientModifier:
                 #param.grad.data += delta_p
             else:
                 param.grad = delta_p.to(param.device)
-    def getL1loss(self,model,x):
+    def getL1loss(self,modelfun,x):
+        pos=time=None
+        model = modelfun
+        if isinstance(x,list):
+            x, pos,time = x
+            model = lambda x:modelfun(x,pos,time)
         if self.cotangents_sum_along_x_dimension is None or self.cotangents_sum_along_x_dimension.shape != x.shape:
             self.cotangents_sum_along_x_dimension = torch.ones_like(x)
         tvalues= functorch.jvp(model,(x,), (self.cotangents_sum_along_x_dimension,))[1]
@@ -178,9 +183,15 @@ class NGmod_absolute(Nodal_GradientModifier):
         return values
         
     def getL2loss(self,model,x):
+        pos=time=None
+        if isinstance(x,list):
+            x, pos,time = x
         dims   = [-t for t in range(1,len(x.shape))]
-        dims.reverse()             
-        values = (((vmap(jacrev(model), (0,),randomness='same')(x,)**2).sum(dim=dims)-1)**2).mean()
+        dims.reverse()     
+        if pos is None:        
+            values = (((vmap(jacrev(model), (0,),randomness='same')(x,)**2).sum(dim=dims)-1)**2).mean()
+        else:
+            values = (((vmap(jacrev(model), (0,0,0),randomness='same')(x,pos,time)**2).sum(dim=dims)-1)**2).mean()
         return values
 class NGmod_absolute_set_level(NGmod_absolute):
     def new_Normlization_Term_1(self, params, x):
@@ -225,6 +236,7 @@ class NGmod_estimate_L2(Nodal_GradientModifier):
     def Estimate_L2_once_model(self,model,x,cotangents1,cotangents2,cotangents3):
         # in order to avoid large value, we will divide len(output_shape)
         # this equal to make the offset value in L2 become 1
+        
         vL1 = functorch.jvp(model, (x,), (cotangents1,))[1] #(B, output_size)
         vL2 = functorch.jvp(model, (x,), (cotangents2,))[1] #(B, output_size)
         dims = list(range(1,len(vL1.shape)))
@@ -234,11 +246,16 @@ class NGmod_estimate_L2(Nodal_GradientModifier):
         vJ   = ((vJ/coef)**2).sum(dim=dims)**2
         esitimate = vL - 2*vJ + 1 #(B, 1)
         return esitimate
-    def getL2loss(self,model,x):
+    def getL2loss(self,modelfun,x,chunk=10):
+        pos=time=None
+        model= modelfun
+        if isinstance(x,list):
+            x, pos,time = x
+            model = lambda x:modelfun(x,pos,time)
         cotangents1s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
         cotangents2s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
         cotangents3s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
-        values = vmap(self.Estimate_L2_once_model, (None,None, 0,0,0))(model,x,cotangents1s,cotangents2s,cotangents3s).mean(0)
+        values = vmap(self.Estimate_L2_once_model, (None,None, 0,0,0),randomness='same')(model,x,cotangents1s,cotangents2s,cotangents3s).mean(0)
         values = values.mean()
         return values.abs()
 class NGmod_absoluteNone(NGmod_absolute):
