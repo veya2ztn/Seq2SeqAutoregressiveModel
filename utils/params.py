@@ -34,6 +34,7 @@ def get_args_parser():
     parser.add_argument('--GDMod_L1_level', type=float, default=1)
     parser.add_argument('--GDMod_L2_level', type=float, default=1)
     parser.add_argument('--GDMod_sample_times', type=int, default=100)
+    parser.add_argument('--GDMod_intervel',type=int,default=10)
     parser.add_argument('--do_iter_log', type=int, default=1)
     
     parser.add_argument('--batch_limit', type=int, default=1)
@@ -79,7 +80,7 @@ def get_args_parser():
     parser.add_argument('--num-layers', type=int, default=12)
     parser.add_argument('--checkpoint-activations', action='store_true')
     parser.add_argument('--autoresume', action='store_true')
-
+    
     parser.add_argument('--wrapper_model', default='', type=str, help='Name of model to train',
         #   choices=["",'DeltaModel','EulerEquationModel','ConVectionModel',
         #         'EulerEquationModel3','Time_Sphere_Model','EulerEquationModel2',
