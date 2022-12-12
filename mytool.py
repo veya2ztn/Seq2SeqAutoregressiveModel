@@ -262,7 +262,7 @@ def create_fourcast_table(ckpt_path):
     logsys.close()
 
 def create_nodalsnap_table(ckpt_path):
-    if "figures" in os.listdir(ckpt_path):return
+    #if "figures" in os.listdir(ckpt_path):return
     if "nodal_snap_on_test_dataset.gpu_0" not in os.listdir(ckpt_path):return
     from train.pretrain import create_nodal_loss_snap_metric_table,get_test_dataset,LoggingSystem,parse_default_args,create_logsys
     import torch
