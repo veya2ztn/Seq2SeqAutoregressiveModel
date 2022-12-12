@@ -1790,7 +1790,8 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                     save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, latest_ckpt_p)
                     logsys.info(f"done ....",show=False)
                     if epoch in args.epoch_save_list:
-                        os.system(f'cp {latest_ckpt_p} {latest_ckpt_p}-epoch{epoch}')
+                        save_model(model, path=f'{latest_ckpt_p}-epoch{epoch}', only_model=True)
+                        #os.system(f'cp {latest_ckpt_p} {latest_ckpt_p}-epoch{epoch}')
         
         if os.path.exists(now_best_path) and args.do_final_fourcast and not args.distributed:
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
