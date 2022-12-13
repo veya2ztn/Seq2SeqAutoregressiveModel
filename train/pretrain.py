@@ -756,6 +756,10 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
         ### enter CPU computing
         ltmv_true = dataset.inv_normlize_data([target])[0]#.detach().cpu()
         ltmv_pred = ltmv_pred#.detach().cpu()
+        if len(ltmv_true.shape) == 5:#(B,P,Z,W,H) -> (B,P,W,H)
+            ltmv_true = ltmv_true.flatten(1,2) 
+        if len(ltmv_pred.shape) == 5:#(B,P,Z,W,H) -> (B,P,W,H)
+            ltmv_pred = ltmv_pred.flatten(1,2) 
         if len(clim.shape)!=len(ltmv_pred.shape):
             ltmv_pred = ltmv_pred.squeeze(-1)
             ltmv_true = ltmv_true.squeeze(-1) # temporary use this for timestamp input like [B, P, w,h,T]
@@ -1672,7 +1676,7 @@ def build_optimizer(args,model):
     optimizer.grad_modifier = GDMode[GDMod_type](GDMod_lambda1, GDMod_lambda2,
         sample_times=args.GDMod_sample_times,
         L1_level=args.GDMod_L1_level,L2_level=args.GDMod_L2_level) if GDMod_type != 'off' else None
-    if optimizer is not None:optimizer.grad_modifier.ngmod_freq = args.ngmod_freq
+    if optimizer.grad_modifier is not None:optimizer.grad_modifier.ngmod_freq = args.ngmod_freq
     lr_scheduler = None
     if args.sched:
         lr_scheduler, _ = create_scheduler(args, optimizer)
