@@ -328,13 +328,13 @@ if __name__ == "__main__":
     
 
 
-    now_path = [
-"checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/time_step_3_finetune-2D70N_every_1_step/12_08_22_54_06-seed_2018",
-"checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/time_step_4_pretrain-2D70N_every_1_step/12_08_22_57_30-seed_2018",
-"checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/ts_3_finetune-2D70N_per_1_step_P9_for_P7/12_11_14_12_28-seed_2018",
-"checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/ts_3_pretrain-2D70N_per_1_step_P9_for_P7/12_09_19_38_22-seed_2018  ",
-"checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/ts_4_pretrain-2D70N_per_1_step_P10_for_P7/12_09_19_39_37-seed_2018"
-    ]
+    # now_path = [
+    #     "checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/time_step_3_finetune-2D70N_every_1_step/12_08_22_54_06-seed_2018",
+    #     "checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/time_step_4_pretrain-2D70N_every_1_step/12_08_22_57_30-seed_2018",
+    #     "checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/ts_3_finetune-2D70N_per_1_step_P9_for_P7/12_11_14_12_28-seed_2018",
+    #     "checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/ts_3_pretrain-2D70N_per_1_step_P9_for_P7/12_09_19_38_22-seed_2018  ",
+    #     "checkpoints/WeathBench7066PatchDataset/POverLapTimePosBiasWrapper-AFNONet_Patch_7/ts_4_pretrain-2D70N_per_1_step_P10_for_P7/12_09_19_39_37-seed_2018"
+    # ]
     now_path_pool = None
     if 'json' in args.path_list_file:
         with open(args.path_list_file, 'r') as f:

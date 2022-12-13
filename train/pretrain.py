@@ -701,6 +701,7 @@ def get_tensor_value(tensor,snap_index,time = 0):
     # regist_batch_id_list is a list for select batch id
     # regist_feature_id_list is a list for select property id
     # regist_position is a position, if is 2D, it should be (#select_points,) (#select_points,)
+    if len(tensor.shape) == 5:tensor = tensor.flatten(1,2) 
     output_tensor = []
     for regist_batch_id in regist_batch_id_list:
         one_batch_tensor= []
