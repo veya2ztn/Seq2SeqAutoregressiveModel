@@ -903,6 +903,7 @@ class WeathBench7066(WeathBench71):
         use_offline_data = kargs.get('use_offline_data',0) 
         if use_offline_data ==1:
             print("use offline data mode <1>: only train use offline data")
+            print("notice the property 55 and 69 loss precision due to the .half operation. so please use use_offline_data=2 for inference.")
             self.use_offline_data = (kargs.get('split')=='train')
         if use_offline_data ==2:
             print("use offline data mode <2>: train/valid/test use offline data")
