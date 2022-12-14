@@ -1472,7 +1472,10 @@ def parse_default_args(args):
     patch_size = args.patch_size = deal_with_tuple_string(args.patch_size,patch_size)
     img_size   = args.img_size   = deal_with_tuple_string(args.img_size,img_size)
     patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,None)
-    dataset_patch_range = args.dataset_patch_range = deal_with_tuple_string(args.dataset_patch_range,None)
+    if "Patch" in args.dataset_type:
+        dataset_patch_range = args.dataset_patch_range = deal_with_tuple_string(args.dataset_patch_range,5)
+    else:
+        dataset_patch_range = args.dataset_patch_range = None
     dataset_kargs['img_size'] = img_size
     dataset_kargs['patch_range']= dataset_patch_range if dataset_patch_range else patch_range
     dataset_kargs['debug']= args.debug
