@@ -961,6 +961,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
             unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
             #print(unit_list)
             unit_num  = max(unit_list.shape)
+            unit_num=70
             unit_list = unit_list.reshape(1,unit_num)
             property_num = len(test_dataset.vnames)
             if property_num > unit_num:
@@ -974,7 +975,6 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
         save_and_log_table(rmse_unit_list,logsys, prefix+'rmse_unit_list', property_names, real_times)
         hmse_unit_list= (hmse_list*unit_list)
         if (hmse_list>0).all():
-            
             save_and_log_table(hmse_unit_list,logsys, prefix+'hmse_unit_list', property_names, real_times)       
     except:
         logsys.info(f"get wrong when use unit list, we will fource let [rmse_unit_list] = [rmse_list]")
