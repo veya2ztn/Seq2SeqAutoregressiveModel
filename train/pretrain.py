@@ -367,7 +367,24 @@ def once_forward_patch_N2M(model,i,start,end,dataset,time_step_1_mode):
     
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
+def once_forward_deltaMode(model,i,start,end,dataset,time_step_1_mode):
+    assert len(start) == 1
+    base1, delta1 = start[0]
+    base2, delta2 = end
+    out   = model(delta1)
 
+    extra_loss = 0
+    extra_info_from_model_list = []
+    if isinstance(out,(list,tuple)):
+        extra_loss                 = out[1]
+        extra_info_from_model_list = out[2:]
+        out = out[0]
+    ltmv_pred = out
+    target   = delta2
+    dataset.delta_mean_tensor = dataset.delta_mean_tensor.to(base1.device)
+    dataset.delta_std_tensor  = dataset.delta_std_tensor.to(base1.device)
+    start   = start[1:] + [[base1 + (delta1*dataset.delta_std_tensor + dataset.delta_mean_tensor) ,ltmv_pred]]
+    return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
     if 'Patch' in dataset.__class__.__name__:
         if model.pred_len > 1:
@@ -376,7 +393,9 @@ def once_forward(model,i,start,end,dataset,time_step_1_mode):
             return once_forward_patch(model,i,start,end,dataset,time_step_1_mode)
     elif hasattr(dataset,'use_time_stamp') and dataset.use_time_stamp:
         return once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode)
-    else:
+    elif 'Delta' in dataset.__class__.__name__:
+        return once_forward_deltaMode(model,i,start,end,dataset,time_step_1_mode)
+    else:   
        return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
 
 def run_one_iter(model, batch, criterion, status, gpu, dataset):
@@ -407,17 +426,27 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
         
         ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
 
-        if isinstance(criterion,(dict,list)):
-            abs_loss = criterion[pred_step](ltmv_pred,target)
+        if 'Delta' in dataset.__class__.__name__:
+            with torch.no_grad():
+                normlized_field_predict = start[-1][0] + start[-1][1]*dataset.delta_std_tensor + dataset.delta_mean_tensor
+                normlized_field_real  = end[0] +    end[1]*dataset.delta_std_tensor + dataset.delta_mean_tensor
+                abs_loss = criterion(normlized_field_predict,normlized_field_real)
+
+            loss  += criterion(ltmv_pred,target)
         else:
-            abs_loss = criterion(ltmv_pred,target)
+            normlized_field_predict = ltmv_pred
+            normlized_field_real = target
+            abs_loss = criterion[pred_step](ltmv_pred,target) if isinstance(criterion,(dict,list)) else criterion(ltmv_pred,target)
+            loss += abs_loss + extra_loss
+        
+        diff += abs_loss
+        pred_step+=1
+        
+
         iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
         if status != "train":
-            iter_info_pool[f'{status}_accu_gpu{gpu}_timestep{i}']     =  compute_accu(ltmv_pred,target).mean().item()
-            iter_info_pool[f'{status}_rmse_gpu{gpu}_timestep{i}']     =  compute_rmse(ltmv_pred,target).mean().item()
-        pred_step+=1
-        loss += abs_loss + extra_loss
-        diff += abs_loss
+            iter_info_pool[f'{status}_accu_gpu{gpu}_timestep{i}']     =  compute_accu(normlized_field_predict,normlized_field_real).mean().item()
+            iter_info_pool[f'{status}_rmse_gpu{gpu}_timestep{i}']     =  compute_rmse(normlized_field_predict,normlized_field_real).mean().item()
         if model.random_time_step_train and i >= random_run_step:
             break
     # loss = loss/(len(batch) - 1)
