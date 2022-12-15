@@ -907,7 +907,7 @@ class WeathBench7066(WeathBench71):
             self.use_offline_data = (kargs.get('split')=='train')
         if use_offline_data ==2:
             print("use offline data mode <2>: train/valid/test use offline data")
-            self.use_offline_data = 1
+            self.use_offline_data = 2
 
         super().__init__(**kargs)
 
@@ -950,6 +950,27 @@ class WeathBench7066(WeathBench71):
         # config_pool['3D70O'] =(_list  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
         return config_pool
     
+class WeathBench7066DeltaDataset(WeathBench7066):
+    def __init__(self,**kargs):
+        super().__init__(**kargs)
+        assert self.use_offline_data == 2
+        self.delta_mean, self.delta_std = self.load_numpy_from_url(os.path.join(self.root,"delta_mean_std.npy"))
+        self.delta_mean = self.delta_mean.reshape(70,1,1)
+        self.delta_std  = self.delta_std.reshape(70,1,1)
+        self.delta_mean_tensor = torch.Tensor(self.delta_mean).reshape(1,70,1,1)
+        self.delta_std_tensor = torch.Tensor(self.delta_std).reshape(1,70,1,1)
+    def __len__(self):
+        return len(self.dataset_tensor) - self.time_step*self.time_intervel + 1 -1
+    def get_item(self,idx,reversed_part=False):
+        '''
+        Notice for 3D case, we return (5,14,32,64) data tensor
+        '''
+        assert self.use_offline_data
+        data  =  self.dataset_tensor[idx]
+        delta  = (self.dataset_tensor[idx + 1] - data)
+        delta = (delta - self.delta_mean)/self.delta_std
+        return data,delta
+
 class WeathBench7066PatchDataset(WeathBench7066):
     def __init__(self,**kargs):
         self.use_offline_data = kargs.get('use_offline_data',0) and kargs.get('split')=='train'

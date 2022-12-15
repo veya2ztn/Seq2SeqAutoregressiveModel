@@ -89,7 +89,7 @@ def get_args_parser():
 
     # Dataset parameters
     parser.add_argument('--dataset_type', default='', type=str, help='Name of dataset to train',choices=["",
-    'WeathBench71','ERA5Tiny12_47_96_Normal','ERA5CephDataset','WeathBench7066PatchDataset','ERA5CephSmallPatchDataset','ERA5CephSmallDataset','ERA5Tiny12_47_96','WeathBench7066'])
+    'WeathBench71','ERA5Tiny12_47_96_Normal','ERA5CephDataset','WeathBench7066PatchDataset','ERA5CephSmallPatchDataset','ERA5CephSmallDataset','ERA5Tiny12_47_96','WeathBench7066','WeathBench7066DeltaDataset'])
     parser.add_argument('--dataset_flag', default="", type=str)
     parser.add_argument('--time_reverse_flag', default='only_forward', type=str)
     parser.add_argument('--time_intervel', type=int, default=1)
