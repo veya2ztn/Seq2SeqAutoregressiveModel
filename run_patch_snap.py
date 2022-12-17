@@ -192,7 +192,10 @@ for data_loader, datasetflag in zip([train_dataloader,val_dataloader],['train','
     preds = torch.cat(preds)
     reals = torch.cat(reals)
     
-
+    preds = preds.reshape(preds.shape[0],70,*preds.shape[-2:])
+    reals = reals.reshape(reals.shape[0],70,*reals.shape[-2:])
+    print(preds.shape)
+    print(reals.shape)
     fig, axs = plt.subplots(14, 5,figsize=(60,30))
     for property_id in range(preds.shape[1]):
         pred = preds[:,property_id].flatten()

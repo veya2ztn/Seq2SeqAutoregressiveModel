@@ -534,8 +534,8 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     gpu        = dist.get_rank() if hasattr(model,'module') else 0
 
     if start_step == 0:optimizer.zero_grad()
-    intervel = batches//100 + 1
-
+    #intervel = batches//100 + 1
+    intervel = batches//logsys.log_trace_times + 1
     inter_b.lwrite(f"load everything, start_{status}ing......", end="\r")
 
     
@@ -646,9 +646,10 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
         train_cost.append(time.time() - now);now = time.time()
         time_step_now = len(batch)
-        if (step) % intervel==0 or step<30:
+        if (step) % intervel==0:
             for key, val in iter_info_pool.items():
                 logsys.record(key, val, epoch*batches + step, epoch_flag='iter')
+        if (step) % intervel==0 or step<30:
             outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [TIME LEN]:{len(batch)} [RUN Gmod]:{run_gmod}  abs_loss:{abs_loss.item():.4f} loss:{loss.item():.4f} cost:[Date]:{np.mean(data_cost):.1e} [Train]:{np.mean(train_cost):.1e} ")
             #print(data_loader.dataset.record_load_tensor.mean().item())
             data_cost  = []
@@ -1502,7 +1503,7 @@ def parse_default_args(args):
     img_size   = args.img_size   = deal_with_tuple_string(args.img_size,img_size)
     patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,None)
     if "Patch" in args.dataset_type:
-        dataset_patch_range = args.dataset_patch_range = deal_with_tuple_string(args.dataset_patch_range,5)
+        dataset_patch_range = args.dataset_patch_range = deal_with_tuple_string(args.dataset_patch_range,None)
     else:
         dataset_patch_range = args.dataset_patch_range = None
     dataset_kargs['img_size'] = img_size
@@ -1562,7 +1563,8 @@ def create_logsys(args,save_config=True):
     SAVE_PATH  = args.SAVE_PATH
     recorder_list = args.recorder_list if hasattr(args,'recorder_list') else ['tensorboard']
     logsys   = LoggingSystem(local_rank==0 or (not args.distributed),args.SAVE_PATH,seed=args.seed,
-                             use_wandb=args.use_wandb,recorder_list=recorder_list,flag=args.mode)
+                             use_wandb=args.use_wandb,recorder_list=recorder_list,flag=args.mode,
+                             disable_progress_bar=args.disable_progress_bar)
     hparam_dict={'patch_size':args.patch_size , 'lr':args.lr, 'batch_size':args.batch_size,
                                                    'model':args.model_type}
     metric_dict={'best_loss':None}
