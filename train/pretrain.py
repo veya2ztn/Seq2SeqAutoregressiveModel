@@ -1593,7 +1593,10 @@ def create_logsys(args,save_config=True):
     # np.random.seed(args.seed)
     # cudnn.benchmark = True
     ## already done in logsys
-    logsys.log_trace_times = 1 if "Patch" in args.dataset_type else 100
+    if args.log_trace_times is None:
+        logsys.log_trace_times   = 1 if "Patch" in args.dataset_type else 100
+    else:
+        logsys.log_trace_times = args.log_trace_times
     logsys.do_iter_log     = args.do_iter_log
     args.logsys = ""
     if not args.debug and save_config:

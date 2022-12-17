@@ -39,6 +39,8 @@ def get_args_parser():
     parser.add_argument('--disable_progress_bar',type=int,default=0)
     parser.add_argument('--batch_limit', type=int, default=1)
     parser.add_argument('--split', type=str, default="")
+    parser.add_argument('--log_trace_times', type=int, default=None)
+    
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
                         #choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC','NaiveConvModel2D']
