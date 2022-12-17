@@ -36,7 +36,7 @@ def get_args_parser():
     parser.add_argument('--GDMod_sample_times', type=int, default=100)
     parser.add_argument('--GDMod_intervel',type=int,default=10)
     parser.add_argument('--do_iter_log', type=int, default=1)
-    
+    parser.add_argument('--disable_progress_bar',type=int,default=0)
     parser.add_argument('--batch_limit', type=int, default=1)
     parser.add_argument('--split', type=str, default="")
     # Model parameters
@@ -103,6 +103,7 @@ def get_args_parser():
     parser.add_argument('--num_workers',type=int,default=2)
     parser.add_argument('--use_offline_data',type=int,default=0)
     parser.add_argument('--chunk_size',type=int,default=1024)
+    
     
     # Fourcast Parameter
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
