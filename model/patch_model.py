@@ -928,6 +928,8 @@ class PatchWrapper3D(AutoPatchModel3D):
         x = self.patches_to_image(x)
         return x
 
+
+
 class POverLapTimePosVallinaViT(POverLapTimePosBias3D):
     def __init__(self, img_size=None,patch_range=(3,5,5),in_chans=73, out_chans=70,p=0.1,**kargs):
         super().__init__(img_size,patch_range)
@@ -969,3 +971,24 @@ class POverLapTimePosVallinaViT(POverLapTimePosBias3D):
             x = self.backbone(x,time_stamp)
         x = self.patches_to_image(x)
         return x
+
+
+class POverLapTimePosTransViT(POverLapTimePosVallinaViT):
+    def __init__(self, img_size=None,patch_range=(3,5,5),in_chans=73, out_chans=70,p=0.1,**kargs):
+        super().__init__(img_size,patch_range)
+        self.in_chans=in_chans
+        self.out_chans=out_chans
+        assert isinstance(patch_range,(tuple,list))
+        self.backbone = ViT3DTransformer(
+            image_size = patch_range,
+            patch_size = 1,
+            num_classes = self.out_chans,
+            dim  = kargs.get('embed_dim',768),
+            depth = kargs.get('model_depth',6),
+            heads = kargs.get('n_heads',6),
+            mlp_dim = 768,
+            channels= self.in_chans,
+            dropout = 0.1,
+            emb_dropout = 0.1,
+            use_time_embedding=True
+            )

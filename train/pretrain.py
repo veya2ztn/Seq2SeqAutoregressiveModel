@@ -247,6 +247,8 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
         start     = start[1:] + [ltmv_pred]
     #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
     #print(target.shape,torch.std_mean(target))
+    if hasattr(model,"train_for_speed") and model.train_for_speed:
+        target = target[:,model.train_for_speed]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
@@ -385,6 +387,8 @@ def once_forward_deltaMode(model,i,start,end,dataset,time_step_1_mode):
     dataset.delta_std_tensor  = dataset.delta_std_tensor.to(base1.device)
     start   = start[1:] + [[base1 + (delta1*dataset.delta_std_tensor + dataset.delta_mean_tensor) ,ltmv_pred]]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
+
+
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
     if 'Patch' in dataset.__class__.__name__:
         if model.pred_len > 1:
@@ -1659,6 +1663,10 @@ def build_model(args):
     model.clip_grad= args.clip_grad
     model.pred_len = args.pred_len
     model.accumulation_steps = args.accumulation_steps
+    model.train_for_speed = None
+    if args.wrapper_model == 'OnlyPredSpeed':
+        model.train_for_speed = list(range(28))
+        
     return model
 
 def update_experiment_info(experiment_hub_path,epoch,args):
