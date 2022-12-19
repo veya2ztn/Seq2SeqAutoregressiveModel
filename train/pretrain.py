@@ -777,6 +777,10 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
         end = batch[i:i+model.pred_len]
         end = end[0] if len(end) == 1 else end
         ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
+        if 'Delta' in dataset.__class__.__name__:
+            with torch.no_grad():
+                ltmv_pred = start[-1][0] + start[-1][1]*dataset.delta_std_tensor + dataset.delta_mean_tensor
+                target   = end[0] +    end[1]*dataset.delta_std_tensor + dataset.delta_mean_tensor
         for extra_info_from_model in extra_info_from_model_list:
             for key, val in extra_info_from_model.items():
                 if i not in extra_info:extra_info[i] = {}
@@ -1382,7 +1386,7 @@ def get_model_name(args):
         model_name = "small_" + model_name
     model_name = f"ViT_in_bulk-{model_name}" if len(args.img_size)>2 else model_name
     model_name = f"{args.wrapper_model}-{model_name}" if args.wrapper_model else model_name
-    model_name = f"{model_name}_Patch_{tuple2str(args.patch_range)}" if args.patch_range else model_name
+    model_name = f"{model_name}_Patch_{tuple2str(args.patch_range)}" if (args.patch_range and 'Patch' in dataset.__class__.__name__) else model_name
     return model_name
 
 def get_datasetname(args):
