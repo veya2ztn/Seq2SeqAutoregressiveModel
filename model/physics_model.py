@@ -374,3 +374,9 @@ class DirectSpace_Feature_Model(BaseModel):
         Field = self.backbone(Field)
         return Field.reshape(oshape)
 
+class OnlyPredSpeed(BaseModel):
+    def __init__(self, args, backbone):
+        super().__init__()
+        self.backbone =  backbone
+    def forward(self, Field):
+        return self.backbone(Field)
