@@ -459,6 +459,7 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
     diff = diff/pred_step
     return loss, diff, iter_info_pool
 
+
 class RandomSelectPatchFetcher:
     def __init__(self,data_loader,device):
         dataset = data_loader.dataset
@@ -549,11 +550,18 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     didunscale = False
     grad_modifier = optimizer.grad_modifier
     skip = False
+    count_update = 0
     while inter_b.update_step():
         #if inter_b.now>10:break
         step = inter_b.now
-        run_gmod= (step%grad_modifier.ngmod_freq==0) if grad_modifier is not None else False
+        run_gmod= (count_update%grad_modifier.ngmod_freq==0) if grad_modifier is not None else False
         batch = prefetcher.next()
+
+        # In this version(2022-12-22) we will split normal and ngmod processing
+        # we will do normal train with normal batchsize and learning rate multitimes
+        # then do ngmod train 
+        # Notice, one step = once backward not once forward
+        
         #[print(t[0].shape) for t in batch]
         if step < start_step:continue
         #batch = data_loader.dataset.do_normlize_data(batch)
@@ -567,22 +575,39 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             # if model.train_mode =='pretrain':
             #     time_truncate = max(min(epoch//3,data_loader.dataset.time_step),2)
             #     batch=batch[:model.history_length -1 + time_truncate]
-            
+
             # the normal initial method will cause numerial explore by using timestep > 4 senenrio.
-            with torch.cuda.amp.autocast(enabled=model.use_amp):
+            
+            if grad_modifier is not None and run_gmod:
+                chunk = grad_modifier.split_batch_chunk
+                ng_accu_times = max(data_loader.batches//chunk,1.0)
+                ngloss = 0
+                batch_data_full = batch[0]
+                with torch.cuda.amp.autocast(enabled=model.use_amp):
+                    ## nodal loss
+                    #### to avoid overcount,
+                    for chunk_id in range(ng_accu_times):
+                        if isinstance(batch_data_full,list):
+                            batch_data = [ttt[chunk_id*chunk:(chunk_id+1)*chunk] for ttt in batch_data_full]
+                        else:
+                            batch_data = batch_data_full[chunk_id*chunk:(chunk_id+1)*chunk]
+                        if grad_modifier.lambda1!=0:
+                            Nodeloss1 = grad_modifier.getL1loss(model, batch_data)/ng_accu_times
+                            ngloss  += grad_modifier.lambda1 * Nodeloss1
+                            Nodeloss1=Nodeloss1.item()
+                        if grad_modifier.lambda2!=0:
+                            Nodeloss2 = grad_modifier.getL2loss(model, batch_data)/ng_accu_times
+                            if Nodeloss2>0:ngloss += grad_modifier.lambda2 * Nodeloss2
+                            Nodeloss2=Nodeloss2.item()
+
+                if model.use_amp:
+                    loss_scaler.scale(ngloss).backward()    
+                else:
+                    ngloss.backward()
+
+            with torch.cuda.amp.autocast(enabled=model.use_amp):    
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
-                
-                ## nodal loss
-                if grad_modifier is not None and run_gmod:
-                    if grad_modifier.lambda1!=0:
-                        Nodeloss1 = grad_modifier.getL1loss(model, batch[0])
-                        loss += grad_modifier.lambda1 * Nodeloss1
-                        Nodeloss1=Nodeloss1.item()
-                    if grad_modifier.lambda2!=0:
-                        Nodeloss2 = grad_modifier.getL2loss(model, batch[0])
-                        if Nodeloss2>0:
-                            loss += grad_modifier.lambda2 * Nodeloss2
-                        Nodeloss2=Nodeloss2.item()
+            
             loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
             if skip:continue
             loss /= accumulation_steps
@@ -626,6 +651,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     
                 else:
                     optimizer.step()
+                count_update += 1
                 optimizer.zero_grad()
                 didunscale = False
         else:
