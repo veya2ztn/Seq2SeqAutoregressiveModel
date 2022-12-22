@@ -614,7 +614,7 @@ class CplxAdaptiveModReLU(nn.Module):
 
 class FourierCrossAttentionN(nn.Module):
     def __init__(self, in_channels=None, out_channels=None, space_dims_q=None, space_dims_kv=None, 
-                 modes=64, mode_select_method='random', attention_stratagy='hydra',
+                 modes=64, mode_select_method='random', attention_stratagy='normal',
                  activation='tanh', policy=0,head_num=8,canonical_fft=True,**kargs):
         super().__init__()
         print(' fourier enhanced cross attention used!')
@@ -663,14 +663,15 @@ class FourierCrossAttentionN(nn.Module):
         #[Batch, head_num, in_channels, modes1] 
         #                       |                  --> [Batch, head_num, modes1, modes2] 
         #[Batch, head_num, in_channels, modes2] 
-        xqk_ft = self.complex_nonlinear(xqk_ft)
-        if self.activation == 'tanh':
-            xqk_ft = xqk_ft.tanh()
-        elif self.activation == 'softmax':
-            xqk_ft = torch.softmax(abs(xqk_ft), dim=-1)
-            xqk_ft = torch.complex(xqk_ft, torch.zeros_like(xqk_ft))
-        else:
-            raise Exception('{} actiation function is not implemented'.format(self.activation))
+        #xqk_ft = self.complex_nonlinear(xqk_ft)
+        xqk_ft = xqk_ft/abs(xqk_ft)
+        # if self.activation == 'tanh':
+        #     xqk_ft = xqk_ft.tanh()
+        # elif self.activation == 'softmax':
+        #     xqk_ft = torch.softmax(abs(xqk_ft), dim=-1)
+        #     xqk_ft = torch.complex(xqk_ft, torch.zeros_like(xqk_ft))
+        # else:
+        #     raise Exception('{} actiation function is not implemented'.format(self.activation))
                 
         xqkv_ft = torch.einsum("...xy,...ey ->...ex", xqk_ft, xk_ft_)# <-- notice here is xk_ft rather than xv_ft
         ##[Batch, head_num,    modes1,   modes2]  
