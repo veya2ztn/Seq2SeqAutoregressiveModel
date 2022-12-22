@@ -247,6 +247,8 @@ class series_decomp_along_time(nn.Module):
         return self.backbone(x)
 
 
+########### FEDformer block ############
+
 class FullFourierBlockN(nn.Module):
     """
     weight is (head, in_fea, out_fea, tokens) 
@@ -319,7 +321,7 @@ class FourierBlockN(nn.Module):
     """
     def __init__(self, in_channels=None, out_channels=None, space_dims=None, modes=None, 
                mode_select_method='random',
-               head_num = 8,canonical_fft=True):
+               head_num = 8,canonical_fft=True,**kargs):
         super().__init__()
         print('fourier enhanced block used!')
         """
@@ -355,8 +357,7 @@ class FourierBlockN(nn.Module):
 
         
         self.scale = (1 / (in_channels * out_channels))
-        self.weights1 = nn.Parameter(
-            self.scale * torch.rand(head_num, in_channels // head_num, out_channels // head_num, 
+        self.weights1 = nn.Parameter(torch.rand(head_num, in_channels // head_num, out_channels // head_num, 
                                     dtype=torch.cfloat)) #<----------------
         self.canonical_fft=canonical_fft
     def forward(self, x, k=None, v=None, mask=None):
@@ -371,12 +372,158 @@ class FourierBlockN(nn.Module):
         out_ft = torch.zeros(*x_ft_shape, device=x.device, dtype=torch.cfloat)
         # the x_ft[...,self.index] will convert 
         #[Batch, head_num, in_channels, *space_dims] --> [Batch, head_num, in_channels, L]
-        out_ft[...,self.mask] = torch.einsum('bhil,hio->bhol',x_ft[...,self.mask],self.weights1)
+        out_ft[...,self.mask] =self.scale * torch.einsum('bhil,hio->bhol',x_ft[...,self.mask],self.weights1)
+        # move scale here
         if self.canonical_fft:out_ft = canonical_fft_freq(out_ft,fft_dim,indexes=self.canonical_index1,indexes2=self.canonical_index2)
         x = torch.fft.irfftn(out_ft, dim=fft_dim, s=space_dims, norm='ortho')
         return (x, None)
 
+########## Informer block ###########
 
+class TriangularCausalMask():
+    def __init__(self, B, L, device="cpu"):
+        mask_shape = [B, 1, L, L]
+        with torch.no_grad():
+            self._mask = torch.triu(torch.ones(mask_shape, dtype=torch.bool), diagonal=1).to(device)
+
+    @property
+    def mask(self):
+        return self._mask
+
+class ProbMask():
+    def __init__(self, B, H, L, index, scores, device="cpu"):
+        _mask = torch.ones(L, scores.shape[-1], dtype=torch.bool).to(device).triu(1)
+        _mask_ex = _mask[None, None, :].expand(B, H, L, scores.shape[-1])
+        indicator = _mask_ex[torch.arange(B)[:, None, None],
+                    torch.arange(H)[None, :, None],
+                    index, :].to(device)
+        self._mask = indicator.view(scores.shape).to(device)
+
+    @property
+    def mask(self):
+        return self._mask
+
+class LocalMask():
+    def __init__(self, B, L,S,device="cpu"):
+        mask_shape = [B, 1, L, S]
+        with torch.no_grad():
+            self.len = math.ceil(np.log2(L))
+            self._mask1 = torch.triu(torch.ones(mask_shape, dtype=torch.bool), diagonal=1).to(device)
+            self._mask2 = ~torch.triu(torch.ones(mask_shape,dtype=torch.bool),diagonal=-self.len).to(device)
+            self._mask = self._mask1+self._mask2
+    @property
+    def mask(self):
+        return self._mask
+
+class ProbAttention(nn.Module):
+    def __init__(self, mask_flag=True, factor=5, scale=None, attention_dropout=0.1, output_attention=False,**kargs):
+        super(ProbAttention, self).__init__()
+        self.factor = factor
+        self.scale = scale
+        self.mask_flag = mask_flag
+        self.output_attention = output_attention
+        self.dropout = nn.Dropout(attention_dropout)
+
+    def _prob_QK(self, Q, K, sample_k, n_top):  # n_top: c*ln(L_q)
+        # Q [B, H, L, D]
+        B, H, L_K, E = K.shape
+        _, _, L_Q, _ = Q.shape
+
+        # calculate the sampled Q_K
+        K_expand = K.unsqueeze(-3).expand(B, H, L_Q, L_K, E)
+        index_sample = torch.randint(L_K, (L_Q, sample_k))  # real U = U_part(factor*ln(L_k))*L_q
+        K_sample = K_expand[:, :, torch.arange(L_Q).unsqueeze(1), index_sample, :]
+        Q_K_sample = torch.matmul(Q.unsqueeze(-2), K_sample.transpose(-2, -1)).squeeze()
+
+        # find the Top_k query with sparisty measurement
+        M = Q_K_sample.max(-1)[0] - torch.div(Q_K_sample.sum(-1), L_K)
+        M_top = M.topk(n_top, sorted=False)[1]
+
+        # use the reduced Q to calculate Q_K
+        Q_reduce = Q[torch.arange(B)[:, None, None],
+                   torch.arange(H)[None, :, None],
+                   M_top, :]  # factor*ln(L_q)
+        Q_K = torch.matmul(Q_reduce, K.transpose(-2, -1))  # factor*ln(L_q)*L_k
+
+        return Q_K, M_top
+
+    def _get_initial_context(self, V, L_Q):
+        B, H, L_V, D = V.shape
+        if not self.mask_flag:
+            # V_sum = V.sum(dim=-2)
+            V_sum = V.mean(dim=-2)
+            contex = V_sum.unsqueeze(-2).expand(B, H, L_Q, V_sum.shape[-1]).clone()
+        else:  # use mask
+            assert (L_Q == L_V)  # requires that L_Q == L_V, i.e. for self-attention only
+            contex = V.cumsum(dim=-2)
+        return contex
+
+    def _update_context(self, context_in, V, scores, index, L_Q, attn_mask):
+        B, H, L_V, D = V.shape
+
+        if self.mask_flag:
+            attn_mask = ProbMask(B, H, L_Q, index, scores, device=V.device)
+            scores.masked_fill_(attn_mask.mask, -np.inf)
+
+        attn = torch.softmax(scores, dim=-1)  # nn.Softmax(dim=-1)(scores)
+
+        context_in[torch.arange(B)[:, None, None],
+        torch.arange(H)[None, :, None],
+        index, :] = torch.matmul(attn, V).type_as(context_in)
+        if self.output_attention:
+            attns = (torch.ones([B, H, L_V, L_V]) / L_V).type_as(attn).to(attn.device)
+            attns[torch.arange(B)[:, None, None], torch.arange(H)[None, :, None], index, :] = attn
+            return (context_in, attns)
+        else:
+            return (context_in, None)
+
+    def forward(self, queries, keys, values, attn_mask):
+        # the input must be [Batch, head_num, in_channels, *space_dims]
+        # the ouput must be [Batch, head_num, out_channels, *space_dims]
+        queries_shape = queries.shape
+        queries = queries.flatten(3,-1)
+        B, H, D, L_Q = queries.shape
+        queries = queries.permute(0,1,3,2)# B, H, L_Q, D
+
+        key_shape = keys.shape
+        keys    = keys.flatten(3,-1)
+        _, _, _, L_K = queries.shape
+        keys    = keys.permute(0,1,3,2)# B, H, L_K, D
+
+        values_shape = values.shape
+        values    = values.flatten(3,-1)
+        _, _, _, L_V = queries.shape
+        values    = values.permute(0,1,3,2)# B, H, L_V, D
+ 
+
+        # queries = queries.transpose(2, 1) # B, H, L_Q, D
+        # keys   = keys.transpose(2, 1)
+        # values  = values.transpose(2, 1)
+
+        U_part = self.factor * np.ceil(np.log(L_K)).astype('int').item()  # c*ln(L_k)
+        u = self.factor * np.ceil(np.log(L_Q)).astype('int').item()  # c*ln(L_q)
+
+        U_part = U_part if U_part < L_K else L_K
+        u = u if u < L_Q else L_Q
+
+        queries = queries/(np.sqrt(D)*np.sqrt(L_Q))
+        keys  = keys/(np.sqrt(D)*np.sqrt(L_K))
+        values = values/(np.sqrt(D)*np.sqrt(L_V))
+        scores_top, index = self._prob_QK(queries, keys, sample_k=U_part, n_top=u)
+
+        # add scale factor
+        scale = self.scale or 1. / (np.sqrt(D)*np.sqrt(L_Q))
+        if scale is not None:
+            scores_top = scores_top * scale
+        # get the context
+        context = self._get_initial_context(values, L_Q)
+        # update the context with selected top_k queries
+        context, attn = self._update_context(context, values, scores_top, index, L_Q, attn_mask)
+
+        context = context.permute(0,1,3,2).reshape(queries_shape)
+        return context.contiguous(), attn
+
+########### Common module ##############
 
 class FullAttention(nn.Module):
     def __init__(self, mask_flag=True, factor=5, scale=1, attention_dropout=0.1, output_attention=False):
@@ -468,7 +615,7 @@ class CplxAdaptiveModReLU(nn.Module):
 class FourierCrossAttentionN(nn.Module):
     def __init__(self, in_channels=None, out_channels=None, space_dims_q=None, space_dims_kv=None, 
                  modes=64, mode_select_method='random', attention_stratagy='hydra',
-                 activation='tanh', policy=0,head_num=8,canonical_fft=True):
+                 activation='tanh', policy=0,head_num=8,canonical_fft=True,**kargs):
         super().__init__()
         print(' fourier enhanced cross attention used!')
         """
@@ -814,12 +961,17 @@ class FEDformer(nn.Module):
         
         Block_kargs={'in_channels':embed_dim,'out_channels':embed_dim,'modes':modes,
                      'mode_select_method':mode_select,'canonical_fft':canonical_fft,
-                     'head_num':self.n_heads}
-        
+                     'head_num':self.n_heads,
+                     'factor':5, 'scale':None, 'attention_dropout':0.1, 'output_attention':False}
+                     
+        self.build_coder(Block_kargs)
+    
+    def build_coder(self,Block_kargs):
+
         encoder_self_att = FourierBlockN(space_dims=self.space_dims_encoder,**Block_kargs)
         decoder_self_att = FourierBlockN(space_dims=self.space_dims_decoder,**Block_kargs)
         decoder_cross_att= FourierCrossAttentionN(space_dims_q=self.space_dims_decoder,space_dims_kv=self.space_dims_encoder,**Block_kargs)
-        
+        embed_dim = Block_kargs['in_channels']
         self.encoder = Encoder(
             [
                 EncoderLayerN(AutoCorrelationLayerN(encoder_self_att,embed_dim, self.n_heads,share_memory=self.share_memory),
@@ -881,9 +1033,9 @@ class FEDformer(nn.Module):
 
         #timer.restart(0)
         ## x_enc      -->  [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T1, in_channels]
-        ## x_mark_enc -->  [Batch,  T1]
+        ## x_mark_enc -->  [Batch,  T1, 4]
         ## x_dec      -->  [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T2, in_channels]
-        ## x_mark_dec -->  [Batch,  T2]
+        ## x_mark_dec -->  [Batch,  T2, 4]
         
         seasonal_init, trend_init = self.decomp(x_enc)
         #timer.record('decomp1',level=0)
@@ -914,3 +1066,39 @@ class FEDformer(nn.Module):
         #dec_out  = F.pad(dec_out,(2,2))
         # [B, L, D]
         return dec_out
+
+class Informer(FEDformer):
+    """
+    Informer
+    """
+    def build_coder(self,Block_kargs):
+        encoder_self_att = ProbAttention(mask_flag=True, **Block_kargs)
+        decoder_self_att = ProbAttention(mask_flag=True, **Block_kargs)
+        decoder_cross_att= ProbAttention(mask_flag=False,**Block_kargs)
+        embed_dim = Block_kargs['in_channels']
+        self.encoder = Encoder(
+            [
+                EncoderLayerN(AutoCorrelationLayerN(encoder_self_att,embed_dim, self.n_heads,share_memory=self.share_memory),
+                        embed_dim, 
+                        moving_avg=self.moving_avg,dropout=self.dropout,
+                        activation=self.activation
+                ) 
+                for l in range(self.depth)
+            ],
+            norm_layer=SpaceTBatchNorm(embed_dim)#TLayernorm(embed_dim)
+        )
+        # Decoder
+        self.decoder = Decoder(
+            [
+                DecoderLayerN(
+                    AutoCorrelationLayerN(decoder_self_att,embed_dim, self.n_heads,share_memory=self.share_memory),
+                    AutoCorrelationLayerN(decoder_cross_att,embed_dim, self.n_heads,share_memory=self.share_memory),
+                    embed_dim,self.in_chans,
+                    moving_avg=self.moving_avg,dropout=self.dropout,
+                    activation=self.activation,
+                )
+                for l in range(self.depth)
+            ],
+            norm_layer=SpaceTBatchNorm(embed_dim),#TLayernorm(embed_dim),
+            projection=nn.Linear(embed_dim, self.out_chans, bias=True)
+        )
