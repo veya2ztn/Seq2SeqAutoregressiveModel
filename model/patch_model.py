@@ -8,7 +8,7 @@ from utils.tools import get_center_around_indexes,get_center_around_indexes_3D
 from vit_pytorch import ViT
 from vit_pytorch.vit import repeat
 from .custom_transformer import ViT3DTransformer, ViT3DFlowformer
-from .FEDformer import FEDformer
+from .FEDformer import FEDformer,Informer
 from einops import rearrange
 
 class AdaptiveBatchNorm2d(_BatchNorm):
@@ -509,6 +509,9 @@ class POverLapTimePosFEDformer(POverLapTimePosBias2D):
         self.in_chans=in_chans
         self.out_chans=out_chans
         self.patch_range = patch_range
+        self._build_backbone(img_size=img_size,patch_range=patch_range,in_chans=in_chans, out_chans=out_chans,**kargs)
+
+    def _build_backbone(self,img_size=None,patch_range=5,in_chans=73, out_chans=70,**kargs):
         self.backbone = FEDformer(img_size=(patch_range,patch_range), in_chans=in_chans,out_chans=out_chans, 
                                   embed_dim=kargs.get('embed_dim',748), 
                                   modes=kargs.get('modes',(4,4,6)), 
@@ -564,6 +567,24 @@ class POverLapTimePosFEDformer(POverLapTimePosBias2D):
         x = self.patches_to_image(x)
         x = x.reshape(shape[0],-1,*shape[2:])
         return x
+
+class POverLapTimePosInformer(POverLapTimePosFEDformer):
+    '''
+    input is (B, P, patch_range_1,patch_range_2) tensor
+             (B, 2, patch_range_1,patch_range_2) pos_stamp
+             (B, 4) start_time_stamp
+             (B, 4) end_time_stamp
+    output is (B,P, patch_range_1,patch_range_2)
+    '''
+    def _build_backbone(self,img_size=None,patch_range=5,in_chans=73, out_chans=70,**kargs):
+        self.backbone = Informer(img_size=(patch_range,patch_range), in_chans=in_chans,out_chans=out_chans, 
+                                  embed_dim=kargs.get('embed_dim',748), 
+                                  modes=kargs.get('modes',(4,4,6)), 
+                                  n_heads=kargs.get('n_heads', 24),
+                                  depth=kargs.get('model_depth',4),
+                                  history_length=kargs.get('history_length',16),
+                                  pred_len=kargs.get('pred_len',4),
+                                  label_len=kargs.get('label_len',4))
 
 
 
