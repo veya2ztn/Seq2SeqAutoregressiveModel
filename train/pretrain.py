@@ -581,6 +581,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             if grad_modifier is not None and run_gmod:
                 chunk = grad_modifier.split_batch_chunk
                 ng_accu_times = max(data_loader.batch_size//chunk,1.0)
+
                 batch_data_full = batch[0]
                 
                 ## nodal loss
@@ -590,15 +591,15 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                         batch_data = [ttt[chunk_id*chunk:(chunk_id+1)*chunk] for ttt in batch_data_full]
                     else:
                         batch_data = batch_data_full[chunk_id*chunk:(chunk_id+1)*chunk]
-                    #print(batch_data[0].shape)
+                    #print([t.shape for t in batch_data])
                     ngloss=0
                     with torch.cuda.amp.autocast(enabled=model.use_amp):
                         if grad_modifier.lambda1!=0:
-                            Nodeloss1 = grad_modifier.getL1loss(model, batch_data)/ng_accu_times
+                            Nodeloss1 = grad_modifier.getL1loss(model.module, batch_data)/ng_accu_times
                             ngloss  += grad_modifier.lambda1 * Nodeloss1
                             Nodeloss1=Nodeloss1.item()
                         if grad_modifier.lambda2!=0:
-                            Nodeloss2 = grad_modifier.getL2loss(model, batch_data)/ng_accu_times
+                            Nodeloss2 = grad_modifier.getL2loss(model.module, batch_data)/ng_accu_times
                             ngloss += grad_modifier.lambda2 * Nodeloss2
                             Nodeloss2=Nodeloss2.item()
 
@@ -606,6 +607,10 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                         loss_scaler.scale(ngloss).backward()    
                     else:
                         ngloss.backward()
+                    # for name, param in model.named_parameters():
+                    #     if param.grad is None:
+                    #         print(name)
+ 
 
             with torch.cuda.amp.autocast(enabled=model.use_amp):    
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)

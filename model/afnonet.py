@@ -365,7 +365,7 @@ class AFNONet(BaseModel):
 
         # Generator head
         # self.head = nn.Linear(self.representation_size, self.num_features)
-        self.head = transposeconv_engine(unique_up_sample_channel*4, out_chans, **conf_list[2])
+        self.head = transposeconv_engine(unique_up_sample_channel*4, out_chans,  **conf_list[2])
 
         if dropcls > 0:
             print('dropout %.2f before classifier' % dropcls)
