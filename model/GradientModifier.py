@@ -252,6 +252,19 @@ class NGmod_estimate_L2(Nodal_GradientModifier):
         if isinstance(x,list):
             x, pos,time = x
             model = lambda x:modelfun(x,pos,time)
+            # if isinstance(x,list):
+            # x, pos,time = x
+            # B= x.size(0)
+            # xshape = x.shape[1:]
+            # pshape = pos.shape[1:]
+            # tshape = time.shape[1:]
+            # a = np.prod(xshape)
+            # b = np.prod(pshape)
+            # c = np.prod(tshape)
+            # x = torch.cat([x.flatten(1,-1),pos.flatten(1,-1),time.flatten(1,-1)],1)
+            # model = lambda x:modelfun(x[:,0:a].reshape(-1,*xshape),
+            #               x[:,a:a+b].reshape(-1,*pshape),
+            #               x[:,a+b:a+b+c].reshape(-1,*tshape))
         cotangents1s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
         cotangents2s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
         cotangents3s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
