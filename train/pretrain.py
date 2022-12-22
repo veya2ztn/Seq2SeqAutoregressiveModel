@@ -580,30 +580,32 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             
             if grad_modifier is not None and run_gmod:
                 chunk = grad_modifier.split_batch_chunk
-                ng_accu_times = max(data_loader.batches//chunk,1.0)
-                ngloss = 0
+                ng_accu_times = max(data_loader.batch_size//chunk,1.0)
                 batch_data_full = batch[0]
-                with torch.cuda.amp.autocast(enabled=model.use_amp):
-                    ## nodal loss
-                    #### to avoid overcount,
-                    for chunk_id in range(ng_accu_times):
-                        if isinstance(batch_data_full,list):
-                            batch_data = [ttt[chunk_id*chunk:(chunk_id+1)*chunk] for ttt in batch_data_full]
-                        else:
-                            batch_data = batch_data_full[chunk_id*chunk:(chunk_id+1)*chunk]
+                
+                ## nodal loss
+                #### to avoid overcount,
+                for chunk_id in range(ng_accu_times):
+                    if isinstance(batch_data_full,list):
+                        batch_data = [ttt[chunk_id*chunk:(chunk_id+1)*chunk] for ttt in batch_data_full]
+                    else:
+                        batch_data = batch_data_full[chunk_id*chunk:(chunk_id+1)*chunk]
+                    #print(batch_data[0].shape)
+                    ngloss=0
+                    with torch.cuda.amp.autocast(enabled=model.use_amp):
                         if grad_modifier.lambda1!=0:
                             Nodeloss1 = grad_modifier.getL1loss(model, batch_data)/ng_accu_times
                             ngloss  += grad_modifier.lambda1 * Nodeloss1
                             Nodeloss1=Nodeloss1.item()
                         if grad_modifier.lambda2!=0:
                             Nodeloss2 = grad_modifier.getL2loss(model, batch_data)/ng_accu_times
-                            if Nodeloss2>0:ngloss += grad_modifier.lambda2 * Nodeloss2
+                            ngloss += grad_modifier.lambda2 * Nodeloss2
                             Nodeloss2=Nodeloss2.item()
 
-                if model.use_amp:
-                    loss_scaler.scale(ngloss).backward()    
-                else:
-                    ngloss.backward()
+                    if model.use_amp:
+                        loss_scaler.scale(ngloss).backward()    
+                    else:
+                        ngloss.backward()
 
             with torch.cuda.amp.autocast(enabled=model.use_amp):    
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
@@ -1752,7 +1754,9 @@ def build_optimizer(args,model):
     optimizer.grad_modifier = GDMode[GDMod_type](GDMod_lambda1, GDMod_lambda2,
         sample_times=args.GDMod_sample_times,
         L1_level=args.GDMod_L1_level,L2_level=args.GDMod_L2_level) if GDMod_type != 'off' else None
-    if optimizer.grad_modifier is not None:optimizer.grad_modifier.ngmod_freq = args.ngmod_freq
+    if optimizer.grad_modifier is not None:
+        optimizer.grad_modifier.ngmod_freq = args.ngmod_freq
+        optimizer.grad_modifier.split_batch_chunk = args.split_batch_chunk
     lr_scheduler = None
     if args.sched:
         lr_scheduler, _ = create_scheduler(args, optimizer)
