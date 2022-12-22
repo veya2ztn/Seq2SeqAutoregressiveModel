@@ -34,7 +34,9 @@ def get_args_parser():
     parser.add_argument('--GDMod_L1_level', type=float, default=1)
     parser.add_argument('--GDMod_L2_level', type=float, default=1)
     parser.add_argument('--GDMod_sample_times', type=int, default=100)
+
     parser.add_argument('--GDMod_intervel',type=int,default=10)
+    
     parser.add_argument('--do_iter_log', type=int, default=1)
     parser.add_argument('--disable_progress_bar',type=int,default=0)
     parser.add_argument('--batch_limit', type=int, default=1)
@@ -71,6 +73,7 @@ def get_args_parser():
     parser.add_argument('--dataset_patch_range', type=str, default=None, help='dataset_patch_range')
     parser.add_argument('--criterion', type=str, default='mse', help='criterion')
     parser.add_argument('--ngmod_freq', type=int, default=10, help='ngmod_freq')
+    parser.add_argument('--split_batch_chunk', type=int, default=16, help='split_batch_chunk')
     
     #### fno parameters
     parser.add_argument('--fno-bias', action='store_true')
