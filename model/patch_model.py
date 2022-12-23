@@ -489,30 +489,16 @@ class POverLapTimePosBiasWrapper(POverLapTimePosBias2D):
         The input either (B,P,patch_range,patch_range) or (B,P,w,h)
         The output then is  (B,P) or (B,P,w-patch_range//2,h-patch_range//2)
         '''
-        #print(x.shape)
-        # if isinstance(x,list):
-            # x, pos,time = x
-            # B= x.size(0)
-            # xshape = x.shape[1:]
-            # pshape = pos.shape[1:]
-            # tshape = time.shape[1:]
-            # a = np.prod(xshape)
-            # b = np.prod(pshape)
-            # c = np.prod(tshape)
-            # x = torch.cat([x.flatten(1,-1),pos.flatten(1,-1),time.flatten(1,-1)],1)
-            # model = lambda x:modelfun(x[:,0:a].reshape(-1,*xshape),
-            #               x[:,a:a+b].reshape(-1,*pshape),
-            #               x[:,a+b:a+b+c].reshape(-1,*tshape))
-        #if len(x.shape)==2 and time_stamp is None and pos_stamp is None:
-        #    xshape = (70,7,7)
-        #    pshape = (2,32,64)
-        #    tshape = (4)
-        #    a = np.prod(xshape)
-        #    b = np.prod(pshape)
-        #    c = np.prod(tshape)    
-        #    time_stamp = x[:,a:a+b].reshape(-1,*pshape)
-        #    pos_stamp = x[:,a+b:a+b+c].reshape(-1,*tshape)
-        #    x = x[:,0:a].reshape(-1,*xshape)
+        if len(x.shape)==2 and time_stamp is None and pos_stamp is None:
+            xshape = (70,self.patch_range,self.patch_range)
+            tshape = (4,)
+            pshape = (2,self.patch_range,self.patch_range)
+            a = np.prod(xshape)
+            b = np.prod(tshape)
+            c = np.prod(pshape)    
+            time_stamp = x[:,a:a+b].reshape(-1,*tshape)
+            pos_stamp = x[:,a+b:a+b+c].reshape(-1,*pshape)
+            x = x[:,0:a].reshape(-1,*xshape)
         x = self.image_to_patches(x,time_stamp,pos_stamp)
         x = self.backbone(x)
         #print(x.shape)
