@@ -247,8 +247,8 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
         start     = start[1:] + [ltmv_pred]
     #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
     #print(target.shape,torch.std_mean(target))
-    if hasattr(model,"train_for_speed") and model.train_for_speed:
-        target = target[:,model.train_for_speed]
+    if hasattr(model,"train_for_part") and model.train_for_part:
+        target = target[:,model.train_for_part]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
@@ -1696,10 +1696,11 @@ def build_model(args):
     model.clip_grad= args.clip_grad
     model.pred_len = args.pred_len
     model.accumulation_steps = args.accumulation_steps
-    model.train_for_speed = None
+    model.train_for_part = None
     if args.wrapper_model == 'OnlyPredSpeed':
-        model.train_for_speed = list(range(28))
-        
+        model.train_for_part = list(range(28))
+    elif args.wrapper_model == 'WithoutSpeed':
+        model.train_for_part = list(range(28,70))    
     return model
 
 def update_experiment_info(experiment_hub_path,epoch,args):
