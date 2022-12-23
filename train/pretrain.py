@@ -592,7 +592,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 # I suppose it is related to the graph optimization processing in pytorch.
                 for chunk_id in range(ng_accu_times):
                     if isinstance(batch_data_full,list):
-                        batch_data = [ttt[chunk_id*chunk:(chunk_id+1)*chunk] for ttt in batch_data_full]
+                        batch_data = torch.cat([ttt[chunk_id*chunk:(chunk_id+1)*chunk].flatten(1,-1) for ttt in batch_data_full],1)
                     else:
                         batch_data = batch_data_full[chunk_id*chunk:(chunk_id+1)*chunk]
                     ngloss=0
