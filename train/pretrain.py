@@ -595,11 +595,11 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     ngloss=0
                     with torch.cuda.amp.autocast(enabled=model.use_amp):
                         if grad_modifier.lambda1!=0:
-                            Nodeloss1 = grad_modifier.getL1loss(model.module, batch_data)/ng_accu_times
+                            Nodeloss1 = grad_modifier.getL1loss(model, batch_data)/ng_accu_times
                             ngloss  += grad_modifier.lambda1 * Nodeloss1
                             Nodeloss1=Nodeloss1.item()
                         if grad_modifier.lambda2!=0:
-                            Nodeloss2 = grad_modifier.getL2loss(model.module, batch_data)/ng_accu_times
+                            Nodeloss2 = grad_modifier.getL2loss(model, batch_data)/ng_accu_times
                             ngloss += grad_modifier.lambda2 * Nodeloss2
                             Nodeloss2=Nodeloss2.item()
 
