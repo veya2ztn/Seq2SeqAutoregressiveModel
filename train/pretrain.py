@@ -580,26 +580,29 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             
             if grad_modifier is not None and run_gmod:
                 chunk = grad_modifier.split_batch_chunk
-                ng_accu_times = max(data_loader.batch_size//chunk,1.0)
+                ng_accu_times = max(data_loader.batch_size//chunk,1)
 
                 batch_data_full = batch[0]
                 
                 ## nodal loss
                 #### to avoid overcount,
+                ## use model.module rather than model in Distribution mode is fine.
+                # It works, although I think it is not safe. 
+                # use model in distribution mode will go wrong, altough it can work in old code version.
+                # I suppose it is related to the graph optimization processing in pytorch.
                 for chunk_id in range(ng_accu_times):
                     if isinstance(batch_data_full,list):
                         batch_data = [ttt[chunk_id*chunk:(chunk_id+1)*chunk] for ttt in batch_data_full]
                     else:
                         batch_data = batch_data_full[chunk_id*chunk:(chunk_id+1)*chunk]
-                    #print([t.shape for t in batch_data])
                     ngloss=0
                     with torch.cuda.amp.autocast(enabled=model.use_amp):
                         if grad_modifier.lambda1!=0:
-                            Nodeloss1 = grad_modifier.getL1loss(model, batch_data)/ng_accu_times
+                            Nodeloss1 = grad_modifier.getL1loss(model.module if hasattr(model,'module') else model, batch_data)/ng_accu_times
                             ngloss  += grad_modifier.lambda1 * Nodeloss1
                             Nodeloss1=Nodeloss1.item()
                         if grad_modifier.lambda2!=0:
-                            Nodeloss2 = grad_modifier.getL2loss(model, batch_data)/ng_accu_times
+                            Nodeloss2 = grad_modifier.getL2loss(model.module if hasattr(model,'module') else model, batch_data)/ng_accu_times
                             ngloss += grad_modifier.lambda2 * Nodeloss2
                             Nodeloss2=Nodeloss2.item()
 
@@ -607,14 +610,16 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                         loss_scaler.scale(ngloss).backward()    
                     else:
                         ngloss.backward()
-                    # for name, param in model.named_parameters():
-                    #     if param.grad is None:
-                    #         print(name)
- 
 
-            with torch.cuda.amp.autocast(enabled=model.use_amp):    
+                    # for idx,(name,p) in enumerate(model.named_parameters()):
+                    #     print(f"{chunk_id}:{name}:{p.device}:{p.norm()}:{p.grad.norm() if p.grad is not None else None}")
+                    #     if idx>10:break
+                    # print("===========================")
+                #raise
+
+
+            with torch.cuda.amp.autocast(enabled=model.use_amp):
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
-            
             loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
             if skip:continue
             loss /= accumulation_steps
@@ -625,6 +630,11 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 loss_scaler.scale(loss).backward()    
             else:
                 loss.backward()
+
+            
+
+            
+            
 
             # In order to use multiGPU train, I have to use Loss update scenario, suprisely, it is not worse than split scenario
             # if optimizer.grad_modifier is not None:
