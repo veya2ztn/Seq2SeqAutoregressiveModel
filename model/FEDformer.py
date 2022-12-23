@@ -658,13 +658,13 @@ class FourierCrossAttentionN(nn.Module):
         elif self.activation == 'modReLU':
             self.complex_nonlinear = nn.Tanh()
     def normal_atttention(self,xq_ft_,xk_ft_):
-        
+        xk_ft_ = xk_ft_/(abs(xk_ft_)+1)
         xqk_ft = (torch.einsum("...ex,...ey->...xy", xq_ft_, xk_ft_))
         #[Batch, head_num, in_channels, modes1] 
         #                       |                  --> [Batch, head_num, modes1, modes2] 
         #[Batch, head_num, in_channels, modes2] 
         #xqk_ft = self.complex_nonlinear(xqk_ft)
-        xqk_ft = xqk_ft/abs(xqk_ft)
+        xqk_ft = xqk_ft/(1+abs(xqk_ft))
         # if self.activation == 'tanh':
         #     xqk_ft = xqk_ft.tanh()
         # elif self.activation == 'softmax':
@@ -672,7 +672,9 @@ class FourierCrossAttentionN(nn.Module):
         #     xqk_ft = torch.complex(xqk_ft, torch.zeros_like(xqk_ft))
         # else:
         #     raise Exception('{} actiation function is not implemented'.format(self.activation))
-                
+        # print(xqk_ft.shape)
+        # print(xk_ft_.shape)
+        
         xqkv_ft = torch.einsum("...xy,...ey ->...ex", xqk_ft, xk_ft_)# <-- notice here is xk_ft rather than xv_ft
         ##[Batch, head_num,    modes1,   modes2]  
         #                                  |       --> [Batch, head_num, in_channels, modes1] 
@@ -800,7 +802,7 @@ class DecoderLayerN(nn.Module):
     def __init__(self, self_attention, cross_attention, d_model, c_out, 
                  moving_avg=25, dropout=0.1, activation="relu"):
         super().__init__()
-        d_ff = 2 * d_model
+        d_ff = 256
         self.self_attention = self_attention
         self.cross_attention = cross_attention
         
@@ -811,10 +813,10 @@ class DecoderLayerN(nn.Module):
             nn.Linear(in_features=d_ff, out_features=d_model, bias=False)
         )
 
-        self.decomp = series_decomp(moving_avg)
-        self.dropout = nn.Dropout(dropout)
+        self.decomp   = series_decomp(moving_avg)
+        self.dropout   = nn.Dropout(dropout)
         self.projection = nn.Conv1d(in_channels=d_model, out_channels=c_out, kernel_size=3, stride=1, padding=1,
-                                    padding_mode='circular', 
+                                    #padding_mode='circular', 
                                     bias=False)
         self.activation = F.relu if activation == "relu" else F.gelu
 
@@ -848,7 +850,7 @@ class EncoderLayerN(nn.Module):
     """
     def __init__(self, attention, d_model, d_ff=None, moving_avg=25, dropout=0.1, activation="relu"):
         super().__init__()
-        d_ff = 4 * d_model
+        d_ff = 256
         self.attention = attention
         self.distill_layer=nn.Sequential(
             nn.Linear(in_features=d_model, out_features=d_ff, bias=False),

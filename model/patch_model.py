@@ -542,7 +542,7 @@ class POverLapTimePosFEDformer(POverLapTimePosBias2D):
                                   depth=kargs.get('model_depth',4),
                                   history_length=kargs.get('history_length',16),
                                   pred_len=kargs.get('pred_len',4),
-                                  label_len=kargs.get('label_len',4))
+                                  label_len=kargs.get('label_len',4),share_memory=kargs.get('share_memory',1))
 
     def image_to_patches(self, x,pos_stamp):
         assert len(x.shape)==5 #(B, T, P, W, H)
