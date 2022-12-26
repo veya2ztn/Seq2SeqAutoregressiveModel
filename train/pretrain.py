@@ -393,6 +393,21 @@ def once_forward_deltaMode(model,i,start,end,dataset,time_step_1_mode):
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 
+def once_forward_self_relation(model,i,start,end,dataset,time_step_1_mode=None):
+    assert len(start) == 1
+    input_feature  = start[0]
+    output_feature = end
+    out   = model(input_feature)
+    extra_loss = 0
+    extra_info_from_model_list = []
+    if isinstance(out,(list,tuple)):
+        extra_loss                 = out[1]
+        extra_info_from_model_list = out[2:]
+        out = out[0]
+    ltmv_pred = out
+    target    = output_feature
+    start   = start[1:] + [None]
+    return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
@@ -405,6 +420,8 @@ def once_forward(model,i,start,end,dataset,time_step_1_mode):
         return once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode)
     elif 'Delta' in dataset.__class__.__name__:
         return once_forward_deltaMode(model,i,start,end,dataset,time_step_1_mode)
+    elif dataset.__class__.__name__ == "WeathBench7066Self":
+        return once_forward_self_relation(model,i,start,end,dataset,time_step_1_mode)
     else:   
        return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
 
@@ -427,7 +444,9 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
     for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
         end = batch[i:i+model.pred_len]
         end = end[0] if len(end) == 1 else end
+
         ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
+
         if extra_loss !=0:
             iter_info_pool[f'{status}_extra_loss_gpu{gpu}_timestep{i}'] = extra_loss.item()
         for extra_info_from_model in extra_info_from_model_list:
@@ -840,36 +859,46 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
                 if key not in extra_info[i]:extra_info[i][key] = []
                 extra_info[i][key].append(val)
 
-
-        ### enter CPU computing
-        ltmv_true = dataset.inv_normlize_data([target])[0]#.detach().cpu()
-        ltmv_pred = ltmv_pred#.detach().cpu()
-        if len(ltmv_true.shape) == 5:#(B,P,Z,W,H) -> (B,P,W,H)
-            ltmv_true = ltmv_true.flatten(1,2) 
-        if len(ltmv_pred.shape) == 5:#(B,P,Z,W,H) -> (B,P,W,H)
-            ltmv_pred = ltmv_pred.flatten(1,2) 
-        if len(clim.shape)!=len(ltmv_pred.shape):
-            ltmv_pred = ltmv_pred.squeeze(-1)
-            ltmv_true = ltmv_true.squeeze(-1) # temporary use this for timestamp input like [B, P, w,h,T]
+        ltmv_trues = dataset.inv_normlize_data([target])[0]#.detach().cpu()
+        ltmv_preds = ltmv_pred#.detach().cpu()
+        if model.pred_len > 1:
+            ltmv_trues = ltmv_trues.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)
+            ltmv_preds = ltmv_preds.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)\
+            time_list  = range(i,i+model.pred_len)
+        else:
+            ltmv_trues = ltmv_trues.unsqueeze(0)
+            ltmv_preds = ltmv_preds.unsqueeze(0)
+            time_list  = [i]
 
         if save_prediction_first_step is not None and i==model.history_length:save_prediction_first_step[idxes] = ltmv_pred.detach().cpu()
         if save_prediction_final_step is not None and i==len(batch) - 1:save_prediction_final_step[idxes] = ltmv_pred.detach().cpu()
 
-        if snap_index is not None:
-            snap_line.append([i, get_tensor_value(ltmv_pred,snap_index, time=i),'pred'])
-            snap_line.append([i, get_tensor_value(ltmv_true,snap_index, time=i),'true'])
-        
-        statistic_dim = tuple(range(2,len(ltmv_true.shape))) # always assume (B,P,Z,W,H)
-        batch_variance_line_pred.append(ltmv_pred.std(dim=statistic_dim).detach().cpu())
-        batch_variance_line_true.append(ltmv_true.std(dim=statistic_dim).detach().cpu())
+        for j,(ltmv_true,ltmv_pred) in enumerate(zip(ltmv_trues,ltmv_preds)):
+            time = time_list[j]
+            ### enter CPU computing
+            if len(ltmv_true.shape) == 5:#(B,P,Z,W,H) -> (B,P,W,H)
+                ltmv_true = ltmv_true.flatten(1,2) 
+            if len(ltmv_pred.shape) == 5:#(B,P,Z,W,H) -> (B,P,W,H)
+                ltmv_pred = ltmv_pred.flatten(1,2) 
+            if len(clim.shape)!=len(ltmv_pred.shape):
+                ltmv_pred = ltmv_pred.squeeze(-1)
+                ltmv_true = ltmv_true.squeeze(-1) # temporary use this for timestamp input like [B, P, w,h,T]
+            
+            if snap_index is not None:
+                snap_line.append([time, get_tensor_value(ltmv_pred,snap_index, time=time),'pred'])
+                snap_line.append([time, get_tensor_value(ltmv_true,snap_index, time=time),'true'])
+            
+            statistic_dim = tuple(range(2,len(ltmv_true.shape))) # always assume (B,P,Z,W,H)
+            batch_variance_line_pred.append(ltmv_pred.std(dim=statistic_dim).detach().cpu())
+            batch_variance_line_true.append(ltmv_true.std(dim=statistic_dim).detach().cpu())
 
-        #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
-        accu_series.append(compute_accu(ltmv_pred - clim.to(ltmv_pred.device), ltmv_true - clim.to(ltmv_pred.device)).detach().cpu())
-        rmse_v,rmse_map = compute_rmse(ltmv_pred , ltmv_true, return_map_also=True)
-        rmse_series.append(rmse_v.detach().cpu()) #(B,70)
-        rmse_maps.append(rmse_map.detach().cpu()) #(70,32,64)
-        hmse_value = compute_rmse(ltmv_pred[...,8:24,:], ltmv_true[...,8:24,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
-        hmse_series.append(hmse_value.detach().cpu())
+            #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
+            accu_series.append(compute_accu(ltmv_pred - clim.to(ltmv_pred.device), ltmv_true - clim.to(ltmv_pred.device)).detach().cpu())
+            rmse_v,rmse_map = compute_rmse(ltmv_pred , ltmv_true, return_map_also=True)
+            rmse_series.append(rmse_v.detach().cpu()) #(B,70)
+            rmse_maps.append(rmse_map.detach().cpu()) #(70,32,64)
+            hmse_value = compute_rmse(ltmv_pred[...,8:24,:], ltmv_true[...,8:24,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
+            hmse_series.append(hmse_value.detach().cpu())
         #torch.cuda.empty_cache()
 
     
@@ -1457,16 +1486,25 @@ def get_projectname(args):
     model_name   = get_model_name(args)
     datasetname  = get_datasetname(args)
 
-    project_name = f"{args.mode}-{args.train_set}"
-    if hasattr(args,'random_time_step') and args.random_time_step:project_name = 'rd_sp_'+project_name 
-    if hasattr(args,'time_step') and args.time_step:              project_name = f"ts_{args.time_step}_" +project_name 
-    if hasattr(args,'history_length') and args.history_length !=1:project_name = f"his_{args.history_length}_"+project_name
-    if hasattr(args,'time_reverse_flag') and args.time_reverse_flag !="only_forward":project_name = f"{args.time_reverse_flag}_"+project_name
-    if hasattr(args,'time_intervel') and args.time_intervel:project_name = project_name + f"_per_{args.time_intervel}_step"
-    if args.patch_range != args.dataset_patch_range and args.patch_range and args.dataset_patch_range: 
-        project_name = project_name + f"_P{tuple2str(args.dataset_patch_range)}_for_P{tuple2str(args.patch_range)}"
-    #if hasattr(args,'cross_sample') and args.cross_sample:project_name = project_name + f"_random_dataset"
-    #print(project_name)
+    if "Self" in datasetname:
+        property_names = 'UVTPH'
+        args.picked_input_property.sort()
+        args.picked_output_property.sort()
+
+        picked_input_name = "".join([property_names[t] for t in args.picked_input_property])
+        picked_output_name= "".join([property_names[t] for t in args.picked_output_property])
+        project_name = f"{picked_input_name}_{picked_output_name}"
+    else:
+        project_name = f"{args.mode}-{args.train_set}"
+        if hasattr(args,'random_time_step') and args.random_time_step:project_name = 'rd_sp_'+project_name 
+        if hasattr(args,'time_step') and args.time_step:              project_name = f"ts_{args.time_step}_" +project_name 
+        if hasattr(args,'history_length') and args.history_length !=1:project_name = f"his_{args.history_length}_"+project_name
+        if hasattr(args,'time_reverse_flag') and args.time_reverse_flag !="only_forward":project_name = f"{args.time_reverse_flag}_"+project_name
+        if hasattr(args,'time_intervel') and args.time_intervel:project_name = project_name + f"_per_{args.time_intervel}_step"
+        if args.patch_range != args.dataset_patch_range and args.patch_range and args.dataset_patch_range: 
+            project_name = project_name + f"_P{tuple2str(args.dataset_patch_range)}_for_P{tuple2str(args.patch_range)}"
+        #if hasattr(args,'cross_sample') and args.cross_sample:project_name = project_name + f"_random_dataset"
+        #print(project_name)
     return model_name, datasetname,project_name
 
 def deal_with_tuple_string(patch_size,defult=None):
@@ -1559,6 +1597,7 @@ def parse_default_args(args):
     patch_size = args.patch_size = deal_with_tuple_string(args.patch_size,patch_size)
     img_size   = args.img_size   = deal_with_tuple_string(args.img_size,img_size)
     patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,None)
+    
     if "Patch" in args.dataset_type:
         dataset_patch_range = args.dataset_patch_range = deal_with_tuple_string(args.dataset_patch_range,None)
     else:
@@ -1567,7 +1606,17 @@ def parse_default_args(args):
     dataset_kargs['patch_range']= dataset_patch_range if dataset_patch_range else patch_range
     dataset_kargs['debug']= args.debug
     args.dataset_kargs = dataset_kargs
-    
+    args.picked_input_property = args.picked_output_property = None
+    if args.picked_inputoutput_property:
+        args.picked_input_property, args.picked_output_property = args.picked_inputoutput_property.split(".")
+        args.picked_input_property = deal_with_tuple_string(args.picked_input_property,None)
+        args.picked_input_property = [args.picked_input_property] if isinstance(args.picked_input_property,int) else args.picked_input_property
+        args.picked_output_property = deal_with_tuple_string(args.picked_output_property,None)
+        args.picked_output_property= [args.picked_output_property] if isinstance(args.picked_output_property,int) else args.picked_output_property
+        args.input_channel = 14*len(args.picked_input_property)
+        args.output_channel= 14*len(args.picked_output_property)
+    dataset_kargs['picked_input_property'] = args.picked_input_property
+    dataset_kargs['picked_output_property'] = args.picked_output_property
     # model_img_size= args.img_size
     # if 'Patch' in args.wrapper_model:
     #     if '3D' in args.wrapper_model:
