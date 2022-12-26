@@ -94,7 +94,7 @@ def get_args_parser():
 
     # Dataset parameters
     parser.add_argument('--dataset_type', default='', type=str, help='Name of dataset to train',choices=["",
-    'WeathBench71','ERA5Tiny12_47_96_Normal','ERA5CephDataset','WeathBench7066PatchDataset','ERA5CephSmallPatchDataset','ERA5CephSmallDataset','ERA5Tiny12_47_96','WeathBench7066','WeathBench7066DeltaDataset'])
+    'WeathBench71','ERA5Tiny12_47_96_Normal','ERA5CephDataset','WeathBench7066PatchDataset','ERA5CephSmallPatchDataset','WeathBench7066Self','ERA5CephSmallDataset','ERA5Tiny12_47_96','WeathBench7066','WeathBench7066DeltaDataset'])
     parser.add_argument('--dataset_flag', default="", type=str)
     parser.add_argument('--time_reverse_flag', default='only_forward', type=str)
     parser.add_argument('--time_intervel', type=int, default=1)
@@ -108,7 +108,7 @@ def get_args_parser():
     parser.add_argument('--num_workers',type=int,default=2)
     parser.add_argument('--use_offline_data',type=int,default=0)
     parser.add_argument('--chunk_size',type=int,default=1024)
-    
+    parser.add_argument('--picked_inputoutput_property',type=str,default=None)
     
     # Fourcast Parameter
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
