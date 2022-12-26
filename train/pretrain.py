@@ -579,7 +579,12 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     while inter_b.update_step():
         #if inter_b.now>10:break
         step = inter_b.now
-        run_gmod= (count_update%grad_modifier.ngmod_freq==0) if grad_modifier is not None else False
+        
+        run_gmod = False
+        if grad_modifier is not None:
+            control = step if grad_modifier.update_mode==2 else count_update
+            run_gmod = (control%grad_modifier.ngmod_freq==0)
+
         batch = prefetcher.next()
 
         # In this version(2022-12-22) we will split normal and ngmod processing
@@ -603,7 +608,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
             # the normal initial method will cause numerial explore by using timestep > 4 senenrio.
             
-            if grad_modifier is not None and run_gmod:
+            if grad_modifier is not None and run_gmod and (grad_modifier.update_mode==2):
                 chunk = grad_modifier.split_batch_chunk
                 ng_accu_times = max(data_loader.batch_size//chunk,1)
 
@@ -645,6 +650,19 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
             with torch.cuda.amp.autocast(enabled=model.use_amp):
                 loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
+                ## nodal loss
+                if (grad_modifier is not None) and (run_gmod) and (grad_modifier.update_mode==2):
+                    if grad_modifier.lambda1!=0:
+                        Nodeloss1 = grad_modifier.getL1loss(model, batch[0])
+                        loss += grad_modifier.lambda1 * Nodeloss1
+                        Nodeloss1=Nodeloss1.item()
+                    if grad_modifier.lambda2!=0:
+                        Nodeloss2 = grad_modifier.getL2loss(model, batch[0])
+                        if Nodeloss2>0:
+                            loss += grad_modifier.lambda2 * Nodeloss2
+                        Nodeloss2=Nodeloss2.item()
+
+            
             loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
             if skip:continue
             loss /= accumulation_steps
@@ -1829,6 +1847,7 @@ def build_optimizer(args,model):
     if optimizer.grad_modifier is not None:
         optimizer.grad_modifier.ngmod_freq = args.ngmod_freq
         optimizer.grad_modifier.split_batch_chunk = args.split_batch_chunk
+        optimizer.grad_modifier.update_mode = args.gmod_update_mode
     lr_scheduler = None
     if args.sched:
         lr_scheduler, _ = create_scheduler(args, optimizer)

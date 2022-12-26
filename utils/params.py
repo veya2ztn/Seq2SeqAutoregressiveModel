@@ -74,6 +74,7 @@ def get_args_parser():
     parser.add_argument('--criterion', type=str, default='mse', help='criterion')
     parser.add_argument('--ngmod_freq', type=int, default=10, help='ngmod_freq')
     parser.add_argument('--split_batch_chunk', type=int, default=16, help='split_batch_chunk')
+    parser.add_argument('--gmod_update_mode', type=int, default=2, help='gmod_update_mode')
     
     #### fno parameters
     parser.add_argument('--fno-bias', action='store_true')
