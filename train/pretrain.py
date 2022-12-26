@@ -1488,9 +1488,6 @@ def get_projectname(args):
 
     if "Self" in datasetname:
         property_names = 'UVTPH'
-        args.picked_input_property.sort()
-        args.picked_output_property.sort()
-
         picked_input_name = "".join([property_names[t] for t in args.picked_input_property])
         picked_output_name= "".join([property_names[t] for t in args.picked_output_property])
         project_name = f"{picked_input_name}_{picked_output_name}"
