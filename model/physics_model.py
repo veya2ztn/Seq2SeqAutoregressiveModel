@@ -387,3 +387,10 @@ class WithoutSpeed(BaseModel):
         self.backbone =  backbone
     def forward(self, Field):
         return self.backbone(Field)
+
+class CrossSpeed(BaseModel):
+    def __init__(self, args, backbone):
+        super().__init__()
+        self.backbone =  backbone
+    def forward(self, Field):
+        return self.backbone(Field)
