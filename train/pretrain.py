@@ -222,6 +222,10 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     if model.training and model.input_noise_std and i==1:
         normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
 
+    if hasattr(model,"train_for_part_extra") and model.train_for_part_extra:
+        assert len(normlized_Field.shape)==4
+        normlized_Field = torch.cat([normlized_Field,target[:,model.train_for_part_extra]],1)
+
     #print(normlized_Field.shape,torch.std_mean(normlized_Field))
     out   = model(normlized_Field)
 
@@ -387,6 +391,8 @@ def once_forward_deltaMode(model,i,start,end,dataset,time_step_1_mode):
     dataset.delta_std_tensor  = dataset.delta_std_tensor.to(base1.device)
     start   = start[1:] + [[base1 + (delta1*dataset.delta_std_tensor + dataset.delta_mean_tensor) ,ltmv_pred]]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
+
+
 
 
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
@@ -1707,10 +1713,14 @@ def build_model(args):
     model.pred_len = args.pred_len
     model.accumulation_steps = args.accumulation_steps
     model.train_for_part = None
+    model.train_for_part_extra = None
     if args.wrapper_model == 'OnlyPredSpeed':
         model.train_for_part = list(range(28))
     elif args.wrapper_model == 'WithoutSpeed':
         model.train_for_part = list(range(28,70))    
+    elif args.wrapper_model == 'CrossSpeed':
+        model.train_for_part_extra = list(range(28))
+        model.train_for_part = list(range(28,70))
     return model
 
 def update_experiment_info(experiment_hub_path,epoch,args):
