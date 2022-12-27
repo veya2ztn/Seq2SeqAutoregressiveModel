@@ -1697,7 +1697,7 @@ def build_model(args):
         # DistributedDataParallel will use all available devices.
         torch.cuda.set_device(args.gpu)
         model.cuda(args.gpu)
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu],find_unused_parameters= ("FED" in args.model_type)  ) 
     else:
         model = model.cuda()
 
