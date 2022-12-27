@@ -852,8 +852,6 @@ class WeathBench706(WeathBench71):
         super().__init__(**kargs)
         self.single_data_path_list = self.single_data_path_list[::6]
 
-
-
 class WeathBench716(WeathBench71):
     default_root='datasets/weatherbench_6hour'
     use_offline_data = False
@@ -950,6 +948,43 @@ class WeathBench7066(WeathBench71):
         # config_pool['3D70O'] =(_list  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
         return config_pool
     
+class WeathBench7066Self(WeathBench7066):
+    # use for property relation check
+    def __init__(self,**kargs):
+        super().__init__(**kargs)
+        assert self.use_offline_data == 2
+        picked_input_property  = kargs.get('picked_input_property') 
+        picked_output_property = kargs.get('picked_output_property') 
+
+        assert picked_input_property
+        assert picked_output_property
+        if isinstance(picked_input_property,int):picked_input_property = [picked_input_property]
+        if isinstance(picked_output_property,int):picked_output_property = [picked_output_property]
+
+        picked_input_property = set(picked_input_property)
+        picked_output_property= set(picked_output_property)
+
+        assert len(picked_input_property&picked_output_property) == 0
+        self.picked_input_channel = []
+        for p in picked_input_property:
+            self.picked_input_channel += list(range(p*14,(p+1)*14))
+
+        self.picked_output_channel = []
+        for p in picked_output_property:
+            self.picked_output_channel += list(range(p*14,(p+1)*14))
+
+    def __len__(self):
+        return len(self.dataset_tensor)
+
+    def __getitem__(self,idx):
+        batch = self.get_item(idx)
+        batch = [batch[self.picked_input_channel],batch[self.picked_output_channel]]
+        return batch if not self.with_idx else (idx,batch)
+
+    
+    
+
+
 class WeathBench7066DeltaDataset(WeathBench7066):
     def __init__(self,**kargs):
         super().__init__(**kargs)

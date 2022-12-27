@@ -279,6 +279,7 @@ class AutoPatchOverLapModel2D(AutoPatchModel2D):
             else:
                 x = self.patches_to_image_adapt(x)
         return x
+    
     def patches_to_image_adapt(self,x):
         # the goal is to recovery (LargeBatch,LargeBatch) from (LargeBatch - 2,LargeBatch -2, Patch_Size, Patch_Size)
         patch_range = self.patch_range if isinstance(self.patch_range,(list,tuple)) else (self.patch_range,self.patch_range)
@@ -530,10 +531,11 @@ class POverLapTimePosFEDformer(POverLapTimePosBias2D):
                                   pred_len=kargs.get('pred_len',4),
                                   label_len=kargs.get('label_len',4),share_memory=kargs.get('share_memory',1))
 
-    def image_to_patches(self, x,pos_stamp):
+    def image_to_patches(self, x,pos_stamp,start_time_stamp,end_time_stamp):
         assert len(x.shape)==5 #(B, T, P, W, H)
         Batch_size, Time_length = x.shape[:2]
         x = x.flatten(0,1)
+
         self.input_is_full_image = False
         good_input_shape = (self.patch_range,self.patch_range)
         now_input_shape  = tuple(x.shape[-2:])
@@ -550,7 +552,11 @@ class POverLapTimePosFEDformer(POverLapTimePosBias2D):
             x = x[...,around_index[:,:,0],around_index[:,:,1]] # (B,P,W-4,H,Patch,Patch)
             x = x.permute(0,2,3,1,4,5)
             _,W,H,PP,_,_ = x.shape
-            self.input_shape_tmp=(B,W,H,P)
+            output_batch = np.prod(end_time_stamp.shape[:2])
+            self.input_shape_tmp=(output_batch,W,H,P)
+            start_time_stamp = start_time_stamp.unsqueeze(1).unsqueeze(1).repeat(1,W,H,1,1).flatten(0,2)
+            end_time_stamp   = end_time_stamp.unsqueeze(1).unsqueeze(1).repeat(1,W,H,1,1).flatten(0,2)
+            
             x = x.flatten(0,2) # (B* W-4 * H,P, Patch,Patch)
         else:
             pos_stamp = pos_stamp.flatten(0,1)
@@ -559,7 +565,7 @@ class POverLapTimePosFEDformer(POverLapTimePosBias2D):
         now_input_shape  = tuple(x.shape[-2:])
         assert now_input_shape == good_input_shape
         x = x.reshape(-1, Time_length, *x.shape[1:])
-        return x
+        return x,start_time_stamp,end_time_stamp
 
     def forward(self, x, pos_stamp, start_time_stamp, end_time_stamp ):
         '''
@@ -568,9 +574,15 @@ class POverLapTimePosFEDformer(POverLapTimePosBias2D):
         '''
         #print(x.shape)
         shape = x.shape
-        x = self.image_to_patches(x,pos_stamp)
+        x,start_time_stamp,end_time_stamp = self.image_to_patches(x,pos_stamp,start_time_stamp,end_time_stamp)
         x = rearrange(x,'b t c w h -> b w h t c')
-        x = self.backbone(x,start_time_stamp, end_time_stamp)
+        TheMinBatch=1024
+        if len(x) > TheMinBatch: #(B, LargeP, P, p0, p1, p2)
+            assert not self.training
+            x = torch.cat([self.backbone(t1,t2,t3) for t1,t2,t3 in zip(torch.split(x,TheMinBatch),torch.split(start_time_stamp,TheMinBatch),torch.split(end_time_stamp,TheMinBatch))])
+        else:   
+            x = self.backbone(x,start_time_stamp, end_time_stamp)
+        
         x = rearrange(x,'b w h t c -> b t c w h')
         x = x.flatten(0,1)
         x = self.patches_to_image(x)
