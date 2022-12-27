@@ -293,9 +293,8 @@ class FullFourierBlockN(nn.Module):
         
         self.scale = (1 / (in_channels * out_channels))
         self.weights1 = nn.Parameter(
-            self.scale * torch.rand(head_num, in_channels // head_num, out_channels // head_num,
-                                    self.mask.sum(), 
-                                    dtype=torch.cfloat))
+            torch.rand(head_num, in_channels // head_num, out_channels // head_num,
+                                    self.mask.sum(), 2))
         self.canonical_fft=canonical_fft
     def forward(self, x, k=None, v=None, mask=None):
         # the input must be [Batch, head_num, in_channels, *space_dims]
@@ -306,10 +305,10 @@ class FullFourierBlockN(nn.Module):
         x_ft = torch.fft.rfftn(x, dim=fft_dim, norm='ortho')
         x_ft_shape = list(x_ft.shape)
         x_ft_shape[2] = self.weights1.shape[2]
-        out_ft = torch.zeros(*x_ft_shape, device=x.device, dtype=torch.cfloat)
+        out_ft = torch.zeros(*x_ft_shape,2, device=x.device, dtype=torch.cfloat)
         # the x_ft[...,self.index] will convert 
         #[Batch, head_num, in_channels, *space_dims] --> [Batch, head_num, in_channels, L]
-        out_ft[...,self.mask] = torch.einsum('bhil,hiol->bhol',x_ft[...,self.mask],self.weights1)
+        out_ft[...,self.mask] = self.scale * torch.einsum('bhil,hiol->bhol',x_ft[...,self.mask],torch.view_as_complex(self.weights1))
         if self.canonical_fft:out_ft = canonical_fft_freq(out_ft,fft_dim,indexes=self.canonical_index1,indexes2=self.canonical_index2)
         x = torch.fft.irfftn(out_ft, dim=fft_dim, s=space_dims, norm='ortho')
         return (x, None)
@@ -357,9 +356,14 @@ class FourierBlockN(nn.Module):
 
         
         self.scale = (1 / (in_channels * out_channels))
-        self.weights1 = nn.Parameter(torch.rand(head_num, in_channels // head_num, out_channels // head_num, 
-                                    dtype=torch.cfloat)) #<----------------
+        self.weights1 = nn.Parameter(torch.rand(head_num, in_channels // head_num, out_channels // head_num, 2
+                                    )) #<----------------
         self.canonical_fft=canonical_fft
+    
+    def complex_mul(self, a,b):
+        return torch.view_as_complex(torch.stack([torch.einsum('bhil,hio->bhol', a.real, b[...,0])-torch.einsum('bhil,hio->bhol', a.imag, b[...,1]),
+                                                  torch.einsum('bhil,hio->bhol', a.real, b[...,1])+torch.einsum('bhil,hio->bhol', a.imag, b[...,0]),],-1))
+
     def forward(self, x, k=None, v=None, mask=None):
         # the input must be [Batch, head_num, in_channels, *space_dims]
         
@@ -372,7 +376,8 @@ class FourierBlockN(nn.Module):
         out_ft = torch.zeros(*x_ft_shape, device=x.device, dtype=torch.cfloat)
         # the x_ft[...,self.index] will convert 
         #[Batch, head_num, in_channels, *space_dims] --> [Batch, head_num, in_channels, L]
-        out_ft[...,self.mask] =self.scale * torch.einsum('bhil,hio->bhol',x_ft[...,self.mask],self.weights1)
+        out_ft[...,self.mask] =self.scale * torch.einsum('bhil,hio->bhol',x_ft[...,self.mask],torch.view_as_complex(self.weights1))
+        #out_ft[...,self.mask] = self.scale * self.complex_mul(x_ft[...,self.mask],self.weights1)
         # move scale here
         if self.canonical_fft:out_ft = canonical_fft_freq(out_ft,fft_dim,indexes=self.canonical_index1,indexes2=self.canonical_index2)
         x = torch.fft.irfftn(out_ft, dim=fft_dim, s=space_dims, norm='ortho')
@@ -651,8 +656,7 @@ class FourierCrossAttentionN(nn.Module):
         
         
         self.scale = (1 / (in_channels * out_channels))
-        self.weights1 = nn.Parameter(
-            self.scale * torch.rand(head_num, in_channels // head_num, out_channels // head_num, self.mask_q.sum(), dtype=torch.cfloat))
+        self.weights1 = nn.Parameter(torch.rand(head_num, in_channels // head_num, out_channels // head_num, self.mask_q.sum(), 2))
         if self.activation == 'tanh':
             self.complex_nonlinear = nn.Tanh()
         elif self.activation == 'modReLU':
@@ -697,6 +701,9 @@ class FourierCrossAttentionN(nn.Module):
         qkv = qkv.reshape(xq_ft_.shape)
         return qkv
 
+    def complex_mul(self, a,b):
+        return torch.view_as_complex(torch.stack([torch.einsum("...ex,...eox->...ox", a.real, b[...,0])-torch.einsum("...ex,...eox->...ox", a.imag, b[...,1]),
+                                                  torch.einsum("...ex,...eox->...ox", a.real, b[...,1])+torch.einsum("...ex,...eox->...ox", a.imag, b[...,0]),],-1))
     def forward(self, q, k, v=None, mask=None):
         # the input must be [Batch, head_num, in_channels, *space_dims]
         space_dims_q= q.shape[3:]
@@ -735,7 +742,8 @@ class FourierCrossAttentionN(nn.Module):
             raise NotImplementedError("please assign correct attention stratagy")
         # the whole space dims are used to compute attention
         #timer.record(f'qkv','cross_attention',2)
-        xqkvw   = torch.einsum("...ex,...eox->...ox", xqkv_ft, self.weights1)
+        xqkvw   = self.scale * torch.einsum("...ex,...eox->...ox", xqkv_ft, torch.view_as_complex(self.weights1))
+        #xqkvw = self.scale*self.complex_mul(xqkv_ft,self.weights1) #<---- the reason for explict view as complex is for multiGPU train
         #timer.record(f'qkvw','cross_attention',2)
         # #[Batch, head_num, in_channels, modes1]   
         # #                       |                 --> [Batch, head_num, out_channels, modes1] 
