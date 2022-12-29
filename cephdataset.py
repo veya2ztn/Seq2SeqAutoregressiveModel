@@ -934,7 +934,9 @@ class WeathBench7066(WeathBench71):
         _list = self._component_list
         vector_scalar_mean = self.mean_std.copy()
         vector_scalar_mean[:,self.volicity_idx] = 0
+        _list2 = [_list[iii] for iii in (list(range(0,14*4-1))+list(range(14*4,14*5-1)))]
         config_pool={
+            '2D68K': (_list2 ,'gauss_norm'  , self.mean_std[:,_list2].reshape(2,68,1,1), identity, identity ),
             '2D70V': (_list ,'gauss_norm'   , vector_scalar_mean[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
@@ -1005,6 +1007,9 @@ class WeathBench7066deseasonal(WeathBench7066):
         tensor = tensor*self.deseasonal_std_tensor + self.deseasonal_mean_tensor
         tensor = tensor + self.seasonal_tensor[time_stamps_offset.long()] #(B, 70, 32, 64)
         return tensor
+
+    def recovery(self,tensor, time_stamps_offset):
+        return self.addseasonal(tensor, time_stamps_offset)
     @staticmethod
     def create_offline_dataset_templete(split='test', root=None, use_offline_data=False, **kargs):
         if root is None:root = WeathBench7066.default_root
@@ -1024,7 +1029,7 @@ class WeathBench68pixelnorm(WeathBench7066):
         super().__init__(**kargs)
         assert self.use_offline_data == 2
         assert self.dataset_flag == '2D68K'
-        self.pixelnorm_mean, self.pixelnorm_std = self.load_numpy_from_url(os.path.join(self.root+"_offline","mean_stds_pixelnorm.npy"))
+        self.pixelnorm_mean, self.pixelnorm_std = self.load_numpy_from_url(os.path.join(self.root+"_offline","means_stds_pixelnorm.npy"))
         self.pixelnorm_mean_tensor = torch.Tensor(self.pixelnorm_mean).reshape(1,68,32,64)
         self.pixelnorm_std_tensor  = torch.Tensor(self.pixelnorm_std).reshape(1,68,32,64)
         
@@ -1035,7 +1040,19 @@ class WeathBench68pixelnorm(WeathBench7066):
         tensor = tensor*self.pixelnorm_std_tensor + self.pixelnorm_mean_tensor
         return tensor
     
-
+    @staticmethod
+    def create_offline_dataset_templete(split='test', root=None, use_offline_data=False, **kargs):
+        if root is None:root = WeathBench7066.default_root
+        if use_offline_data:
+            dataset_flag = kargs.get('dataset_flag')
+            data_name = f"{split}_{dataset_flag}_pixelnorm.npy"
+        else:
+            raise NotImplementedError
+        numpy_path = os.path.join(root+'_offline',data_name)
+        print(f"load data from {numpy_path}")
+        dataset_tensor   = torch.Tensor(np.load(numpy_path))
+        record_load_tensor = torch.ones(len(dataset_tensor))
+        return dataset_tensor,record_load_tensor
 
 class WeathBench7066DeltaDataset(WeathBench7066):
     def __init__(self,**kargs):
@@ -1053,7 +1070,10 @@ class WeathBench7066DeltaDataset(WeathBench7066):
         if self.delta_std_tensor.device != delta.device:
             self.delta_std_tensor = self.delta_std_tensor.to(delta.device)
         return  base + delta*self.delta_std_tensor + self.delta_mean_tensor
-        
+    
+    def recovery(self,base, delta):
+        return self.combine_base_delta(base, delta)
+
     def get_item(self,idx,reversed_part=False):
         '''
         Notice for 3D case, we return (5,14,32,64) data tensor
