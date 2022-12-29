@@ -174,9 +174,12 @@ def once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode):
     normlized_Field    = torch.stack(normlized_Field_list,2) #(B,P,T,w,h)
 
     target_list = dataset.do_normlize_data([[t[0] for t in end]])[0]  #always use normlized input
-    target   = torch.stack(target_list,2) #(B,P,T,w,h)
+    target      = torch.stack(target_list,2) #(B,P,T,w,h)
     
-    out  = model(normlized_Field,start_timestamp, end_timestamp)
+    if 'FED' in model.__class__.__name__:
+        out  = model(normlized_Field, start_timestamp, end_timestamp)
+    else:
+        out = model(normlized_Field)
     extra_loss = 0
     extra_info_from_model_list = []
     if isinstance(out,(list,tuple)):
@@ -393,6 +396,7 @@ def once_forward_deltaMode(model,i,start,end,dataset,time_step_1_mode):
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 
+
 def once_forward_self_relation(model,i,start,end,dataset,time_step_1_mode=None):
     assert len(start) == 1
     input_feature  = start[0]
@@ -456,12 +460,18 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
         ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
 
         if 'Delta' in dataset.__class__.__name__:
-            with torch.no_grad():
-                normlized_field_predict = start[-1][0] + start[-1][1]*dataset.delta_std_tensor + dataset.delta_mean_tensor
-                normlized_field_real  = end[0] +    end[1]*dataset.delta_std_tensor + dataset.delta_mean_tensor
-                abs_loss = criterion(normlized_field_predict,normlized_field_real)
-
             loss  += criterion(ltmv_pred,target)
+            with torch.no_grad():
+                normlized_field_predict = dataset.combine_base_delta(start[-1][0], start[-1][1]) 
+                normlized_field_real    = dataset.combine_base_delta(      end[0],       end[1])  
+                abs_loss = criterion(normlized_field_predict,normlized_field_real)
+            
+        elif 'deseasonal' in dataset.__class__.__name__:
+            loss  += criterion(ltmv_pred,target)
+            with torch.no_grad():
+                normlized_field_predict = dataset.addseasonal(start[-1][0], start[-1][1])
+                normlized_field_real    = dataset.addseasonal(end[0], end[1])
+                abs_loss = criterion(normlized_field_predict,normlized_field_real)
         else:
             normlized_field_predict = ltmv_pred
             normlized_field_real = target
@@ -869,8 +879,13 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
         ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
         if 'Delta' in dataset.__class__.__name__:
             with torch.no_grad():
-                ltmv_pred = start[-1][0] + start[-1][1]*dataset.delta_std_tensor + dataset.delta_mean_tensor
-                target   = end[0] +    end[1]*dataset.delta_std_tensor + dataset.delta_mean_tensor
+                ltmv_pred = dataset.combine_base_delta(start[-1][1], start[-1][0]) 
+                target    = dataset.combine_base_delta(      end[1],       end[0])  
+        elif 'deseasonal' in dataset.__class__.__name__:
+            with torch.no_grad():
+                ltmv_pred = dataset.addseasonal(start[-1][1], start[-1][0])
+                target    = dataset.addseasonal(end[1], end[0])
+                
         for extra_info_from_model in extra_info_from_model_list:
             for key, val in extra_info_from_model.items():
                 if i not in extra_info:extra_info[i] = {}
