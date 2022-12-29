@@ -472,6 +472,12 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
                 normlized_field_predict = dataset.addseasonal(start[-1][0], start[-1][1])
                 normlized_field_real    = dataset.addseasonal(end[0], end[1])
                 abs_loss = criterion(normlized_field_predict,normlized_field_real)
+        elif '68pixelnorm' in dataset.__class__.__name__:
+            loss  += criterion(ltmv_pred,target)
+            with torch.no_grad():
+                normlized_field_predict = dataset.recovery(start[-1])
+                normlized_field_real    = dataset.recovery(end)
+                abs_loss = criterion(normlized_field_predict,normlized_field_real)
         else:
             normlized_field_predict = ltmv_pred
             normlized_field_real = target
@@ -885,6 +891,10 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
             with torch.no_grad():
                 ltmv_pred = dataset.addseasonal(start[-1][1], start[-1][0])
                 target    = dataset.addseasonal(end[1], end[0])
+        elif '68pixelnorm' in dataset.__class__.__name__:
+            with torch.no_grad():
+                ltmv_pred = dataset.recovery(start[-1])
+                target    = dataset.recovery(end)
                 
         for extra_info_from_model in extra_info_from_model_list:
             for key, val in extra_info_from_model.items():
