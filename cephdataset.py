@@ -1019,6 +1019,22 @@ class WeathBench7066deseasonal(WeathBench7066):
         record_load_tensor = torch.ones(len(dataset_tensor))
         return dataset_tensor,record_load_tensor
 
+class WeathBench68pixelnorm(WeathBench7066):
+    def __init__(self,**kargs):
+        super().__init__(**kargs)
+        assert self.use_offline_data == 2
+        assert self.dataset_flag == '2D68K'
+        self.pixelnorm_mean, self.pixelnorm_std = self.load_numpy_from_url(os.path.join(self.root+"_offline","mean_stds_pixelnorm.npy"))
+        self.pixelnorm_mean_tensor = torch.Tensor(self.pixelnorm_mean).reshape(1,68,32,64)
+        self.pixelnorm_std_tensor  = torch.Tensor(self.pixelnorm_std).reshape(1,68,32,64)
+        
+    def recovery(self, tensor):
+        if self.pixelnorm_mean_tensor.device != tensor.device:
+            self.pixelnorm_std_tensor  = self.pixelnorm_std_tensor.to(tensor.device)
+            self.pixelnorm_mean_tensor = self.pixelnorm_mean_tensor.to(tensor.device)
+        tensor = tensor*self.pixelnorm_std_tensor + self.pixelnorm_mean_tensor
+        return tensor
+    
 
 
 class WeathBench7066DeltaDataset(WeathBench7066):
