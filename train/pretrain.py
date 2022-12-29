@@ -448,7 +448,6 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
     for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
         end = batch[i:i+model.pred_len]
         end = end[0] if len(end) == 1 else end
-
         ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
 
         if extra_loss !=0:
@@ -1810,6 +1809,13 @@ def build_model(args):
     elif args.wrapper_model == 'CrossSpeed':
         model.train_for_part_extra = list(range(28))
         model.train_for_part = list(range(28,70))
+    elif args.wrapper_model =='UVTP2p':
+        assert "55" in args.dataset_flag
+        model.train_for_part = list(range(14*3,14*4-1))
+    elif args.wrapper_model =='UVTPp2uvt':
+        assert "55" in args.dataset_flag
+        model.train_for_part_extra = list(range(14*3,14*4-1))
+        model.train_for_part = list(range(14*3))
     return model
 
 def update_experiment_info(experiment_hub_path,epoch,args):

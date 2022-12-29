@@ -747,6 +747,17 @@ class WeathBench71(WeathBench):
                     [ 6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 18]+ # Geopotential and the last one is ground Geopotential, should be replace later
                     [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 57] # Realitve humidity and the Realitve humidity at groud, should be modified by total precipitaiton later
                     )
+    _component_list68= ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
+                       [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+ # v component of wind and the 10m v wind
+                      [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 0]+ # Temperature and the 2m_temperature
+                      [ 6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18]+ # Geopotential 
+                      [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57] # Realitve humidity 
+                    )
+    _component_list55= ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
+                        [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+ # v component of wind and the 10m v wind
+                        [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,  0]+ # Temperature and the 2m_temperature
+                        [ 6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18] # Geopotential and the last one is ground Geopotential, should be replace later
+                    )
     volicity_idx = ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
                  [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2] # v component of wind and the 10m v wind
                 )
@@ -806,7 +817,7 @@ class WeathBench71(WeathBench):
                 odata[reversed_part] = -odata[reversed_part]
             data = odata[self.channel_choice]
             eg = torch if isinstance(data,torch.Tensor) else np
-            if '3D' in self.normalize_type:
+            if '3D70' in self.normalize_type:
                 # 3D should modify carefully
                 data[14*4-1] = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
                 total_precipitaiton = odata[4]
@@ -816,7 +827,7 @@ class WeathBench71(WeathBench):
                 data[14*5-1] = newdata
                 shape= data.shape
                 data = data.reshape(5,14,*shape[-2:])
-            else:
+            elif '2D70' in self.normalize_type:
                 data[14*4-1]    = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
                 total_precipitaiton = odata[4]
                 data[14*5-1]    = total_precipitaiton
@@ -936,7 +947,8 @@ class WeathBench7066(WeathBench71):
         vector_scalar_mean[:,self.volicity_idx] = 0
         _list2 = [_list[iii] for iii in (list(range(0,14*4-1))+list(range(14*4,14*5-1)))]
         config_pool={
-            '2D68K': (_list2 ,'gauss_norm'  , self.mean_std[:,_list2].reshape(2,68,1,1), identity, identity ),
+            '2D55N': (self._component_list55 ,'gauss_norm'  , self.mean_std[:,self._component_list55].reshape(2,55,1,1), identity, identity ),
+            '2D68K': (self._component_list68 ,'gauss_norm'  , self.mean_std[:,self._component_list68].reshape(2,68,1,1), identity, identity ),
             '2D70V': (_list ,'gauss_norm'   , vector_scalar_mean[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
@@ -1053,6 +1065,29 @@ class WeathBench68pixelnorm(WeathBench7066):
         dataset_tensor   = torch.Tensor(np.load(numpy_path))
         record_load_tensor = torch.ones(len(dataset_tensor))
         return dataset_tensor,record_load_tensor
+
+class WeathBench55withoutH(WeathBench7066):
+    def __init__(self,**kargs):
+        super().__init__(**kargs)
+        assert self.use_offline_data == 2
+        assert self.dataset_flag == '2D55N'
+        self.dataset_tensor = self.dataset_tensor[:,:55]
+        #print(self.dataset_tensor.shape)
+    
+    @staticmethod
+    def create_offline_dataset_templete(split='test', root=None, use_offline_data=False, **kargs):
+        if root is None:root = WeathBench7066.default_root
+        if use_offline_data:
+            dataset_flag = "2D70N"
+            data_name = f"{split}_{dataset_flag}.npy"
+        else:
+            raise NotImplementedError
+        numpy_path = os.path.join(root,data_name)
+        print(f"load data from {numpy_path}")
+        dataset_tensor   = torch.Tensor(np.load(numpy_path))
+        record_load_tensor = torch.ones(len(dataset_tensor))
+        return dataset_tensor,record_load_tensor
+
 
 class WeathBench7066DeltaDataset(WeathBench7066):
     def __init__(self,**kargs):
