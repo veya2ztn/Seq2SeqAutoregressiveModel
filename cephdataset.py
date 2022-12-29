@@ -982,7 +982,43 @@ class WeathBench7066Self(WeathBench7066):
         return batch if not self.with_idx else (idx,batch)
 
     
-    
+class WeathBench7066deseasonal(WeathBench7066):
+    def __init__(self,**kargs):
+        super().__init__(**kargs)
+        assert self.use_offline_data == 2
+        assert self.use_time_stamp 
+        self.deseasonal_mean, self.deseasonal_std = self.load_numpy_from_url(os.path.join(self.root+"_offline","mean_stds_deseasonal.npy"))
+        self.deseasonal_mean = self.deseasonal_mean.reshape(70,1,1)
+        self.deseasonal_std  = self.deseasonal_std.reshape(70,1,1)
+        self.deseasonal_mean_tensor = torch.Tensor(self.deseasonal_mean).reshape(1,70,1,1)
+        self.deseasonal_std_tensor  = torch.Tensor(self.deseasonal_std).reshape(1,70,1,1)
+        self.seasonal_tensor        = torch.Tensor(np.load("datasets/weatherbench_6hour_offline/seasonal1461.npy"))
+        time_stamps              = self.datatimelist_pool[self.split]
+        sean_start_stamps = np.datetime64("1979-01-02")
+        offset            = ((time_stamps - sean_start_stamps)% (1461*np.timedelta64(6, "h")))//np.timedelta64(6, "h")
+        self.timestamp    = torch.LongTensor(offset)
+    def addseasonal(self, tensor, time_stamps_offset):
+        if self.seasonal_tensor.device != tensor.device:
+            self.deseasonal_std_tensor  = self.deseasonal_std_tensor.to(tensor.device)
+            self.deseasonal_mean_tensor = self.deseasonal_mean_tensor.to(tensor.device)
+            self.seasonal_tensor = self.seasonal_tensor.to(tensor.device)
+        tensor = tensor*self.deseasonal_std_tensor + self.deseasonal_mean_tensor
+        tensor = tensor + self.seasonal_tensor[time_stamps_offset.long()] #(B, 70, 32, 64)
+        return tensor
+    @staticmethod
+    def create_offline_dataset_templete(split='test', root=None, use_offline_data=False, **kargs):
+        if root is None:root = WeathBench7066.default_root
+        if use_offline_data:
+            dataset_flag = kargs.get('dataset_flag')
+            data_name = f"{split}_{dataset_flag}_deseasonal.npy"
+        else:
+            raise NotImplementedError
+        numpy_path = os.path.join(root+'_offline',data_name)
+        print(f"load data from {numpy_path}")
+        dataset_tensor   = torch.Tensor(np.load(numpy_path))
+        record_load_tensor = torch.ones(len(dataset_tensor))
+        return dataset_tensor,record_load_tensor
+
 
 
 class WeathBench7066DeltaDataset(WeathBench7066):
@@ -996,6 +1032,12 @@ class WeathBench7066DeltaDataset(WeathBench7066):
         self.delta_std_tensor = torch.Tensor(self.delta_std).reshape(1,70,1,1)
     def __len__(self):
         return len(self.dataset_tensor) - self.time_step*self.time_intervel + 1 -1
+
+    def combine_base_delta(self,base, delta):
+        if self.delta_std_tensor.device != delta.device:
+            self.delta_std_tensor = self.delta_std_tensor.to(delta.device)
+        return  base + delta*self.delta_std_tensor + self.delta_mean_tensor
+        
     def get_item(self,idx,reversed_part=False):
         '''
         Notice for 3D case, we return (5,14,32,64) data tensor
