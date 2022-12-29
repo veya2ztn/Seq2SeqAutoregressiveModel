@@ -374,23 +374,15 @@ class DirectSpace_Feature_Model(BaseModel):
         Field = self.backbone(Field)
         return Field.reshape(oshape)
 
-class OnlyPredSpeed(BaseModel):
+class FeaturePickModel(BaseModel):
     def __init__(self, args, backbone):
         super().__init__()
         self.backbone =  backbone
     def forward(self, Field):
         return self.backbone(Field)
 
-class WithoutSpeed(BaseModel):
-    def __init__(self, args, backbone):
-        super().__init__()
-        self.backbone =  backbone
-    def forward(self, Field):
-        return self.backbone(Field)
-
-class CrossSpeed(BaseModel):
-    def __init__(self, args, backbone):
-        super().__init__()
-        self.backbone =  backbone
-    def forward(self, Field):
-        return self.backbone(Field)
+class OnlyPredSpeed(FeaturePickModel):pass
+class WithoutSpeed(FeaturePickModel):pass
+class CrossSpeed(FeaturePickModel):pass
+class UVTP2p(FeaturePickModel):pass
+class UVTPp2uvt(FeaturePickModel):pass
