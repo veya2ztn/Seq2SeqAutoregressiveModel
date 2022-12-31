@@ -589,7 +589,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     total_diff,total_num  = torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
     nan_count = 0
     Nodeloss1 = Nodeloss2 = Nodeloss12 = 0
-    
+    path_loss = path_length = None
     didunscale = False
     grad_modifier = optimizer.grad_modifier
     skip = False
@@ -2150,7 +2150,7 @@ def distributed_initial(args):
     args.ngpus_per_node = ngpus_per_node
     if not hasattr(args,'train_set'):args.train_set='large'
     ip = os.environ.get("MASTER_ADDR", "127.0.0.1")
-    port = os.environ.get("MASTER_PORT", "54247")
+    port = os.environ.get("MASTER_PORT", f"{54248+np.random.random_integers(10)}" )
     hosts = int(os.environ.get("WORLD_SIZE", "1"))  # number of nodes
     rank = int(os.environ.get("RANK", "0"))  # node id
     gpus = torch.cuda.device_count()  # gpus per node
