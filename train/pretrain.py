@@ -647,10 +647,12 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     ngloss=None
                     with torch.cuda.amp.autocast(enabled=model.use_amp):
                         if grad_modifier.lambda1!=0:
+                            if ngloss is None:ngloss=0
                             Nodeloss1 = grad_modifier.getL1loss(model.module if hasattr(model,'module') else model, batch_data,coef=grad_modifier.coef)/ng_accu_times
                             ngloss  += grad_modifier.lambda1 * Nodeloss1
                             Nodeloss1=Nodeloss1.item()
                         if grad_modifier.lambda2!=0:
+                            if ngloss is None:ngloss=0
                             Nodeloss2 = grad_modifier.getL2loss(model.module if hasattr(model,'module') else model, batch_data,coef=grad_modifier.coef)/ng_accu_times
                             ngloss += grad_modifier.lambda2 * Nodeloss2
                             Nodeloss2=Nodeloss2.item()
@@ -1904,12 +1906,14 @@ def build_optimizer(args,model):
         optimizer.grad_modifier.coef = None
         if args.gmod_coef:
             _, pixelnorm_std = np.load(args.gmod_coef)
-            pixelnorm_std   = torch.Tensor(pixelnorm_std).reshape(1,68,32,64) #<--- should pad 
-            pixelnorm_std = torch.cat([pixelnorm_std[:,:55],
-                           torch.ones(1,1,32,64),
-                           pixelnorm_std[55:],
-                           torch.ones(1,1,32,64)],1
-                           )
+            pixelnorm_std   = torch.Tensor(pixelnorm_std).reshape(1,70,32,64) #<--- should pad 
+            assert not pixelnorm_std.isnan().any()
+            assert not pixelnorm_std.isinf().any()
+            # pixelnorm_std = torch.cat([pixelnorm_std[:,:55],
+            #                torch.ones(1,1,32,64),
+            #                pixelnorm_std[55:],
+            #                torch.ones(1,1,32,64)],1
+            #                )
             optimizer.grad_modifier.coef = pixelnorm_std
     lr_scheduler = None
     if args.sched:
