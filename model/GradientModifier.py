@@ -164,8 +164,8 @@ class Nodal_GradientModifier:
             model = lambda x:modelfun(x,pos,time)
         if coef is not None:
             coef = coef.to(x.device)
-            model = lambda x:modelfun(x*coef,pos,time)
-            x = x/coef # this is to make share the delta_x can be normal distribution
+            model = lambda x:modelfun(x*coef)
+            x = x/(coef+1e-6) # this is to make share the delta_x can be normal distribution
         if self.cotangents_sum_along_x_dimension is None or self.cotangents_sum_along_x_dimension.shape != x.shape:
             self.cotangents_sum_along_x_dimension = torch.ones_like(x)
         tvalues= functorch.jvp(model,(x,), (self.cotangents_sum_along_x_dimension,))[1]
@@ -289,8 +289,8 @@ class NGmod_estimate_L2(Nodal_GradientModifier):
             #               x[:,a:a+b].reshape(-1,*pshape),
             #               x[:,a+b:a+b+c].reshape(-1,*tshape))
         if coef is not None:
-            model = lambda x:modelfun(x*coef,pos,time)
-            x = x/coef
+            model = lambda x:modelfun(x*coef)
+            x = x/(coef+1e-6)
         
         cotangents1s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
         cotangents2s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
