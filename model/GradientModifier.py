@@ -171,6 +171,25 @@ class Nodal_GradientModifier:
         tvalues= functorch.jvp(model,(x,), (self.cotangents_sum_along_x_dimension,))[1]
         values = ((tvalues-1)**2).mean()
         return values
+
+    def getPathLengthloss(self,modelfun,x,mean_path_length,coef=None,decay=0.01):
+        pos=time=None
+        model = modelfun
+        if isinstance(x,list):
+            x, pos,time = x
+            model = lambda x:modelfun(x,pos,time)
+        if coef is not None:
+            coef = coef.to(x.device)
+            model = lambda x:modelfun(x*coef,pos,time)
+            x = x/coef # this is to make share the delta_x can be normal distribution
+        cotangents_sum_along_x_dimension = torch.randn_like(x) / np.sqrt(np.prod(x.shape[1:]))
+        (_, vjpfunc) = functorch.vjp(model, x)
+        grad = vjpfunc(cotangents_sum_along_x_dimension)[0]
+        path_lengths = torch.sqrt(grad.pow(2).sum(2).mean(1))
+        path_mean = mean_path_length + decay * (path_lengths.mean() - mean_path_length)
+        path_penalty = (path_lengths - path_mean).pow(2).mean()
+        return path_penalty, path_mean.detach(), path_lengths
+
     def getL2loss(self,model,x):
         raise NotImplementedError
 

@@ -550,16 +550,6 @@ class RandomSelectPatchFetcher:
 
 
 
-
-
-def g_path_regularize(output, inputs, mean_path_length, decay=0.01):
-    noise = torch.randn_like(output) / math.sqrt(np.prod(output.shape[2:]))
-    grad, = torch.autograd.grad(outputs=(output * noise).sum(), inputs=inputs, create_graph=True)
-    path_lengths = torch.sqrt(grad.pow(2).sum(2).mean(1))
-    path_mean = mean_path_length + decay * (path_lengths.mean() - mean_path_length)
-    path_penalty = (path_lengths - path_mean).pow(2).mean()
-    return path_penalty, path_mean.detach(), path_lengths
-
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     
     if status == 'train':
@@ -599,10 +589,12 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     total_diff,total_num  = torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
     nan_count = 0
     Nodeloss1 = Nodeloss2 = Nodeloss12 = 0
+    
     didunscale = False
     grad_modifier = optimizer.grad_modifier
     skip = False
     count_update = 0
+
     while inter_b.update_step():
         #if inter_b.now>10:break
         step = inter_b.now
@@ -652,7 +644,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                         batch_data = torch.cat([ttt[chunk_id*chunk:(chunk_id+1)*chunk].flatten(1,-1) for ttt in batch_data_full],1)
                     else:
                         batch_data = batch_data_full[chunk_id*chunk:(chunk_id+1)*chunk]
-                    ngloss=0
+                    ngloss=None
                     with torch.cuda.amp.autocast(enabled=model.use_amp):
                         if grad_modifier.lambda1!=0:
                             Nodeloss1 = grad_modifier.getL1loss(model.module if hasattr(model,'module') else model, batch_data,coef=grad_modifier.coef)/ng_accu_times
@@ -662,11 +654,11 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                             Nodeloss2 = grad_modifier.getL2loss(model.module if hasattr(model,'module') else model, batch_data,coef=grad_modifier.coef)/ng_accu_times
                             ngloss += grad_modifier.lambda2 * Nodeloss2
                             Nodeloss2=Nodeloss2.item()
-
-                    if model.use_amp:
-                        loss_scaler.scale(ngloss).backward()    
-                    else:
-                        ngloss.backward()
+                    if ngloss is not None:
+                        if model.use_amp:
+                            loss_scaler.scale(ngloss).backward()    
+                        else:
+                            ngloss.backward()
 
                     # for idx,(name,p) in enumerate(model.named_parameters()):
                     #     print(f"{chunk_id}:{name}:{p.device}:{p.norm()}:{p.grad.norm() if p.grad is not None else None}")
@@ -688,6 +680,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                         if Nodeloss2>0:
                             loss += grad_modifier.lambda2 * Nodeloss2
                         Nodeloss2=Nodeloss2.item()
+                    
 
             
             loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
@@ -701,19 +694,21 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             else:
                 loss.backward()
 
+            path_loss = path_length = None
             if model.path_length_regularize and step%model.path_length_regularize==0:
-                inputs = batch[0].clone()
-                inputs.requires_grad=True
+                inputs1 = torch.randn_like(batch[0]).repeat(2,1,1,1)
+                inputs2 = torch.randn_like(batch[0]).repeat(2,1,1,1)*0.001 + batch[0].repeat(2,1,1,1)
+                inputs = torch.cat([inputs1,inputs2,batch[0]])
                 mean_path_length = model.mean_path_length.to(device)
-                path_loss, mean_path_length, path_lengths = g_path_regularize(
-                    model(inputs), inputs, mean_path_length
-                )
+                path_loss, mean_path_length, path_lengths = grad_modifier.getPathLengthloss(model.module if hasattr(model,'module') else model,
+                inputs,mean_path_length)
                 path_loss.backward()
                 if hasattr(model,'module'):
                     mean_path_length = mean_path_length/dist.get_world_size()
                     dist.all_reduce(mean_path_length)
                 model.mean_path_length = mean_path_length.detach().cpu()
-        
+                path_loss = path_loss.item()
+                path_lengths=path_lengths.mean().item()
 
             # In order to use multiGPU train, I have to use Loss update scenario, suprisely, it is not worse than split scenario
             # if optimizer.grad_modifier is not None:
@@ -768,7 +763,8 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             iter_info_pool={}
         if Nodeloss1  > 0:iter_info_pool[f'{status}_Nodeloss1_gpu{gpu}']  = Nodeloss1
         if Nodeloss2  > 0:iter_info_pool[f'{status}_Nodeloss2_gpu{gpu}']  = Nodeloss2
-            
+        if path_loss is not None:iter_info_pool[f'{status}_path_loss_gpu{gpu}']  = path_loss
+        if path_length is not None:iter_info_pool[f'{status}_path_length_gpu{gpu}']  = path_length
         total_diff  += abs_loss.item()
         #total_num   += len(batch) - 1 #batch 
         total_num   += 1 
