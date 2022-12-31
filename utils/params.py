@@ -36,7 +36,9 @@ def get_args_parser():
     parser.add_argument('--GDMod_sample_times', type=int, default=100)
 
     parser.add_argument('--GDMod_intervel',type=int,default=10)
-    
+
+    parser.add_argument('--path_length_regularize',type=int,default=0)
+
     parser.add_argument('--do_iter_log', type=int, default=1)
     parser.add_argument('--disable_progress_bar',type=int,default=0)
     parser.add_argument('--batch_limit', type=int, default=1)

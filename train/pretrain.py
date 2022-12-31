@@ -548,6 +548,18 @@ class RandomSelectPatchFetcher:
             out = [t[0] for t in out]
         return out 
 
+
+
+
+
+def g_path_regularize(output, inputs, mean_path_length, decay=0.01):
+    noise = torch.randn_like(output) / math.sqrt(np.prod(output.shape[2:]))
+    grad, = torch.autograd.grad(outputs=(output * noise).sum(), inputs=inputs, create_graph=True)
+    path_lengths = torch.sqrt(grad.pow(2).sum(2).mean(1))
+    path_mean = mean_path_length + decay * (path_lengths.mean() - mean_path_length)
+    path_penalty = (path_lengths - path_mean).pow(2).mean()
+    return path_penalty, path_mean.detach(), path_lengths
+
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     
     if status == 'train':
@@ -643,11 +655,11 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     ngloss=0
                     with torch.cuda.amp.autocast(enabled=model.use_amp):
                         if grad_modifier.lambda1!=0:
-                            Nodeloss1 = grad_modifier.getL1loss(model.module if hasattr(model,'module') else model, batch_data)/ng_accu_times
+                            Nodeloss1 = grad_modifier.getL1loss(model.module if hasattr(model,'module') else model, batch_data,coef=grad_modifier.coef)/ng_accu_times
                             ngloss  += grad_modifier.lambda1 * Nodeloss1
                             Nodeloss1=Nodeloss1.item()
                         if grad_modifier.lambda2!=0:
-                            Nodeloss2 = grad_modifier.getL2loss(model.module if hasattr(model,'module') else model, batch_data)/ng_accu_times
+                            Nodeloss2 = grad_modifier.getL2loss(model.module if hasattr(model,'module') else model, batch_data,coef=grad_modifier.coef)/ng_accu_times
                             ngloss += grad_modifier.lambda2 * Nodeloss2
                             Nodeloss2=Nodeloss2.item()
 
@@ -664,15 +676,15 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
 
             with torch.cuda.amp.autocast(enabled=model.use_amp):
-                loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
+                loss, abs_loss, iter_info_pool  =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
                 ## nodal loss
                 if (grad_modifier is not None) and (run_gmod) and (grad_modifier.update_mode==2):
                     if grad_modifier.lambda1!=0:
-                        Nodeloss1 = grad_modifier.getL1loss(model, batch[0])
+                        Nodeloss1 = grad_modifier.getL1loss(model, batch[0],coef=grad_modifier.coef)
                         loss += grad_modifier.lambda1 * Nodeloss1
                         Nodeloss1=Nodeloss1.item()
                     if grad_modifier.lambda2!=0:
-                        Nodeloss2 = grad_modifier.getL2loss(model, batch[0])
+                        Nodeloss2 = grad_modifier.getL2loss(model, batch[0],coef=grad_modifier.coef)
                         if Nodeloss2>0:
                             loss += grad_modifier.lambda2 * Nodeloss2
                         Nodeloss2=Nodeloss2.item()
@@ -689,10 +701,19 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             else:
                 loss.backward()
 
-            
-
-            
-            
+            if model.path_length_regularize and step%model.path_length_regularize==0:
+                inputs = batch[0].clone()
+                inputs.requires_grad=True
+                mean_path_length = model.mean_path_length.to(device)
+                path_loss, mean_path_length, path_lengths = g_path_regularize(
+                    model(inputs), inputs, mean_path_length
+                )
+                path_loss.backward()
+                if hasattr(model,'module'):
+                    mean_path_length = mean_path_length/dist.get_world_size()
+                    dist.all_reduce(mean_path_length)
+                model.mean_path_length = mean_path_length.detach().cpu()
+        
 
             # In order to use multiGPU train, I have to use Loss update scenario, suprisely, it is not worse than split scenario
             # if optimizer.grad_modifier is not None:
@@ -731,18 +752,21 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 didunscale = False
         else:
             with torch.no_grad():
-                loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
-                if optimizer.grad_modifier is not None:
-                    with torch.cuda.amp.autocast(enabled=model.use_amp):
-                        Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
-                    
+                with torch.cuda.amp.autocast(enabled=model.use_amp):
+                    loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
+                    if optimizer.grad_modifier is not None:
+                        if grad_modifier.lambda1!=0:
+                            Nodeloss1 = grad_modifier.getL1loss(model, batch[0],coef=grad_modifier.coef)
+                            Nodeloss1=Nodeloss1.item()
+                        if grad_modifier.lambda2!=0:
+                            Nodeloss2 = grad_modifier.getL2loss(model, batch[0],coef=grad_modifier.coef)
+                            Nodeloss2=Nodeloss2.item()
         if logsys.do_iter_log > 0:
             if logsys.do_iter_log ==  1:iter_info_pool={} # disable forward extra information
             iter_info_pool[f'{status}_loss_gpu{gpu}']       =  loss.item()
         else:
             iter_info_pool={}
         if Nodeloss1  > 0:iter_info_pool[f'{status}_Nodeloss1_gpu{gpu}']  = Nodeloss1
-        if Nodeloss12 > 0:iter_info_pool[f'{status}_Nodeloss12_gpu{gpu}'] = Nodeloss12
         if Nodeloss2  > 0:iter_info_pool[f'{status}_Nodeloss2_gpu{gpu}']  = Nodeloss2
             
         total_diff  += abs_loss.item()
@@ -1802,6 +1826,8 @@ def build_model(args):
     model.accumulation_steps = args.accumulation_steps
     model.train_for_part = None
     model.train_for_part_extra = None
+    model.path_length_regularize = args.path_length_regularize
+    model.mean_path_length = torch.zeros(1)
     if args.wrapper_model == 'OnlyPredSpeed':
         model.train_for_part = list(range(28))
     elif args.wrapper_model == 'WithoutSpeed':
@@ -1879,6 +1905,16 @@ def build_optimizer(args,model):
         optimizer.grad_modifier.ngmod_freq = args.ngmod_freq
         optimizer.grad_modifier.split_batch_chunk = args.split_batch_chunk
         optimizer.grad_modifier.update_mode = args.gmod_update_mode
+        optimizer.grad_modifier.coef = None
+        if args.gmod_coef:
+            _, pixelnorm_std = np.load(args.gmod_coef)
+            pixelnorm_std   = torch.Tensor(pixelnorm_std).reshape(1,68,32,64) #<--- should pad 
+            pixelnorm_std = torch.cat([pixelnorm_std[:,:55],
+                           torch.ones(1,1,32,64),
+                           pixelnorm_std[55:],
+                           torch.ones(1,1,32,64)],1
+                           )
+            optimizer.grad_modifier.coef = pixelnorm_std
     lr_scheduler = None
     if args.sched:
         lr_scheduler, _ = create_scheduler(args, optimizer)

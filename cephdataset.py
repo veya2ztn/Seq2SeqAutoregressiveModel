@@ -1042,7 +1042,7 @@ class WeathBench68pixelnorm(WeathBench7066):
         assert self.use_offline_data == 2
         assert self.dataset_flag == '2D68K'
         self.pixelnorm_mean, self.pixelnorm_std = self.load_numpy_from_url(os.path.join(self.root+"_offline","means_stds_pixelnorm.npy"))
-        self.pixelnorm_mean_tensor = torch.Tensor(self.pixelnorm_mean).reshape(1,68,32,64)
+        self.pixelnorm_mean_tensor  = torch.Tensor(self.pixelnorm_mean).reshape(1,68,32,64)
         self.pixelnorm_std_tensor  = torch.Tensor(self.pixelnorm_std).reshape(1,68,32,64)
         
     def recovery(self, tensor):
