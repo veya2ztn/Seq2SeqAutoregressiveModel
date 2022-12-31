@@ -156,12 +156,16 @@ class Nodal_GradientModifier:
                 #param.grad.data += delta_p
             else:
                 param.grad = delta_p.to(param.device)
-    def getL1loss(self,modelfun,x):
+    def getL1loss(self,modelfun,x,coef=None):
         pos=time=None
         model = modelfun
         if isinstance(x,list):
             x, pos,time = x
             model = lambda x:modelfun(x,pos,time)
+        if coef is not None:
+            coef = coef.to(x.device)
+            model = lambda x:modelfun(x*coef,pos,time)
+            x = x/coef # this is to make share the delta_x can be normal distribution
         if self.cotangents_sum_along_x_dimension is None or self.cotangents_sum_along_x_dimension.shape != x.shape:
             self.cotangents_sum_along_x_dimension = torch.ones_like(x)
         tvalues= functorch.jvp(model,(x,), (self.cotangents_sum_along_x_dimension,))[1]
@@ -246,7 +250,7 @@ class NGmod_estimate_L2(Nodal_GradientModifier):
         vJ   = ((vJ/coef)**2).sum(dim=dims)**2
         esitimate = vL - 2*vJ + 1 #(B, 1)
         return esitimate
-    def getL2loss(self,modelfun,x,chunk=10):
+    def getL2loss(self,modelfun,x,chunk=10,coef=None):
         pos=time=None
         model= modelfun
         if isinstance(x,list):
@@ -265,6 +269,10 @@ class NGmod_estimate_L2(Nodal_GradientModifier):
             # model = lambda x:modelfun(x[:,0:a].reshape(-1,*xshape),
             #               x[:,a:a+b].reshape(-1,*pshape),
             #               x[:,a+b:a+b+c].reshape(-1,*tshape))
+        if coef is not None:
+            model = lambda x:modelfun(x*coef,pos,time)
+            x = x/coef
+        
         cotangents1s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
         cotangents2s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
         cotangents3s = torch.randint(0,2, (self.sample_times,*x.shape)).to(x.device)*2-1.0
