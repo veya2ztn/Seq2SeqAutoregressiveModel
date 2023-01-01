@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import os
+import math
 
 def getModelSize(model):
     param_size = 0
@@ -139,6 +140,45 @@ def get_center_around_indexes_3D(patch_range,img_shape,z_range=None, h_range=Non
     indexes = indexes.reshape(len(wlist),len(hlist),len(zlist),3,*patch_range).transpose(2,1,0,3,4,5,6)
     coor    = coor.reshape(len(wlist),len(hlist),len(zlist),3).transpose(3,2,1,0)
     return coor, indexes
+
+
+def get_sub_luna_point(time):
+    import ephem
+    greenwich = ephem.Observer()
+    greenwich.lat = "0"
+    greenwich.lon = "0"
+    greenwich.date =time
+
+    #add Moon Sub Solar Point
+    moon = ephem.Moon(greenwich)
+    moon.compute(greenwich.date)
+    moon_lon = math.degrees(moon.ra - greenwich.sidereal_time() )
+    # map longitude value from -180 to +180 
+    if moon_lon < -180.0 :moon_lon = 360.0 + moon_lon 
+    elif moon_lon > 180.0 :moon_lon = moon_lon - 360.0
+
+    moon_lat = math.degrees(moon.dec)
+    #print( "moon Lon:",moon_lon, "Lat:",moon_lat)
+    return moon_lon,moon_lat
+
+def get_sub_sun_point(time):
+    import ephem
+    greenwich      = ephem.Observer()
+    greenwich.lat  = "0"
+    greenwich.lon  = "0"
+    greenwich.date  =time
+
+    #add sun Sub Solar Point
+    sun = ephem.Sun(greenwich)
+    sun.compute(greenwich.date)
+    sun_lon = math.degrees(sun.ra - greenwich.sidereal_time() )
+    # map longitude value from -180 to +180 
+    if sun_lon < -180.0 :sun_lon = 360.0 + sun_lon 
+    elif sun_lon > 180.0 :sun_lon = sun_lon - 360.0
+
+    sun_lat = math.degrees(sun.dec)
+    #print( "sun Lon:",sun_lon, "Lat:",sun_lat)
+    return sun_lon,sun_lat    
 
 if __name__ == '__main__':
     img_shape = (32,64)
