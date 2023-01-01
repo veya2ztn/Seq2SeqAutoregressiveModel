@@ -1145,7 +1145,8 @@ class WeathBench69SolarLunaMask(WeathBench7066):
                     np.sin(moon_lat/180*np.pi)])
         sun_mask = torch.Tensor(self.LaLotudeVector@sun_vector).reshape(1,32,64)
         moon_mask = torch.Tensor(self.LaLotudeVector@moon_vector).reshape(1,32,64)
-        data = torch.cat([data,sun_mask,moon_mask])
+        data = [data,sun_mask,moon_mask]
+
         return data
 
 
