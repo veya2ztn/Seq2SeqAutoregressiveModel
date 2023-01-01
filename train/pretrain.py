@@ -201,6 +201,28 @@ def once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode):
     #   start [not normlized Field list]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
+def once_forward_with_timeconstant(model,i,start,end,dataset,time_step_1_mode):
+    assert len(start)==1
+    # start = [[ (B,68,32,64), (B,1,32,64), (B,1,32,64)], [...], [...]]
+    # end  = [ (B,68,32,64), (B,1,32,64), (B,1,32,64)]
+    normlized_Field = torch.cat(start[0],1) #(B,P+2,w,h)
+    target      = end[0]
+    
+    out = model(normlized_Field)
+    extra_loss = 0
+    extra_info_from_model_list = []
+    if isinstance(out,(list,tuple)):
+        extra_loss                 = out[1]
+        extra_info_from_model_list = out[2:]
+        out = out[0]
+
+    ltmv_pred  = dataset.inv_normlize_data([out])[0]
+
+    start = start[1:]+[[ltmv_pred]+end[1:]]
+
+    return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
+
+
 def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     Field = Advection = None
 
@@ -420,6 +442,8 @@ def once_forward(model,i,start,end,dataset,time_step_1_mode):
             return once_forward_patch_N2M(model,i,start,end,dataset,time_step_1_mode)
         else:
             return once_forward_patch(model,i,start,end,dataset,time_step_1_mode)
+    elif 'SolarLunaMask' in dataset.__class__.__name__:
+        return once_forward_with_timeconstant(model,i,start,end,dataset,time_step_1_mode)
     elif hasattr(dataset,'use_time_stamp') and dataset.use_time_stamp:
         return once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode)
     elif 'Delta' in dataset.__class__.__name__:
