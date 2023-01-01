@@ -842,6 +842,7 @@ class WeathBench71(WeathBench):
         else:
             return data
 
+
 class WeathBench71_H5(WeathBench71):
 
     def load_otensor(self,idx):
@@ -949,6 +950,7 @@ class WeathBench7066(WeathBench71):
         config_pool={
             '2D55N': (self._component_list55 ,'gauss_norm'  , self.mean_std[:,self._component_list55].reshape(2,55,1,1), identity, identity ),
             '2D68K': (self._component_list68 ,'gauss_norm'  , self.mean_std[:,self._component_list68].reshape(2,68,1,1), identity, identity ),
+            '2D68N': (self._component_list68 ,'gauss_norm'  , self.mean_std[:,self._component_list68].reshape(2,68,1,1), identity, identity ),
             '2D70V': (_list ,'gauss_norm'   , vector_scalar_mean[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
@@ -1088,6 +1090,64 @@ class WeathBench55withoutH(WeathBench7066):
         record_load_tensor = torch.ones(len(dataset_tensor))
         return dataset_tensor,record_load_tensor
 
+from utils.tools import get_sub_luna_point,get_sub_sun_point
+class WeathBench69SolarLunaMask(WeathBench7066):
+    def __init__(self,**kargs):
+        super().__init__(**kargs)
+        assert self.use_offline_data == 2
+        assert self.dataset_flag   == '2D68N'
+        pick_list = list(range(55)) + list(range(56,69))
+        self.dataset_tensor      = self.dataset_tensor[:,pick_list]
+        self.LaLotude,self.LaLotudeVector = self.get_mesh_lon_lat()
+    def get_mesh_lon_lat(self):
+        sH = 720
+        sW = 1440
+        tH = 32
+        tW = 64
+        steph = sH /float(tH)
+        stepw = sW /float(tW)
+        x     = np.arange(0, sW, stepw).astype('int')
+        y     = np.linspace(0, sH-1, tH, dtype='int')
+        x, y  = np.meshgrid(x, y)
+        latitude   = np.linspace(90,-90,721)
+        longitude  = np.linspace(0,360,1440)
+        LaLotude = np.stack([latitude[y],longitude[x]])/180*np.pi
+        LaLotudeVector = np.stack([np.cos(LaLotude[1])*np.cos(LaLotude[0]),np.cos(LaLotude[1])*np.sin(LaLotude[0]),np.sin(LaLotude[1])],2)
+        return LaLotude,LaLotudeVector
+    @staticmethod
+    def create_offline_dataset_templete(split='test', root=None, use_offline_data=False, **kargs):
+        if root is None:root = WeathBench7066.default_root
+        if use_offline_data:
+            dataset_flag = "2D70N"
+            data_name = f"{split}_{dataset_flag}.npy"
+        else:
+            raise NotImplementedError
+        numpy_path = os.path.join(root,data_name)
+        print(f"load data from {numpy_path}")
+        dataset_tensor   = torch.Tensor(np.load(numpy_path))
+        record_load_tensor = torch.ones(len(dataset_tensor))
+        return dataset_tensor,record_load_tensor
+
+    def get_item(self,idx,reversed_part=False):
+        '''
+        Notice for 3D case, we return (5,14,32,64) data tensor
+        '''
+        assert self.use_offline_data==2
+        data =  self.dataset_tensor[idx]
+        timenow = self.datatimelist_pool[self.split][idx]
+        moon_lon, moon_lat = get_sub_luna_point(timenow.item())
+        sun_lon, sun_lat = get_sub_sun_point(timenow.item())
+        sun_vector = np.stack([np.cos(sun_lat/180*np.pi)*np.cos(sun_lon/180*np.pi),
+                    np.cos(sun_lat/180*np.pi)*np.sin(sun_lon/180*np.pi),
+                    np.sin(sun_lat/180*np.pi)])
+        moon_vector = np.stack([np.cos(moon_lat/180*np.pi)*np.cos(moon_lon/180*np.pi),
+                    np.cos(moon_lat/180*np.pi)*np.sin(moon_lon/180*np.pi),
+                    np.sin(moon_lat/180*np.pi)])
+        sun_mask = torch.Tensor(self.LaLotudeVector@sun_vector).reshape(1,32,64)
+        moon_mask = torch.Tensor(self.LaLotudeVector@moon_vector).reshape(1,32,64)
+        data = torch.cat([data,sun_mask,moon_mask])
+        return data
+
 
 class WeathBench7066DeltaDataset(WeathBench7066):
     def __init__(self,**kargs):
@@ -1188,11 +1248,11 @@ class WeathBench7066PatchDataset(WeathBench7066):
                 data = data[..., patch_idx_h, patch_idx_w]
         else:
             location = -1
+        
+        
         out = [data]
-        if self.use_time_stamp:
-            out.append(self.timestamp[idx])
-        if self.use_position_idx:
-            out.append(location)
+        if self.use_time_stamp:out.append(self.timestamp[idx])
+        if self.use_position_idx:out.append(location)
         if len(out)==1:out=out[0]
         return out
 
