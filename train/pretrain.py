@@ -721,10 +721,15 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 loss.backward()
 
             path_loss = path_length = None
-            if model.path_length_regularize and step%model.path_length_regularize==0:
-                inputs1 = torch.randn_like(batch[0]).repeat(2,1,1,1)
-                inputs2 = torch.randn_like(batch[0]).repeat(2,1,1,1)*0.001 + batch[0].repeat(2,1,1,1)
-                inputs = torch.cat([inputs1,inputs2,batch[0]])
+            if grad_modifier.path_length_regularize and step%grad_modifier.path_length_regularize==0:
+                if grad_modifier.path_length_mode == '221':
+                    inputs1 = torch.randn_like(batch[0]).repeat(2,1,1,1)
+                    inputs2 = torch.randn_like(batch[0]).repeat(2,1,1,1)*0.001 + batch[0].repeat(2,1,1,1)
+                    inputs = torch.cat([inputs1,inputs2,batch[0]])
+                elif grad_modifier.path_length_mode == '001':
+                    inputs = batch[0]
+                else:
+                    raise NotImplementedError
                 mean_path_length = model.mean_path_length.to(device)
                 path_loss, mean_path_length, path_lengths = grad_modifier.getPathLengthloss(model.module if hasattr(model,'module') else model,
                 inputs,mean_path_length)
@@ -1848,7 +1853,7 @@ def build_model(args):
     model.accumulation_steps = args.accumulation_steps
     model.train_for_part = None
     model.train_for_part_extra = None
-    model.path_length_regularize = args.path_length_regularize
+    
     model.mean_path_length = torch.zeros(1)
     if args.wrapper_model == 'OnlyPredSpeed':
         model.train_for_part = list(range(28))
@@ -1928,6 +1933,7 @@ def build_optimizer(args,model):
         optimizer.grad_modifier.split_batch_chunk = args.split_batch_chunk
         optimizer.grad_modifier.update_mode = args.gmod_update_mode
         optimizer.grad_modifier.coef = None
+
         if args.gmod_coef:
             _, pixelnorm_std = np.load(args.gmod_coef)
             pixelnorm_std   = torch.Tensor(pixelnorm_std).reshape(1,70,32,64) #<--- should pad 
@@ -1939,6 +1945,8 @@ def build_optimizer(args,model):
             #                torch.ones(1,1,32,64)],1
             #                )
             optimizer.grad_modifier.coef = pixelnorm_std
+        optimizer.grad_modifier.path_length_regularize = args.path_length_regularize
+        optimizer.grad_modifier.path_length_mode    = args.path_length_mode if args.path_length_regularize else None
     lr_scheduler = None
     if args.sched:
         lr_scheduler, _ = create_scheduler(args, optimizer)
