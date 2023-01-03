@@ -302,7 +302,7 @@ def create_nodalsnap_table(ckpt_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('parse tf.event file to wandb', add_help=False)
-    parser.add_argument('--path',type=str,default="")
+    parser.add_argument('--paths',type=str,default="")
     parser.add_argument('--moded',type=str,default="dryrun")
     parser.add_argument('--level', default=1, type=int)
     parser.add_argument('--divide', default=1, type=int)
@@ -313,9 +313,9 @@ if __name__ == "__main__":
     parser.add_argument('--weight_chose',default=None,type=str)
     args = parser.parse_known_args()[0]
 
-    if args.path != "":
+    if args.paths != "":
         level = args.level
-        root_path = args.path
+        root_path = args.paths
         now_path = [root_path]
         while level>0:
             new_path = []

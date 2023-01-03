@@ -80,6 +80,10 @@ def get_args_parser():
     parser.add_argument('--split_batch_chunk', type=int, default=16, help='split_batch_chunk')
     parser.add_argument('--gmod_update_mode', type=int, default=2, help='gmod_update_mode')
     
+    parser.add_argument('--model_type1',type=str,default=None)
+    parser.add_argument('--model_type2',type=str,default=None)
+    parser.add_argument('--backbone1_ckpt_path',type=str,default="")
+    parser.add_argument('--backbone2_ckpt_path',type=str,default="")
     #### fno parameters
     parser.add_argument('--fno-bias', action='store_true')
     parser.add_argument('--fno-blocks', type=int, default=4)
@@ -117,6 +121,7 @@ def get_args_parser():
     parser.add_argument('--use_offline_data',type=int,default=0)
     parser.add_argument('--chunk_size',type=int,default=1024)
     parser.add_argument('--picked_inputoutput_property',type=str,default=None)
+    
     
     # Fourcast Parameter
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
