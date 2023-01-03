@@ -386,3 +386,17 @@ class WithoutSpeed(FeaturePickModel):pass
 class CrossSpeed(FeaturePickModel):pass
 class UVTP2p(FeaturePickModel):pass
 class UVTPp2uvt(FeaturePickModel):pass
+
+class CombM_UVTP2p2uvt(BaseModel):
+    def __init__(self,  args, backbone1, backbone2,ckpt1,ckpt2):
+        super().__init__()
+        self.UVTP2p  =  UVTP2p(args,backbone1)
+        print(f"load UVTP2p model from {ckpt1}")
+        self.UVTP2p.load_state_dict(torch.load(ckpt1, map_location='cpu')['model'])
+        self.UVTPp2uvt = UVTPp2uvt(args,backbone2)
+        print(f"load UVTPp2uvt model from {ckpt2}")
+        self.UVTPp2uvt.load_state_dict(torch.load(ckpt2, map_location='cpu')['model'])
+    def forward(self, UVTP):
+        p = self.UVTP2p(UVTP)
+        uvt= self.UVTPp2uvt(torch.cat([UVTP,p],1))
+        return torch.cat([uvt,p],1)

@@ -721,7 +721,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 loss.backward()
 
             path_loss = path_length = None
-            if grad_modifier.path_length_regularize and step%grad_modifier.path_length_regularize==0:
+            if grad_modifier and grad_modifier.path_length_regularize and step%grad_modifier.path_length_regularize==0:
                 if grad_modifier.path_length_mode == '221':
                     inputs1 = torch.randn_like(batch[0]).repeat(2,1,1,1)
                     inputs2 = torch.randn_like(batch[0]).repeat(2,1,1,1)*0.001 + batch[0].repeat(2,1,1,1)
@@ -1170,7 +1170,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
             unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
             #print(unit_list)
             unit_num  = max(unit_list.shape)
-            unit_num=70
+            unit_num  = len(test_dataset.vnames)
             unit_list = unit_list.reshape(1,unit_num)
             property_num = len(test_dataset.vnames)
             if property_num > unit_num:
@@ -1677,7 +1677,7 @@ def parse_default_args(args):
     if hasattr(args,'use_position_idx'):dataset_kargs['use_position_idx']= args.use_position_idx
     
     
-    args.unique_up_sample_channel = args.unique_up_sample_channel if args.unique_up_sample_channel >0 else args.output_channel
+    args.unique_up_sample_channel = args.unique_up_sample_channel
     
 
     args.dataset_type = dataset_type if not args.dataset_type else args.dataset_type
@@ -1743,7 +1743,7 @@ def parse_default_args(args):
 
 
     args.snap_index = [[0,40,80,12],  # 
-                       [38,49,13,27,66]        # property  Z500 and T850 and v2m and u2m and h850
+                       [38,49,13,27]        # property  Z500 and T850 and v2m and u2m and 
                        ]
     if args.wrapper_model == 'PatchWrapper':
         args.snap_index.append({0:[[15],[15]],1:[[13],[15]],2:[[11],[15]],3:[[ 9],[15]],4:[[ 7],[15]],5:[[ 5],[15]]})
@@ -1820,9 +1820,23 @@ def build_model(args):
     logsys.info(f"model args: img_size= {args.img_size}")
     logsys.info(f"model args: patch_size= {args.patch_size}")
     # ==============> Initial Model <=============
-    model = eval(args.model_type)(**args.model_kargs)
-    if args.wrapper_model:
-        model = eval(args.wrapper_model)(args,model)
+    if args.wrapper_model and 'Comb' in args.wrapper_model:
+        assert args.model_type1
+        assert args.model_type2
+        args.model_kargs['in_chans'] = 55 
+        args.model_kargs['out_chans'] = 13
+        args.model_kargs['unique_up_sample_channel'] = 0
+        backbone1 = eval(args.model_type1)(**args.model_kargs)
+        args.model_kargs['in_chans'] = 68
+        args.model_kargs['out_chans'] = 42
+        backbone2 = eval(args.model_type2)(**args.model_kargs)
+        args.model_kargs['in_chans'] = 55
+        args.model_kargs['out_chans'] = 55
+        model = eval(args.wrapper_model)(args,backbone1,backbone2,args.backbone1_ckpt_path,args.backbone2_ckpt_path)
+    else:
+        model = eval(args.model_type)(**args.model_kargs)
+        if args.wrapper_model:
+            model = eval(args.wrapper_model)(args,model)
     logsys.info(f"use model ==> {model.__class__.__name__}")
     local_rank=args.local_rank
     rank = args.rank

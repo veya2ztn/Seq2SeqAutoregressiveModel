@@ -247,16 +247,16 @@ class Block(nn.Module):
         #timer.record('residual','forward_features',1)
         return x
 
-def transposeconv_engines(dim):
-    if dim in [1,2,3]:return [nn.ConvTranspose1d,nn.ConvTranspose2d,nn.ConvTranspose3d][dim-1]
+def transposeconv_engines(dim, conv_simple=True):
+    if dim in [1,2,3] and conv_simple:return [nn.ConvTranspose1d,nn.ConvTranspose2d,nn.ConvTranspose3d][dim-1]
     return lambda *args,**kargs:convNd(*args,**kargs,num_dims=dim,is_transposed=True,use_bias=False)
 
-def conv_engines(dim):
-    if dim in [1,2,3]:return [nn.Conv1d,nn.Conv2d,nn.Conv3d][dim-1]
+def conv_engines(dim, conv_simple=True):
+    if dim in [1,2,3] and conv_simple:return [nn.Conv1d,nn.Conv2d,nn.Conv3d][dim-1]
     return lambda *args,**kargs:convNd(*args,**kargs,num_dims=dim,is_transposed=False,use_bias=False)
 
 class PatchEmbed(nn.Module):
-    def __init__(self, img_size=None, patch_size=8, in_chans=13, embed_dim=768):
+    def __init__(self, img_size=None, patch_size=8, in_chans=13, embed_dim=768,conv_simple=True):
         super().__init__()
 
         if img_size is None:raise KeyError('img is None')
@@ -275,7 +275,7 @@ class PatchEmbed(nn.Module):
         self.num_patches = num_patches
         self.out_size    = tuple(out_size)
         #conv_engine = [nn.Conv1d,nn.Conv2d,nn.Conv3d]
-        conv_engine = conv_engines(len(img_size))
+        conv_engine = conv_engines(len(img_size),conv_simple=conv_simple)
         self.proj   = conv_engine(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
 
     def forward(self, x):
@@ -286,10 +286,10 @@ class PatchEmbed(nn.Module):
         return x
 
 class AFNONet(BaseModel):
-    def __init__(self, img_size, patch_size=8, in_chans=20, out_chans=20, embed_dim=768, depth=12, mlp_ratio=4.,
+    def __init__(self, img_size=None, patch_size=8, in_chans=20, out_chans=20, embed_dim=768, depth=12, mlp_ratio=4.,
                  uniform_drop=False, drop_rate=0., drop_path_rate=0., unique_up_sample_channel=0,
                  dropcls=0, checkpoint_activations=False, fno_blocks=3,double_skip=False,
-                 fno_bias=False, fno_softshrink=False,debug_mode=False,history_length=1,reduce_Field_coef=False,**kargs):
+                 fno_bias=False, fno_softshrink=False,debug_mode=False,history_length=1,reduce_Field_coef=False,conv_simple=True,**kargs):
         super().__init__()
 
         assert img_size is not None
@@ -310,12 +310,13 @@ class AFNONet(BaseModel):
         self.embed_dim   = embed_dim
         norm_layer       = partial(nn.LayerNorm, eps=1e-6)
         self.img_size    = img_size
-        self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
+        self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim,conv_simple=conv_simple)
         num_patches      = self.patch_embed.num_patches
         patch_size       = self.patch_embed.patch_size
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
         self.unique_up_sample_channel =unique_up_sample_channel= out_chans if unique_up_sample_channel == 0 else unique_up_sample_channel
+
         self.final_shape = self.patch_embed.out_size
 
         if uniform_drop:
@@ -355,7 +356,7 @@ class AFNONet(BaseModel):
                 conf_list[slot]['stride'].append(conv_set[patch][slot][1])
                 conf_list[slot]['padding'].append(conv_set[patch][slot][2])
         #transposeconv_engine = [nn.ConvTranspose1d,nn.ConvTranspose2d,nn.ConvTranspose3d][len(img_size)-1]
-        transposeconv_engine = transposeconv_engines(len(img_size))
+        transposeconv_engine = transposeconv_engines(len(img_size),conv_simple=conv_simple)
         self.pre_logits = nn.Sequential(OrderedDict([
             ('conv1', transposeconv_engine(embed_dim, unique_up_sample_channel*16, **conf_list[0])),
             ('act1', nn.Tanh()),
