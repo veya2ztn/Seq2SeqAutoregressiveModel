@@ -289,6 +289,7 @@ class NGmod_estimate_L2(Nodal_GradientModifier):
             #               x[:,a:a+b].reshape(-1,*pshape),
             #               x[:,a+b:a+b+c].reshape(-1,*tshape))
         if coef is not None:
+            coef = coef.to(x.device)
             model = lambda x:modelfun(x*coef)
             x = x/(coef+1e-6)
         
