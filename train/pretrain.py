@@ -1737,7 +1737,8 @@ def parse_default_args(args):
         "canonical_fft":args.canonical_fft,
         "unique_up_sample_channel":args.unique_up_sample_channel,
         "share_memory":args.share_memory,
-        "dropout_rate":args.dropout_rate
+        "dropout_rate":args.dropout_rate,
+        "conv_simple":args.conv_simple
     }
     args.model_kargs = model_kargs
 

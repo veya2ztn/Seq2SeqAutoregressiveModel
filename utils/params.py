@@ -84,6 +84,8 @@ def get_args_parser():
     parser.add_argument('--model_type2',type=str,default=None)
     parser.add_argument('--backbone1_ckpt_path',type=str,default="")
     parser.add_argument('--backbone2_ckpt_path',type=str,default="")
+
+    parser.add_argument('--conv_simple',type=int,default=1)    
     #### fno parameters
     parser.add_argument('--fno-bias', action='store_true')
     parser.add_argument('--fno-blocks', type=int, default=4)
