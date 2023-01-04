@@ -248,11 +248,11 @@ class Block(nn.Module):
         return x
 
 def transposeconv_engines(dim, conv_simple=True):
-    if dim in [1,2,3] and conv_simple:return [nn.ConvTranspose1d,nn.ConvTranspose2d,nn.ConvTranspose3d][dim-1]
+    #if dim in [1,2,3] and conv_simple:return [nn.ConvTranspose1d,nn.ConvTranspose2d,nn.ConvTranspose3d][dim-1]
     return lambda *args,**kargs:convNd(*args,**kargs,num_dims=dim,is_transposed=True,use_bias=False)
 
 def conv_engines(dim, conv_simple=True):
-    if dim in [1,2,3] and conv_simple:return [nn.Conv1d,nn.Conv2d,nn.Conv3d][dim-1]
+    #if dim in [1,2,3] and conv_simple:return [nn.Conv1d,nn.Conv2d,nn.Conv3d][dim-1]
     return lambda *args,**kargs:convNd(*args,**kargs,num_dims=dim,is_transposed=False,use_bias=False)
 
 class PatchEmbed(nn.Module):
