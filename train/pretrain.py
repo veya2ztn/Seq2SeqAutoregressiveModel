@@ -726,6 +726,13 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     inputs1 = torch.randn_like(batch[0]).repeat(2,1,1,1)
                     inputs2 = torch.randn_like(batch[0]).repeat(2,1,1,1)*0.001 + batch[0].repeat(2,1,1,1)
                     inputs = torch.cat([inputs1,inputs2,batch[0]])
+                elif grad_modifier.path_length_mode == '020':
+                    inputs = torch.randn_like(batch[0]).repeat(2,1,1,1)*0.001 + batch[0].repeat(2,1,1,1)
+                elif grad_modifier.path_length_mode == '010':
+                    inputs = torch.randn_like(batch[0])*0.001 + batch[0]
+                elif grad_modifier.path_length_mode == '011':
+                    inputs2 = torch.randn_like(batch[0])*0.001 + batch[0]
+                    inputs  = torch.cat([inputs2,batch[0]])
                 elif grad_modifier.path_length_mode == '001':
                     inputs = batch[0]
                 else:
