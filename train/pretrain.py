@@ -1327,7 +1327,7 @@ def run_nodaloss_snap(model, batch, idxes, fourcastresult,dataset, property_sele
                 ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,batch[i],dataset,time_step_1_mode)
                 now = time.time()
                 L1meassure = vmap(the_Nodal_L1_meassure(func_model), (0))(start[-1].unsqueeze(1)) # (B, Pick, W,H)
-                L2meassure = vmap(the_Nodal_L2_meassure(func_model,chunk_size=64), (0))(start[-1].unsqueeze(1))# (B, Pick, W,H)
+                L2meassure = vmap(the_Nodal_L2_meassure(func_model,chunk_size=chunk_size), (0))(start[-1].unsqueeze(1))# (B, Pick, W,H)
                 print(f"step_{i:3d} L2 computing finish, cost:{time.time() - now }") 
                 L1meassures.append(L1meassure.detach().cpu())
                 L2meassures.append(L2meassure.detach().cpu())
