@@ -1759,7 +1759,7 @@ def parse_default_args(args):
         args.snap_index.append([[15,15,15, 7, 7, 7,23,23,23],
                                 [15,31,45,15,31,45,15,31,45]])
 
-    args.real_batch_size = args.batch_size * args.accumulation_steps * args.ngpus_per_node *args.world_size
+    args.real_batch_size = args.batch_size * args.accumulation_steps * args.ngpus_per_node 
     return args
 
 def create_logsys(args,save_config=True):
