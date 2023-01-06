@@ -735,7 +735,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 path_lengths=path_lengths.mean().item()
 
             if grad_modifier and grad_modifier.rotation_regularize and step%grad_modifier.rotation_regularize==0:
-                rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred, target,
+                rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], target,
                                                                   rotation_regular_mode = grad_modifier.rotation_regular_mode)
                 rotation_loss.backward()
                 rotation_loss = rotation_loss.item()
@@ -1939,7 +1939,8 @@ def build_optimizer(args,model):
         'NGmod_estimate_L2': NGmod_estimate_L2,
         'NGmod_absoluteNone': NGmod_absoluteNone,
         'NGmod_absolute_set_level':NGmod_absolute_set_level,
-        'getRotationDeltaloss':NGmod_RotationDelta,
+        'NGmod_RotationDeltaX':NGmod_RotationDeltaX,
+        'NGmod_RotationDeltaY':NGmod_RotationDeltaY,
         'NGmod_pathlength':NGmod_pathlength,
 
     }
@@ -1966,7 +1967,7 @@ def build_optimizer(args,model):
         optimizer.grad_modifier.path_length_regularize = args.path_length_regularize
         optimizer.grad_modifier.path_length_mode    = args.path_length_mode if args.path_length_regularize else None
         optimizer.grad_modifier.rotation_regularize = args.rotation_regularize
-        optimizer.grad_modifier.rotation_mode = args.rotation_mode if args.rotation_mode else None
+        optimizer.grad_modifier.rotation_regular_mode = args.rotation_regular_mode if args.rotation_regular_mode else None
     lr_scheduler = None
     if args.sched:
         lr_scheduler, _ = create_scheduler(args, optimizer)
@@ -2202,7 +2203,7 @@ def distributed_initial(args):
     args.ngpus_per_node = ngpus_per_node
     if not hasattr(args,'train_set'):args.train_set='large'
     ip = os.environ.get("MASTER_ADDR", "127.0.0.1")
-    port = os.environ.get("MASTER_PORT", f"{54248+np.random.random_integers(10)}" )
+    port = os.environ.get("MASTER_PORT", f"{54248+np.random.randint(10)}" )
     hosts = int(os.environ.get("WORLD_SIZE", "1"))  # number of nodes
     rank = int(os.environ.get("RANK", "0"))  # node id
     gpus = torch.cuda.device_count()  # gpus per node
