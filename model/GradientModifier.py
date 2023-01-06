@@ -332,7 +332,7 @@ class NGmod_pathlength(Nodal_GradientModifier):
 
     
 
-class NGmod_RotationDeltaY(Nodal_GradientModifier):
+class NGmod_RotationDeltaY(Nodal_GradientModifier): # fast then X mode
     def normed(self,a):
         shape = a.shape
         a = a.reshape(a.size(0),-1)
@@ -340,23 +340,34 @@ class NGmod_RotationDeltaY(Nodal_GradientModifier):
         a = a.reshape(shape)
         return a 
 
-    def getRotationDeltaloss(self, modelfun, x,  t , rotation_regular_mode = '0y0'):
+    def Estimate_vJ_once(self,vjpfunc,cotangents):
+        grad = vjpfunc(cotangents)[0] 
+        penalty    = ((torch.sum(grad**2,dim=(1,2,3))-1)**2).mean()
+        return penalty
+
+    def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = '0y0'):
         y, vjpfunc = functorch.vjp(modelfun, x) # notice this will calculate f(x) again, so can be reduced in real implement.
         if rotation_regular_mode =='0y0':
-            delta = self.normed(y - x)
+            delta = (self.normed(y - x),)
         elif rotation_regular_mode =='0v0':
-            delta = self.normed(y.detach() - x)
+            delta = (self.normed(y.detach() - x),)
         elif rotation_regular_mode =='Yy0':
-            delta = torch.cat([self.normed(t - x),self.normed(y - x)])
+            delta = [self.normed(t - x),self.normed(y - x)]
         elif rotation_regular_mode =='Yv0':
-            delta = torch.cat([self.normed(t - x),self.normed(y.detach() - x)])
+            delta = [self.normed(t - x),self.normed(y.detach() - x)]
         elif rotation_regular_mode =='YyN':
-            delta = torch.cat([self.normed(t - x),self.normed(y - x),self.normed(torch.rand_like(x))])
+            delta = [self.normed(t - x),self.normed(y - x),self.normed(torch.rand_like(x))]
+        elif rotation_regular_mode =='00N':
+            delta = (torch.rand_like(x),)
         else:
             raise NotImplementedError
-        grad = vjpfunc(delta)[0] # another way is using functorch.jvp(model, (x,), (delta,))[1] # the result for two method is different
-        position_range = list(range(1,len(grad.shape))) # (B,P, W,H ) --> (1,2,3)
-        penalty        = ((torch.sum(grad**2,dim=position_range)-1)**2).mean()
+        delta = torch.stack(delta)
+        penalty= 0
+        for delta_cons in delta:
+            grad = vjpfunc(delta_cons)[0] 
+            position_range = list(range(1,len(grad.shape))) # (B,P, W,H ) --> (1,2,3)
+            penalty       += ((torch.sum(grad**2,dim=position_range)-1)**2).mean()/len(delta)
+        #penalty = vmap(self.Estimate_vJ_once, (None,0),randomness='same')(vjpfunc,delta).mean()
         return penalty
 
     def getL2loss(self,modelfun,x,chunk=10,coef=None):
@@ -373,25 +384,31 @@ class NGmod_RotationDeltaX(Nodal_GradientModifier):
         a = a.reshape(shape)
         return a 
 
-    def getRotationDeltaloss(self, modelfun, x, t , rotation_regular_mode = '0y0'):
-        y = modelfun(x)
+    def Estimate_Jv_once(self, model,x,cotangents):
+        grad = functorch.jvp(model, (x,), (cotangents,))[1] 
+        penalty    = ((torch.sum(grad**2,dim=(1,2,3))-1)**2).mean()
+        return penalty
+    def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = '0y0'):
+        if 'y' in rotation_regular_mode: y=modelfun(x)
         if rotation_regular_mode =='0y0':
             delta = (self.normed(y - x),)
         elif rotation_regular_mode =='0v0':
-            delta = (self.normed(y.detach() - x),)
+            delta = (self.normed(y_no_grad - x),)
         elif rotation_regular_mode =='Yy0':
-            delta = (self.normed(t - x),self.normed(y - x))
+            delta = [self.normed(t - x),self.normed(y - x)]
         elif rotation_regular_mode =='Yv0':
-            delta = (self.normed(t - x),self.normed(y.detach() - x))
+            delta = [self.normed(t - x),self.normed(y_no_grad - x)]
         elif rotation_regular_mode =='YyN':
-            delta = (self.normed(t - x),self.normed(y - x),self.normed(torch.rand_like(x)))
+            delta = [self.normed(t - x),self.normed(y - x),self.normed(torch.rand_like(x))]
         else:
             raise NotImplementedError
-        penalty= 0
-        for delta_cons in delta:
-            grad = functorch.jvp(modelfun, (x,), (delta_cons,))[1] 
-            position_range = list(range(1,len(grad.shape))) # (B,P, W,H ) --> (1,2,3)
-            penalty       += ((torch.sum(grad**2,dim=position_range)-1)**2).mean()
+        delta = torch.stack(delta)
+        # penalty= 0
+        # for delta_cons in delta:
+        #     grad = functorch.jvp(modelfun, (x,), (delta_cons,))[1] 
+        #     position_range = list(range(1,len(grad.shape))) # (B,P, W,H ) --> (1,2,3)
+        #     penalty       += ((torch.sum(grad**2,dim=position_range)-1)**2).mean()/len(delta)
+        penalty = vmap(self.Estimate_Jv_once, (None,None, 0),randomness='same')(modelfun,x,delta).mean()
         return penalty
 
     def getL2loss(self,modelfun,x,chunk=10,coef=None):
