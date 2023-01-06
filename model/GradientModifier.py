@@ -332,7 +332,7 @@ class NGmod_pathlength(Nodal_GradientModifier):
 
     
 
-class NGmod_RotationDelta(Nodal_GradientModifier):
+class NGmod_RotationDeltaY(Nodal_GradientModifier):
     def normed(self,a):
         shape = a.shape
         a = a.reshape(a.size(0),-1)
@@ -340,7 +340,7 @@ class NGmod_RotationDelta(Nodal_GradientModifier):
         a = a.reshape(shape)
         return a 
 
-    def getRotationDeltaloss(self, modelfun, x, t , rotation_regular_mode = '0y0'):
+    def getRotationDeltaloss(self, modelfun, x, y, t , rotation_regular_mode = '0y0'):
         y, vjpfunc = functorch.vjp(modelfun, x) # notice this will calculate f(x) again, so can be reduced in real implement.
         if rotation_regular_mode =='0y0':
             delta = self.normed(y - x)
@@ -354,15 +354,49 @@ class NGmod_RotationDelta(Nodal_GradientModifier):
             delta = torch.cat([self.normed(t - x),self.normed(y - x),self.normed(torch.rand_like(x))])
         else:
             raise NotImplementedError
-        grad = vjpfunc(delta)[0]
+        grad = vjpfunc(delta)[0] # another way is using functorch.jvp(model, (x,), (delta,))[1] # the result for two method is different
         position_range = list(range(1,len(grad.shape))) # (B,P, W,H ) --> (1,2,3)
         penalty        = ((torch.sqrt(torch.sum(grad**2,dim=position_range))-1)**2).mean()
         return penalty
-        
+
     def getL2loss(self,modelfun,x,chunk=10,coef=None):
         raise
     def getL1loss(self,modelfun,x,chunk=10,coef=None):
         raise
+
+
+class NGmod_RotationDeltaX(Nodal_GradientModifier):
+    def normed(self,a):
+        shape = a.shape
+        a = a.reshape(a.size(0),-1)
+        a = a/a.norm(dim=1,keepdim=True)
+        a = a.reshape(shape)
+        return a 
+
+    def getRotationDeltaloss(self, modelfun, x, y, t , rotation_regular_mode = '0y0'):
+        if rotation_regular_mode =='0y0':
+            delta = self.normed(y - x)
+        elif rotation_regular_mode =='0v0':
+            delta = self.normed(y.detach() - x)
+        elif rotation_regular_mode =='Yy0':
+            delta = torch.cat([self.normed(t - x),self.normed(y - x)])
+        elif rotation_regular_mode =='Yv0':
+            delta = torch.cat([self.normed(t - x),self.normed(y.detach() - x)])
+        elif rotation_regular_mode =='YyN':
+            delta = torch.cat([self.normed(t - x),self.normed(y - x),self.normed(torch.rand_like(x))])
+        else:
+            raise NotImplementedError
+        grad = functorch.jvp(model, (x,), (delta,))[1] 
+        position_range = list(range(1,len(grad.shape))) # (B,P, W,H ) --> (1,2,3)
+        penalty        = ((torch.sqrt(torch.sum(grad**2,dim=position_range))-1)**2).mean()
+        return penalty
+
+    def getL2loss(self,modelfun,x,chunk=10,coef=None):
+        raise
+    def getL1loss(self,modelfun,x,chunk=10,coef=None):
+        raise
+
+
 
 class NGmod_estimate_L2(Nodal_GradientModifier):
     def Normlization_Term_2(self,params,x):

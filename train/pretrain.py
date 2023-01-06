@@ -735,7 +735,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 path_lengths=path_lengths.mean().item()
 
             if grad_modifier and grad_modifier.rotation_regularize and step%grad_modifier.rotation_regularize==0:
-                rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], target,
+                rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred, target,
                                                                   rotation_regular_mode = grad_modifier.rotation_regular_mode)
                 rotation_loss.backward()
                 rotation_loss = rotation_loss.item()
