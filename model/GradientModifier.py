@@ -172,7 +172,23 @@ class Nodal_GradientModifier:
         values = ((tvalues-1)**2).mean()
         return values
 
-    def getPathLengthloss(self,modelfun,x,mean_path_length,coef=None,decay=0.01):
+    def getPathLengthloss(self,modelfun,x,mean_path_length,path_length_mode='010',coef=None,decay=0.01):
+        if path_length_mode == '221':
+            inputs1 = torch.randn_like(x).repeat(2,1,1,1)
+            inputs2 = torch.randn_like(x).repeat(2,1,1,1)*0.001 + x.repeat(2,1,1,1)
+            inputs = torch.cat([inputs1,inputs2,x])
+        elif path_length_mode == '020':
+            inputs = torch.randn_like(x).repeat(2,1,1,1)*0.001 + x.repeat(2,1,1,1)
+        elif path_length_mode == '010':
+            inputs = torch.randn_like(x)*0.001 + x
+        elif path_length_mode == '011':
+            inputs2 = torch.randn_like(x)*0.001 + x
+            inputs  = torch.cat([inputs2,x])
+        elif path_length_mode == '001':
+            inputs = x
+        else:
+            raise NotImplementedError
+        x = inputs
         pos=time=None
         model = modelfun
         if isinstance(x,list):
