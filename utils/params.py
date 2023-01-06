@@ -35,7 +35,8 @@ def get_args_parser():
     parser.add_argument('--GDMod_L2_level', type=float, default=1)
     parser.add_argument('--GDMod_sample_times', type=int, default=100)
     parser.add_argument('--path_length_mode', type=str, default="000")
-
+    parser.add_argument('--rotation_mode', type=str, default=None)
+    parser.add_argument('--rotation_regularize', type=int, default=0)
     parser.add_argument('--GDMod_intervel',type=int,default=10)
 
     parser.add_argument('--path_length_regularize',type=int,default=0)

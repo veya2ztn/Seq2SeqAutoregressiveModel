@@ -172,42 +172,34 @@ class Nodal_GradientModifier:
         values = ((tvalues-1)**2).mean()
         return values
 
-    def getPathLengthloss(self,modelfun,x,mean_path_length,path_length_mode='010',coef=None,decay=0.01):
-        if path_length_mode == '221':
-            inputs1 = torch.randn_like(x).repeat(2,1,1,1)
-            inputs2 = torch.randn_like(x).repeat(2,1,1,1)*0.001 + x.repeat(2,1,1,1)
-            inputs = torch.cat([inputs1,inputs2,x])
-        elif path_length_mode == '020':
-            inputs = torch.randn_like(x).repeat(2,1,1,1)*0.001 + x.repeat(2,1,1,1)
-        elif path_length_mode == '010':
-            inputs = torch.randn_like(x)*0.001 + x
-        elif path_length_mode == '011':
-            inputs2 = torch.randn_like(x)*0.001 + x
-            inputs  = torch.cat([inputs2,x])
-        elif path_length_mode == '001':
-            inputs = x
-        else:
-            raise NotImplementedError
-        x = inputs
-        pos=time=None
-        model = modelfun
-        if isinstance(x,list):
-            x, pos,time = x
-            model = lambda x:modelfun(x,pos,time)
-        if coef is not None:
-            coef = coef.to(x.device)
-            model = lambda x:modelfun(x*coef,pos,time)
-            x = x/coef # this is to make share the delta_x can be normal distribution
-        cotangents_sum_along_x_dimension = torch.randn_like(x) / np.sqrt(np.prod(x.shape[1:]))
-        (_, vjpfunc) = functorch.vjp(model, x)
-        grad = vjpfunc(cotangents_sum_along_x_dimension)[0]
-        path_lengths = torch.sqrt(grad.pow(2).sum(2).mean(1))
-        path_mean = mean_path_length + decay * (path_lengths.mean() - mean_path_length)
-        path_penalty = (path_lengths - path_mean).pow(2).mean()
-        return path_penalty, path_mean.detach(), path_lengths
-
+    
     def getL2loss(self,model,x):
         raise NotImplementedError
+
+    def normed(self,a):
+        shape = a.shape
+        a = a.reshape(a.size(0),-1)
+        a = a/a.norm(dim=1,keepdim=True)
+        a = a.reshape(shape)
+        return a 
+
+    def getRotationDeltaloss(self, modelfun, x, t , rotation_regular_mode = '0y0'):
+        y, vjpfunc = functorch.vjp(modelfun, x) # notice this will calculate f(x) again, so can be reduced in real implement.
+        
+        if rotation_regular_mode =='0y0':
+            delta = self.normed(y - x)
+        elif rotation_regular_mode =='Yy0':
+            delta = torch.cat([self.normed(t - x),self.normed(y - x)])
+        elif rotation_regular_mode =='YyN':
+            delta = torch.cat([self.normed(t - x),self.normed(y - x),self.normed(torch.rand_like(x))])
+        else:
+            raise NotImplementedError
+        grad = vjpfunc(delta)[0]
+        position_range = list(range(1,len(grad.shape))) # (B,P, W,H ) --> (1,2,3)
+        penalty        = ((torch.sqrt(torch.sum(grad**2,dim=position_range))-1)**2).mean()
+        return penalty
+        
+
 
 class NGmod_absolute(Nodal_GradientModifier):
     def Normlization_Term_2(self,params,x):
@@ -263,6 +255,115 @@ class NGmod_absolute_set_level(NGmod_absolute):
             else:
                 param.grad = delta_p
 
+class NGmod_pathlength(Nodal_GradientModifier):
+    def getPathLengthlossOld(self,modelfun,x,mean_path_length,path_length_mode='010',coef=None,decay=0.01):
+        if path_length_mode == '221':
+            inputs1 = torch.randn_like(x).repeat(2,1,1,1)
+            inputs2 = torch.randn_like(x).repeat(2,1,1,1)*0.001 + x.repeat(2,1,1,1)
+            inputs = torch.cat([inputs1,inputs2,x])
+        elif path_length_mode == '020':
+            inputs = torch.randn_like(x).repeat(2,1,1,1)*0.001 + x.repeat(2,1,1,1)
+        elif path_length_mode == '010':
+            inputs = torch.randn_like(x)*0.001 + x
+        elif path_length_mode == '011':
+            inputs2 = torch.randn_like(x)*0.001 + x
+            inputs  = torch.cat([inputs2,x])
+        elif path_length_mode == '001':
+            inputs = x
+        else:
+            raise NotImplementedError
+        x = inputs
+        pos=time=None
+        model = modelfun
+        if isinstance(x,list):
+            x, pos,time = x
+            model = lambda x:modelfun(x,pos,time)
+        if coef is not None:
+            coef = coef.to(x.device)
+            model = lambda x:modelfun(x*coef,pos,time)
+            x = x/coef # this is to make share the delta_x can be normal distribution
+        cotangents_sum_along_x_dimension = torch.randn_like(x) / np.sqrt(np.prod(x.shape[1:]))
+        (_, vjpfunc) = functorch.vjp(model, x)
+        grad = vjpfunc(cotangents_sum_along_x_dimension)[0]
+        path_lengths = torch.sqrt(grad.pow(2).sum(2).mean(1)) #(B,H) 
+        path_mean = mean_path_length + decay * (path_lengths.mean() - mean_path_length)
+        path_penalty = (path_lengths - path_mean).pow(2).mean()
+        return path_penalty, path_mean.detach(), path_lengths
+    
+    def getPathLengthloss(self,modelfun,x,mean_path_length,path_length_mode='010',coef=None,decay=0.01):
+        if path_length_mode == '221':
+            inputs1 = torch.randn_like(x).repeat(2,1,1,1)
+            inputs2 = torch.randn_like(x).repeat(2,1,1,1)*0.001 + x.repeat(2,1,1,1)
+            inputs = torch.cat([inputs1,inputs2,x])
+        elif path_length_mode == '020':
+            inputs = torch.randn_like(x).repeat(2,1,1,1)*0.001 + x.repeat(2,1,1,1)
+        elif path_length_mode == '010':
+            inputs = torch.randn_like(x)*0.001 + x
+        elif path_length_mode == '011':
+            inputs2 = torch.randn_like(x)*0.001 + x
+            inputs  = torch.cat([inputs2,x])
+        elif path_length_mode == '001':
+            inputs = x
+        else:
+            raise NotImplementedError
+        x = inputs
+        pos=time=None
+        model = modelfun
+        if isinstance(x,list):
+            x, pos,time = x
+            model = lambda x:modelfun(x,pos,time)
+        if coef is not None:
+            coef = coef.to(x.device)
+            model = lambda x:modelfun(x*coef,pos,time)
+            x = x/coef # this is to make share the delta_x can be normal distribution
+        cotangents_sum_along_x_dimension = torch.randn_like(x) / np.sqrt(np.prod(x.shape[1:]))
+        (_, vjpfunc) = functorch.vjp(model, x)
+        grad = vjpfunc(cotangents_sum_along_x_dimension)[0]
+        position_range = list(range(1,len(grad.shape))) # (B,P, W,H ) --> (1,2,3)
+        path_lengths = torch.sqrt(torch.sum(grad**2,dim=position_range)) #(B,) # use mean to avoid explore
+        path_mean = mean_path_length + decay * (path_lengths.mean() - mean_path_length)
+        path_penalty = ((path_lengths - path_mean)**2).mean() # (B,) every Batch satisfy requirement
+        return path_penalty, path_mean.detach(), path_lengths
+
+    def getL2loss(self,modelfun,x,chunk=10,coef=None):
+        raise
+    def getL1loss(self,modelfun,x,chunk=10,coef=None):
+        raise
+
+    
+
+class NGmod_RotationDelta(Nodal_GradientModifier):
+    def normed(self,a):
+        shape = a.shape
+        a = a.reshape(a.size(0),-1)
+        a = a/a.norm(dim=1,keepdim=True)
+        a = a.reshape(shape)
+        return a 
+
+    def getRotationDeltaloss(self, modelfun, x, t , rotation_regular_mode = '0y0'):
+        y, vjpfunc = functorch.vjp(modelfun, x) # notice this will calculate f(x) again, so can be reduced in real implement.
+        if rotation_regular_mode =='0y0':
+            delta = self.normed(y - x)
+        elif rotation_regular_mode =='0v0':
+            delta = self.normed(y.detach() - x)
+        elif rotation_regular_mode =='Yy0':
+            delta = torch.cat([self.normed(t - x),self.normed(y - x)])
+        elif rotation_regular_mode =='Yv0':
+            delta = torch.cat([self.normed(t - x),self.normed(y.detach() - x)])
+        elif rotation_regular_mode =='YyN':
+            delta = torch.cat([self.normed(t - x),self.normed(y - x),self.normed(torch.rand_like(x))])
+        else:
+            raise NotImplementedError
+        grad = vjpfunc(delta)[0]
+        position_range = list(range(1,len(grad.shape))) # (B,P, W,H ) --> (1,2,3)
+        penalty        = ((torch.sqrt(torch.sum(grad**2,dim=position_range))-1)**2).mean()
+        return penalty
+        
+    def getL2loss(self,modelfun,x,chunk=10,coef=None):
+        raise
+    def getL1loss(self,modelfun,x,chunk=10,coef=None):
+        raise
+
 class NGmod_estimate_L2(Nodal_GradientModifier):
     def Normlization_Term_2(self,params,x):
         cotangents1s = torch.randint(0,2, (self.sample_times,*x.shape)).cuda()*2-1.0
@@ -315,9 +416,14 @@ class NGmod_estimate_L2(Nodal_GradientModifier):
         values = vmap(self.Estimate_L2_once_model, (None,None, 0,0,0),randomness='same')(model,x,cotangents1s,cotangents2s,cotangents3s).mean(0)
         values = values.mean()
         return values.abs()
+
+
+
 class NGmod_absoluteNone(NGmod_absolute):
     def backward(self,model, x, y, strict=True):
         pass
+
+
 class NGmod_delta_mean(Nodal_GradientModifier):
     def Normlization_Term_2(self,params,x):
         '''

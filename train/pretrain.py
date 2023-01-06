@@ -521,7 +521,7 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
     # diff = diff/(len(batch) - 1)
     loss = loss/pred_step
     diff = diff/pred_step
-    return loss, diff, iter_info_pool,ltmv_pred
+    return loss, diff, iter_info_pool, ltmv_pred, target
 
 
 class RandomSelectPatchFetcher:
@@ -618,7 +618,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     grad_modifier = optimizer.grad_modifier
     skip = False
     count_update = 0
-
+    
     while inter_b.update_step():
         #if inter_b.now>10:break
         step = inter_b.now
@@ -694,7 +694,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
 
             with torch.cuda.amp.autocast(enabled=model.use_amp):
-                loss, abs_loss, iter_info_pool,ltmv_pred  =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
+                loss, abs_loss, iter_info_pool,ltmv_pred,target  =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
                 ## nodal loss
                 if (grad_modifier is not None) and (run_gmod) and (grad_modifier.update_mode==2):
                     if grad_modifier.lambda1!=0:
@@ -735,17 +735,11 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 path_lengths=path_lengths.mean().item()
 
             if grad_modifier and grad_modifier.rotation_regularize and step%grad_modifier.rotation_regularize==0:
-                path_loss, mean_path_length, path_lengths = grad_modifier.getRotationDeltaloss(
-                    model.module if hasattr(model,'module') else model, 
-                    batch[0], mean_path_length, path_length_mode=grad_modifier.path_length_mode )
-                path_loss.backward()
-                if hasattr(model,'module'):
-                    mean_path_length = mean_path_length/dist.get_world_size()
-                    dist.barrier()
-                    dist.all_reduce(mean_path_length)
-                model.mean_path_length = mean_path_length.detach().cpu()
-                path_loss = path_loss.item()
-                path_lengths=path_lengths.mean().item()
+                rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], target,
+                                                                  rotation_regular_mode = grad_modifier.rotation_regular_mode)
+                rotation_loss.backward()
+                rotation_loss = rotation_loss.item()
+
 
             # In order to use multiGPU train, I have to use Loss update scenario, suprisely, it is not worse than split scenario
             # if optimizer.grad_modifier is not None:
@@ -785,7 +779,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         else:
             with torch.no_grad():
                 with torch.cuda.amp.autocast(enabled=model.use_amp):
-                    loss, abs_loss, iter_info_pool,ltmv_pred =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
+                    loss, abs_loss, iter_info_pool,ltmv_pred,target =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
                     if optimizer.grad_modifier is not None:
                         if grad_modifier.lambda1!=0:
                             Nodeloss1 = grad_modifier.getL1loss(model, batch[0],coef=grad_modifier.coef)
@@ -1944,7 +1938,10 @@ def build_optimizer(args,model):
         'NGmod_delta_mean': NGmod_delta_mean,
         'NGmod_estimate_L2': NGmod_estimate_L2,
         'NGmod_absoluteNone': NGmod_absoluteNone,
-        'NGmod_absolute_set_level':NGmod_absolute_set_level
+        'NGmod_absolute_set_level':NGmod_absolute_set_level,
+        'getRotationDeltaloss':NGmod_RotationDelta,
+        'NGmod_pathlength':NGmod_pathlength,
+
     }
     optimizer.grad_modifier = GDMode[GDMod_type](GDMod_lambda1, GDMod_lambda2,
         sample_times=args.GDMod_sample_times,
@@ -1968,6 +1965,8 @@ def build_optimizer(args,model):
             optimizer.grad_modifier.coef = pixelnorm_std
         optimizer.grad_modifier.path_length_regularize = args.path_length_regularize
         optimizer.grad_modifier.path_length_mode    = args.path_length_mode if args.path_length_regularize else None
+        optimizer.grad_modifier.rotation_regularize = args.rotation_regularize
+        optimizer.grad_modifier.rotation_mode = args.rotation_mode if args.rotation_mode else None
     lr_scheduler = None
     if args.sched:
         lr_scheduler, _ = create_scheduler(args, optimizer)
