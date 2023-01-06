@@ -743,6 +743,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 path_loss.backward()
                 if hasattr(model,'module'):
                     mean_path_length = mean_path_length/dist.get_world_size()
+                    dist.barrier()
                     dist.all_reduce(mean_path_length)
                 model.mean_path_length = mean_path_length.detach().cpu()
                 path_loss = path_loss.item()
