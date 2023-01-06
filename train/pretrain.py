@@ -521,7 +521,7 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
     # diff = diff/(len(batch) - 1)
     loss = loss/pred_step
     diff = diff/pred_step
-    return loss, diff, iter_info_pool
+    return loss, diff, iter_info_pool,ltmv_pred
 
 
 class RandomSelectPatchFetcher:
@@ -694,7 +694,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
 
             with torch.cuda.amp.autocast(enabled=model.use_amp):
-                loss, abs_loss, iter_info_pool  =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
+                loss, abs_loss, iter_info_pool,ltmv_pred  =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
                 ## nodal loss
                 if (grad_modifier is not None) and (run_gmod) and (grad_modifier.update_mode==2):
                     if grad_modifier.lambda1!=0:
@@ -722,24 +722,22 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
             path_loss = path_length = None
             if grad_modifier and grad_modifier.path_length_regularize and step%grad_modifier.path_length_regularize==0:
-                if grad_modifier.path_length_mode == '221':
-                    inputs1 = torch.randn_like(batch[0]).repeat(2,1,1,1)
-                    inputs2 = torch.randn_like(batch[0]).repeat(2,1,1,1)*0.001 + batch[0].repeat(2,1,1,1)
-                    inputs = torch.cat([inputs1,inputs2,batch[0]])
-                elif grad_modifier.path_length_mode == '020':
-                    inputs = torch.randn_like(batch[0]).repeat(2,1,1,1)*0.001 + batch[0].repeat(2,1,1,1)
-                elif grad_modifier.path_length_mode == '010':
-                    inputs = torch.randn_like(batch[0])*0.001 + batch[0]
-                elif grad_modifier.path_length_mode == '011':
-                    inputs2 = torch.randn_like(batch[0])*0.001 + batch[0]
-                    inputs  = torch.cat([inputs2,batch[0]])
-                elif grad_modifier.path_length_mode == '001':
-                    inputs = batch[0]
-                else:
-                    raise NotImplementedError
                 mean_path_length = model.mean_path_length.to(device)
-                path_loss, mean_path_length, path_lengths = grad_modifier.getPathLengthloss(model.module if hasattr(model,'module') else model,
-                inputs,mean_path_length)
+                path_loss, mean_path_length, path_lengths = grad_modifier.getPathLengthloss(
+                    model.module if hasattr(model,'module') else model, batch[0], mean_path_length, path_length_mode=grad_modifier.path_length_mode )
+                path_loss.backward()
+                if hasattr(model,'module'):
+                    mean_path_length = mean_path_length/dist.get_world_size()
+                    dist.barrier()
+                    dist.all_reduce(mean_path_length)
+                model.mean_path_length = mean_path_length.detach().cpu()
+                path_loss = path_loss.item()
+                path_lengths=path_lengths.mean().item()
+
+            if grad_modifier and grad_modifier.rotation_regularize and step%grad_modifier.rotation_regularize==0:
+                path_loss, mean_path_length, path_lengths = grad_modifier.getRotationDeltaloss(
+                    model.module if hasattr(model,'module') else model, 
+                    batch[0], mean_path_length, path_length_mode=grad_modifier.path_length_mode )
                 path_loss.backward()
                 if hasattr(model,'module'):
                     mean_path_length = mean_path_length/dist.get_world_size()
@@ -787,7 +785,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         else:
             with torch.no_grad():
                 with torch.cuda.amp.autocast(enabled=model.use_amp):
-                    loss, abs_loss, iter_info_pool =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
+                    loss, abs_loss, iter_info_pool,ltmv_pred =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
                     if optimizer.grad_modifier is not None:
                         if grad_modifier.lambda1!=0:
                             Nodeloss1 = grad_modifier.getL1loss(model, batch[0],coef=grad_modifier.coef)
