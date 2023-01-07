@@ -723,13 +723,15 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             path_loss = path_length = None
             if grad_modifier and grad_modifier.path_length_regularize and step%grad_modifier.path_length_regularize==0:
                 mean_path_length = model.mean_path_length.to(device)
-                with torch.cuda.amp.autocast(enabled=model.use_amp):
-                    path_loss, mean_path_length, path_lengths = grad_modifier.getPathLengthloss(
-                        model.module if hasattr(model,'module') else model, batch[0], mean_path_length, path_length_mode=grad_modifier.path_length_mode )
-                if model.use_amp:
-                    loss_scaler.scale(path_loss).backward()    
-                else:
-                    path_loss.backward()
+                path_loss, mean_path_length, path_lengths = grad_modifier.getPathLengthloss(model.module if hasattr(model,'module') else model, batch[0], mean_path_length, path_length_mode=grad_modifier.path_length_mode )
+                path_loss.backward()
+                #with torch.cuda.amp.autocast(enabled=model.use_amp):
+                #    path_loss, mean_path_length, path_lengths = grad_modifier.getPathLengthloss(
+                #        model.module if hasattr(model,'module') else model, batch[0], mean_path_length, path_length_mode=grad_modifier.path_length_mode )
+                #if model.use_amp:
+                #    loss_scaler.scale(path_loss).backward()    
+                #else:
+                #    path_loss.backward()
                 if hasattr(model,'module'):
                     mean_path_length = mean_path_length/dist.get_world_size()
                     dist.barrier()# <--- its doesn't matter
@@ -740,13 +742,16 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
 
             rotation_loss = None
             if grad_modifier and grad_modifier.rotation_regularize and step%grad_modifier.rotation_regularize==0:
-                with torch.cuda.amp.autocast(enabled=model.use_amp):
-                    rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,
-                                                                  rotation_regular_mode = grad_modifier.rotation_regular_mode)
-                if model.use_amp:
-                    loss_scaler.scale(rotation_loss).backward()    
-                else:
-                    rotation_loss.backward()
+                # amp will destroy the train
+                rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)
+                rotation_loss.backward()
+                #with torch.cuda.amp.autocast(enabled=model.use_amp):
+                #    rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,
+                #                                                  rotation_regular_mode = grad_modifier.rotation_regular_mode)
+                #if model.use_amp:
+                #    loss_scaler.scale(rotation_loss).backward()    
+                #else:
+                #    rotation_loss.backward()
                 rotation_loss = rotation_loss.item()
 
 
