@@ -371,6 +371,14 @@ class NGmod_RotationDeltaXS(NGmod_RotationDeltaX):
         penalty = ((torch.sum(grad**2,dim=(1,2,3)).sqrt()-1)**2).mean()
         return penalty
 
+class NGmod_RotationDeltaXL(NGmod_RotationDeltaX):
+    def Estimate_Jv_once(self, model,x,cotangents):
+        assert len(x.shape)==4
+        grad = functorch.jvp(model, (x,), (cotangents,))[1] - x
+        penalty = ((torch.sum(grad**2,dim=(1,2,3)).sqrt()-1)**2).mean()
+        return penalty
+
+
 
 class NGmod_estimate_L2(Nodal_GradientModifier):
     def Normlization_Term_2(self,params,x):
