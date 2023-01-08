@@ -1563,12 +1563,13 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
                                   record_load_tensor=train_record_load,**args.dataset_kargs)
     val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,
                                   record_load_tensor=valid_record_load,**args.dataset_kargs)
+
     train_datasampler = DistributedSampler(train_dataset, shuffle=True) if args.distributed else None
     val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
     g = torch.Generator()
     g.manual_seed(args.seed)
     train_dataloader  = DataLoader(train_dataset, args.batch_size,   sampler=train_datasampler, num_workers=args.num_workers, pin_memory=True,
-                                   drop_last=True,worker_init_fn=seed_worker,generator=g)
+                                   drop_last=True,worker_init_fn=seed_worker,generator=g,shuffle=True if not args.distributed else False)
     val_dataloader    = DataLoader(val_dataset  , args.valid_batch_size, sampler=val_datasampler,   num_workers=args.num_workers, pin_memory=True, drop_last=False)
     return   train_dataset,   val_dataset, train_dataloader, val_dataloader
 
