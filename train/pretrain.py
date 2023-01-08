@@ -706,41 +706,60 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                         if Nodeloss2>0:
                             loss += grad_modifier.lambda2 * Nodeloss2
                         Nodeloss2=Nodeloss2.item()
-                    
-
             
             loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
             if skip:continue
+            
             loss /= accumulation_steps
-            
-
-            
             if model.use_amp:
                 loss_scaler.scale(loss).backward()    
             else:
                 loss.backward()
 
+            #select_para= list(range(5)) + [-5,-4,-3,-2,-1] 
+            
+            #pnormlist = [[name,p.grad.norm()] for name, p in model.named_parameters() if p.grad is not None]
+            #for i in select_para:
+            #    name,norm = pnormlist[i]
+            #    print(f'before:gpu:{device} - {name} - {norm}')
+            
             path_loss = path_length = None
             if grad_modifier and grad_modifier.path_length_regularize and step%grad_modifier.path_length_regularize==0:
                 mean_path_length = model.mean_path_length.to(device)
                 
-                #path_loss, mean_path_length, path_lengths = grad_modifier.getPathLengthloss(model.module if hasattr(model,'module') else model, batch[0], mean_path_length, path_length_mode=grad_modifier.path_length_mode )
-                #path_loss.backward()
                 with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
-                    path_loss, mean_path_length, path_lengths = grad_modifier.getPathLengthloss(
-                        model.module if hasattr(model,'module') else model, batch[0], mean_path_length, path_length_mode=grad_modifier.path_length_mode )
+                    path_loss, mean_path_length, path_lengths = grad_modifier.getPathLengthloss(model.module if hasattr(model,'module') else model, #<-- its ok use `model.module`` or `model`, but model.module avoid unknow error of functorch 
+                                batch[0], mean_path_length, path_length_mode=grad_modifier.path_length_mode )
+                the_loss = path_loss*grad_modifier.gd_alpha
                 if grad_modifier.use_amp:
-                    loss_scaler.scale(path_loss).backward()    
+                    loss_scaler.scale(the_loss).backward()    
                 else:
-                    path_loss.backward()
+                    the_loss.backward()
+
+                #pnormlist = [[name,p.grad] for name, p in model.named_parameters() if p.grad is not None]
+                #name,norm = pnormlist[0]
+                #print(f'before:gpu:{device} - {name} - {norm}')
+                #for i in select_para:
+                #    name,norm = pnormlist[i]
+                #    print(f'before:gpu:{device} - {name} - {norm}')
+
                 if hasattr(model,'module'):
                     mean_path_length = mean_path_length/dist.get_world_size()
-                    dist.barrier()# <--- its doesn't matter
+                    # dist.barrier()# <--- its doesn't matter
                     dist.all_reduce(mean_path_length)
+                    
+                #pnormlist = [[name,p.grad] for name, p in model.named_parameters() if p.grad is not None]
+                #name,norm = pnormlist[0]
+                #print(f'before:gpu:{device} - {name} - {norm}')
+                #for i in select_para:
+                #    name,norm = pnormlist[i]
+                #    print(f'after:gpu:{device} - {name} - {norm}')
+                   
                 model.mean_path_length = mean_path_length.detach().cpu()
                 path_loss = path_loss.item()
                 path_lengths=path_lengths.mean().item()
 
+                
             rotation_loss = None
             if grad_modifier and grad_modifier.rotation_regularize and step%grad_modifier.rotation_regularize==0:
                 # amp will destroy the train
@@ -749,15 +768,17 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 if grad_modifier.only_eval:
                     with torch.no_grad(): 
                         with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
-                            rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)
-                     
+                            rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)                     
                 else:
                     with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
-                        rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)
+                        rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, #<-- its ok use `model.module`` or `model`, but model.module avoid unknow error of functorch 
+                                batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)                    
+                    the_loss = rotation_loss*grad_modifier.gd_alpha
                     if grad_modifier.use_amp:
-                        loss_scaler.scale(rotation_loss).backward()    
+                        loss_scaler.scale(the_loss).backward()    
                     else:
-                        rotation_loss.backward()
+                        the_loss.backward()
+                        
                 rotation_loss = rotation_loss.item()
 
 
@@ -774,12 +795,17 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             #         optimizer.grad_modifier.backward(model, batch[0], batch[1], strict=False)
             #         Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
             
-            #GradientModifier().backward(model,x,y)
+
             #nan_count, skip = nan_diagnose_grad(model,nan_count,logsys)
             # if skip:
             #     optimizer.zero_grad()
             #     continue
-            
+            if hasattr(model,'module') and grad_modifier:
+                for p in model.parameters():
+                    if p.grad is not None:
+                        p.grad = p.grad/dist.get_world_size()
+                        dist.all_reduce(p.grad) #<--- pytorch DDP doesn't support high order gradient. This step need!
+
             if model.clip_grad:
                 if model.use_amp:
                     assert accumulation_steps == 1
@@ -1975,6 +2001,8 @@ def build_optimizer(args,model):
         optimizer.grad_modifier.coef = None
         optimizer.grad_modifier.use_amp = bool(args.gdamp)
         optimizer.grad_modifier.only_eval = args.gdeval
+        optimizer.grad_modifier.gd_alpha  = args.gd_alpha
+        
         if args.gmod_coef:
             _, pixelnorm_std = np.load(args.gmod_coef)
             pixelnorm_std   = torch.Tensor(pixelnorm_std).reshape(1,70,32,64) #<--- should pad 
