@@ -1664,7 +1664,7 @@ def deal_with_tuple_string(patch_size,defult=None):
 def get_ckpt_path(args):
     if args.debug:
         return Path('./debug')
-    TIME_NOW  = time.strftime("%m_%d_%H_%M") if args.distributed else time.strftime("%m_%d_%H_%M_%S")
+    TIME_NOW  = time.strftime("%m_%d_%H_%M_%S") if args.distributed else time.strftime("%m_%d_%H_%M_%S")
     if args.seed == -1:args.seed = 42;#random.randint(1, 100000)
     if args.seed == -2:args.seed = random.randint(1, 100000)
     TIME_NOW  = f"{TIME_NOW}-seed_{args.seed}"
