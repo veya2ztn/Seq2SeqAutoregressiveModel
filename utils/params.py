@@ -42,12 +42,14 @@ def get_args_parser():
     parser.add_argument('--path_length_regularize',type=int,default=0)
     parser.add_argument('--gmod_coef',type=str,default=None)
     parser.add_argument('--gdamp',type=int,default=0)
-
+    parser.add_argument('--gdeval',type=int,default=0)
+    
     parser.add_argument('--do_iter_log', type=int, default=1)
     parser.add_argument('--disable_progress_bar',type=int,default=0)
     parser.add_argument('--batch_limit', type=int, default=1)
     parser.add_argument('--split', type=str, default="")
     parser.add_argument('--log_trace_times', type=int, default=None)
+    parser.add_argument('--fourcast_during_train', type=int, default=0)
     
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',

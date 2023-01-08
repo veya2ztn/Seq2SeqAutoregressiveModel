@@ -746,13 +746,18 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                 # amp will destroy the train
                 #rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)
                 #rotation_loss.backward()
-                with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
-                    rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,
-                                                                  rotation_regular_mode = grad_modifier.rotation_regular_mode)
-                if grad_modifier.use_amp:
-                    loss_scaler.scale(rotation_loss).backward()    
+                if grad_modifier.only_eval:
+                    with torch.no_grad(): 
+                        with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
+                            rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)
+                     
                 else:
-                    rotation_loss.backward()
+                    with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
+                        rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)
+                    if grad_modifier.use_amp:
+                        loss_scaler.scale(rotation_loss).backward()    
+                    else:
+                        rotation_loss.backward()
                 rotation_loss = rotation_loss.item()
 
 
@@ -1542,7 +1547,7 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
     return   train_dataset,   val_dataset, train_dataloader, val_dataloader
 
 def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
-    time_step = args.time_step if "fourcast" in args.mode else 3*24//6 + args.time_step
+    time_step = args.time_step if "fourcast" in args.mode else 5*24//6 + args.time_step
     dataset_kargs = copy.deepcopy(args.dataset_kargs)
     dataset_kargs['time_step'] = time_step
     if dataset_kargs['time_reverse_flag'] in ['only_forward','random_forward_backward']:
@@ -1968,7 +1973,8 @@ def build_optimizer(args,model):
         optimizer.grad_modifier.split_batch_chunk = args.split_batch_chunk
         optimizer.grad_modifier.update_mode = args.gmod_update_mode
         optimizer.grad_modifier.coef = None
-        optimizer.grad_modifier.use_amp = False if not hasattr(args,'gdamp') else bool(args.gdamp)
+        optimizer.grad_modifier.use_amp = bool(args.gdamp)
+        optimizer.grad_modifier.only_eval = args.gdeval
         if args.gmod_coef:
             _, pixelnorm_std = np.load(args.gmod_coef)
             pixelnorm_std   = torch.Tensor(pixelnorm_std).reshape(1,70,32,64) #<--- should pad 
@@ -2043,6 +2049,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     logsys.info(f"entering {args.mode} training in {next(model.parameters()).device}")
     now_best_path = SAVE_PATH / 'backbone.best.pt'
     latest_ckpt_p = SAVE_PATH / 'pretrain_latest.pt'
+    test_dataloader = None
     train_loss=-1
     if args.mode=='fourcast':
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
@@ -2070,6 +2077,14 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         if args.tracemodel:logsys.wandb_watch(model,log_freq=100)
         for epoch in master_bar:
             if epoch < start_epoch:continue
+            if (args.fourcast_during_train) and (epoch%args.fourcast_during_train == 0):
+                if test_dataloader is None:
+                    test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
+                origin_ckpt = logsys.ckpt_root
+                new_ckpt  = os.path.join(logsys.ckpt_root,f'result_of_epoch_{epoch}')
+                logsys.ckpt_root = new_ckpt
+                run_fourcast(args, model,logsys,test_dataloader)
+                logsys.ckpt_root = origin_ckpt
             if hasattr(model,'set_epoch'):model.set_epoch(epoch=epoch,epoch_total=args.epochs)
             if hasattr(model,'module') and hasattr(model.module,'set_epoch'):model.module.set_epoch(epoch=epoch,epoch_total=args.epochs)
             logsys.record('learning rate',optimizer.param_groups[0]['lr'],epoch, epoch_flag='epoch')
@@ -2103,7 +2118,8 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                     if epoch in args.epoch_save_list:
                         save_model(model, path=f'{latest_ckpt_p}-epoch{epoch}', only_model=True)
                         #os.system(f'cp {latest_ckpt_p} {latest_ckpt_p}-epoch{epoch}')
-        
+            
+
         if os.path.exists(now_best_path) and args.do_final_fourcast and not args.distributed:
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
             start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=now_best_path, only_model=True)
