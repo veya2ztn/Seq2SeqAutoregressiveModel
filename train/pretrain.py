@@ -784,8 +784,7 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
             if (step+1) % accumulation_steps == 0:
                 if model.use_amp:                  
                     loss_scaler.step(optimizer)
-                    loss_scaler.update()
-                    
+                    loss_scaler.update()   
                 else:
                     optimizer.step()
                 count_update += 1
