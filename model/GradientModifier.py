@@ -309,10 +309,7 @@ class NGmod_RotationDelta(Nodal_GradientModifier):
         a = a.reshape(a.size(0),-1)
         a = a/a.norm(dim=1,keepdim=True)
         a = a.reshape(shape)
-        return a 
-
-    
-    
+        return a  
     def get_delta(self, modelfun, x, y, y_no_grad, t, rotation_regular_mode = '0y0'):
         
         if rotation_regular_mode =='0y0':
@@ -361,8 +358,28 @@ class NGmod_RotationDeltaX(NGmod_RotationDelta):
         delta = self.get_delta(modelfun, x, y, y_no_grad, t , rotation_regular_mode = rotation_regular_mode)
         penalty = vmap(self.Estimate_Jv_once, (None,None, 0),randomness='same')(modelfun,x,delta).mean()
         return penalty
+    
 
     
+
+class NGmod_RotationDeltaE(NGmod_RotationDelta):
+    def get_delta(self, modelfun, x, y, y_no_grad, t, rotation_regular_mode = '0y0'):
+        
+        if rotation_regular_mode =='0y0':
+            delta = self.normed(t - y)
+        elif rotation_regular_mode =='0v0':
+            delta = self.normed(t - y_no_grad)
+        else:
+            raise NotImplementedError
+        return delta
+    def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = '0y0'):
+        y          = modelfun(x) if 'y' in rotation_regular_mode else None
+        delta      = self.get_delta(modelfun, x, y, y_no_grad, t , rotation_regular_mode = rotation_regular_mode)
+        grad       = functorch.jvp(modelfun, (t,), (delta,))[1] 
+        penalty    = (torch.sum(grad**2,dim=(1,2,3))).sqrt().mean()
+        return penalty
+
+
 
 class NGmod_RotationDeltaXS(NGmod_RotationDeltaX):
     def Estimate_Jv_once(self, model,x,cotangents):
