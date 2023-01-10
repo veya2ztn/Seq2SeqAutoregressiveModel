@@ -272,6 +272,8 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
 
     if isinstance(start[0],(list,tuple)):
         start = start[1:]+[[ltmv_pred, 0 , end[-1]]]
+    elif "2uvt" in model.__class__.__name__:
+        start     = start[1:] + [torch.cat([ltmv_pred,target[:,14*3:]],1)]
     else:
         start     = start[1:] + [ltmv_pred]
     #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
@@ -1790,8 +1792,7 @@ def parse_default_args(args):
     args.model_kargs = model_kargs
 
 
-    args.snap_index = [[0,40,80,12],  # 
-                       [38,49,13,27]        # property  Z500 and T850 and v2m and u2m and 
+    args.snap_index = [[0,40,80,12], [t for t in [38,49,13,27] if t < args.output_channel]      # property  Z500 and T850 and v2m and u2m and 
                        ]
     if args.wrapper_model == 'PatchWrapper':
         args.snap_index.append({0:[[15],[15]],1:[[13],[15]],2:[[11],[15]],3:[[ 9],[15]],4:[[ 7],[15]],5:[[ 5],[15]]})
@@ -1927,6 +1928,9 @@ def build_model(args):
     elif args.wrapper_model =='UVTP2p':
         assert "55" in args.dataset_flag
         model.train_for_part = list(range(14*3,14*4-1))
+    elif args.wrapper_model =='UVTP2uvt':
+        assert "55" in args.dataset_flag
+        model.train_for_part = list(range(14*3))
     elif args.wrapper_model =='UVTPp2uvt':
         assert "55" in args.dataset_flag
         model.train_for_part_extra = list(range(14*3,14*4-1))

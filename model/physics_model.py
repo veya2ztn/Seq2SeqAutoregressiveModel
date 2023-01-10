@@ -386,6 +386,7 @@ class WithoutSpeed(FeaturePickModel):pass
 class CrossSpeed(FeaturePickModel):pass
 class UVTP2p(FeaturePickModel):pass
 class UVTPp2uvt(FeaturePickModel):pass
+class UVTP2uvt(FeaturePickModel):pass
 
 class CombM_UVTP2p2uvt(BaseModel):
     def __init__(self,  args, backbone1, backbone2,ckpt1,ckpt2):
