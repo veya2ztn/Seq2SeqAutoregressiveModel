@@ -381,12 +381,20 @@ class FeaturePickModel(BaseModel):
     def forward(self, Field):
         return self.backbone(Field)
 
-class OnlyPredSpeed(FeaturePickModel):pass
-class WithoutSpeed(FeaturePickModel):pass
-class CrossSpeed(FeaturePickModel):pass
-class UVTP2p(FeaturePickModel):pass
-class UVTPp2uvt(FeaturePickModel):pass
-class UVTP2uvt(FeaturePickModel):pass
+class OnlyPredSpeed(FeaturePickModel):
+    train_for_part = list(range(28))
+class WithoutSpeed(FeaturePickModel):
+    train_for_part = list(range(28,70))    
+class CrossSpeed(FeaturePickModel):
+    train_for_part_extra = list(range(28))
+    train_for_part = list(range(28,70))
+class UVTP2p(FeaturePickModel):
+    train_for_part = list(range(14*3,14*4-1))
+class UVTPp2uvt(FeaturePickModel):
+    train_for_part_extra = list(range(14*3,14*4-1))
+    train_for_part = list(range(14*3))
+class UVTP2uvt(FeaturePickModel):
+    train_for_part = list(range(14*3))
 
 class CombM_UVTP2p2uvt(BaseModel):
     def __init__(self,  args, backbone1, backbone2,ckpt1,ckpt2):

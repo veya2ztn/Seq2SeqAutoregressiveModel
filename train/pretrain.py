@@ -247,9 +247,12 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     if model.training and model.input_noise_std and i==1:
         normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
 
-    if hasattr(model,"train_for_part_extra") and model.train_for_part_extra:
+
+    if hasattr(model,"train_for_part_extra"): train_for_part_extra = model.train_for_part_extra
+    if hasattr(model,"module") and hasattr(model.module,"train_for_part_extra"): train_for_part_extra = model.module.train_for_part_extra
+    if train_for_part_extra:
         assert len(normlized_Field.shape)==4
-        normlized_Field = torch.cat([normlized_Field,target[:,model.train_for_part_extra]],1)
+        normlized_Field = torch.cat([normlized_Field,target[:,train_for_part_extra]],1)
 
     #print(normlized_Field.shape,torch.std_mean(normlized_Field))
     out   = model(normlized_Field)
@@ -278,7 +281,10 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
         start     = start[1:] + [ltmv_pred]
     #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
     #print(target.shape,torch.std_mean(target))
-    if hasattr(model,"train_for_part") and model.train_for_part:
+
+    if hasattr(model,"train_for_part"): train_for_part = model.train_for_part
+    if hasattr(model,"module") and hasattr(model.module,"train_for_part"): train_for_part = model.module.train_for_part
+    if train_for_part:
         target = target[:,model.train_for_part]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
@@ -1238,8 +1244,15 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
         
 
     property_names = test_dataset.vnames
+    # if 'UVTP' in args.wrapper_model:
+    #     property_names = [property_names[t] for t in eval(args.wrapper_model).train_for_part]
+    
     ## <============= ACCU ===============>
     accu_list = torch.stack([p['accu'].cpu() for p in fourcastresult.values() if 'accu' in p]).numpy()
+    if accu_list.shape[-1] == 42:
+        property_names = property_names[:42]
+        test_dataset.unit_list = test_dataset.unit_list[:42]
+        
     total_num = len(accu_list)
     accu_list = accu_list.mean(0)# (fourcast_num,property_num)
     real_times = [(predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit for predict_time in range(len(accu_list))]
@@ -1270,9 +1283,9 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
             unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
             #print(unit_list)
             unit_num  = max(unit_list.shape)
-            unit_num  = len(test_dataset.vnames)
+            unit_num  = len(property_names)
             unit_list = unit_list.reshape(1,unit_num)
-            property_num = len(test_dataset.vnames)
+            property_num = len(property_names)
             if property_num > unit_num:
                 assert property_num%unit_num == 0
                 unit_list = torch.repeat_interleave(unit_list,int(property_num//unit_num),dim=1)
@@ -1966,27 +1979,19 @@ def build_model(args):
     model.clip_grad= args.clip_grad
     model.pred_len = args.pred_len
     model.accumulation_steps = args.accumulation_steps
-    model.train_for_part = None
-    model.train_for_part_extra = None
+
     
     model.mean_path_length = torch.zeros(1)
-    if args.wrapper_model == 'OnlyPredSpeed':
-        model.train_for_part = list(range(28))
-    elif args.wrapper_model == 'WithoutSpeed':
-        model.train_for_part = list(range(28,70))    
-    elif args.wrapper_model == 'CrossSpeed':
-        model.train_for_part_extra = list(range(28))
-        model.train_for_part = list(range(28,70))
-    elif args.wrapper_model =='UVTP2p':
+    if args.wrapper_model =='UVTP2p':
         assert "55" in args.dataset_flag
-        model.train_for_part = list(range(14*3,14*4-1))
+        #model.train_for_part = list(range(14*3,14*4-1))
     elif args.wrapper_model =='UVTP2uvt':
         assert "55" in args.dataset_flag
-        model.train_for_part = list(range(14*3))
+        #model.train_for_part = list(range(14*3))
     elif args.wrapper_model =='UVTPp2uvt':
         assert "55" in args.dataset_flag
-        model.train_for_part_extra = list(range(14*3,14*4-1))
-        model.train_for_part = list(range(14*3))
+        # model.train_for_part_extra = list(range(14*3,14*4-1))
+        # model.train_for_part = list(range(14*3))
     return model
 
 def update_experiment_info(experiment_hub_path,epoch,args):
