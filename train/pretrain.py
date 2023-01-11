@@ -250,17 +250,22 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     train_channel_from_this_stamp = None
     if hasattr(model,"train_channel_from_this_stamp"): train_channel_from_this_stamp = model.train_channel_from_this_stamp
     if hasattr(model,"module") and hasattr(model.module,"train_channel_from_this_stamp"): train_channel_from_this_stamp = model.module.train_channel_from_this_stamp
+    train_channel_from_next_stamp = None
+    if hasattr(model,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.train_channel_from_next_stamp
+    if hasattr(model,"module") and hasattr(model.module,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.module.train_channel_from_next_stamp
+    pred_channel_for_next_stamp = None
+    if hasattr(model,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.pred_channel_for_next_stamp
+    if hasattr(model,"module") and hasattr(model.module,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.module.pred_channel_for_next_stamp
+    
     if train_channel_from_this_stamp:
         assert len(normlized_Field.shape)==4
         normlized_Field = normlized_Field[:,train_channel_from_this_stamp]
 
-    train_channel_from_next_stamp = None
-    if hasattr(model,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.train_channel_from_next_stamp
-    if hasattr(model,"module") and hasattr(model.module,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.module.train_channel_from_next_stamp
     if train_channel_from_next_stamp:
         assert len(normlized_Field.shape)==4
         normlized_Field = torch.cat([normlized_Field,target[:,train_channel_from_next_stamp]],1)
 
+    
     #print(normlized_Field.shape,torch.std_mean(normlized_Field))
     out   = model(normlized_Field)
 
@@ -283,7 +288,7 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     if isinstance(start[0],(list,tuple)):
         start = start[1:]+[[ltmv_pred, 0 , end[-1]]]
     elif pred_channel_for_next_stamp:
-        next_tensor = target.clone()
+        next_tensor = target.clone().type(ltmv_pred.dtype)
         next_tensor[:,pred_channel_for_next_stamp] = ltmv_pred
         start     = start[1:] + [next_tensor]
     else:
@@ -291,9 +296,7 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
     #print(target.shape,torch.std_mean(target))
 
-    pred_channel_for_next_stamp = None
-    if hasattr(model,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.pred_channel_for_next_stamp
-    if hasattr(model,"module") and hasattr(model.module,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.module.pred_channel_for_next_stamp
+    
     if pred_channel_for_next_stamp:
         target = target[:,pred_channel_for_next_stamp]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
@@ -1106,13 +1109,12 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
     hmse_series = torch.stack(hmse_series,1) # (B,fourcast_num,property_num)
     batch_variance_line_pred = torch.stack(batch_variance_line_pred,1) # (B,fourcast_num,property_num)
     batch_variance_line_true = torch.stack(batch_variance_line_true,1) # (B,fourcast_num,property_num)
-    error_norm = torch.stack(error_norm,1) # (B,fourcast_num,1)
     
-    for idx, accu,rmse,hmse, std_pred,std_true,errorn in zip(idxes,accu_series,rmse_series,hmse_series,
-                                                batch_variance_line_pred,batch_variance_line_true,error_norm):
+    for idx, accu,rmse,hmse, std_pred,std_true in zip(idxes,accu_series,rmse_series,hmse_series,
+                                                batch_variance_line_pred,batch_variance_line_true):
         #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
         fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse,'std_pred':std_pred,'std_true':std_true,'snap_line':[],
-                                      "hmse":hmse,'error_norm':errorn}
+                                      "hmse":hmse}
     if len(the_abs_error_measure_list) > 0 :
         # `the_abs_error_measure_list` is a list of [    (1,B) , (2,B), (3,B), ..., (8,B) ]
         the_abs_error_measure_list = torch.cat(the_abs_error_measure_list).permute(1,0) #(36, B) -> (B, 36)
