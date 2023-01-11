@@ -247,12 +247,19 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     if model.training and model.input_noise_std and i==1:
         normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
 
-
-    if hasattr(model,"train_for_part_extra"): train_for_part_extra = model.train_for_part_extra
-    if hasattr(model,"module") and hasattr(model.module,"train_for_part_extra"): train_for_part_extra = model.module.train_for_part_extra
-    if train_for_part_extra:
+    train_channel_from_this_stamp = None
+    if hasattr(model,"train_channel_from_this_stamp"): train_channel_from_this_stamp = model.train_channel_from_this_stamp
+    if hasattr(model,"module") and hasattr(model.module,"train_channel_from_this_stamp"): train_channel_from_this_stamp = model.module.train_channel_from_this_stamp
+    if train_channel_from_this_stamp:
         assert len(normlized_Field.shape)==4
-        normlized_Field = torch.cat([normlized_Field,target[:,train_for_part_extra]],1)
+        normlized_Field = normlized_Field[:,train_channel_from_this_stamp]
+
+    train_channel_from_next_stamp = None
+    if hasattr(model,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.train_channel_from_next_stamp
+    if hasattr(model,"module") and hasattr(model.module,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.module.train_channel_from_next_stamp
+    if train_channel_from_next_stamp:
+        assert len(normlized_Field.shape)==4
+        normlized_Field = torch.cat([normlized_Field,target[:,train_channel_from_next_stamp]],1)
 
     #print(normlized_Field.shape,torch.std_mean(normlized_Field))
     out   = model(normlized_Field)
@@ -275,17 +282,20 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
 
     if isinstance(start[0],(list,tuple)):
         start = start[1:]+[[ltmv_pred, 0 , end[-1]]]
-    elif "2uvt" in model.__class__.__name__:
-        start     = start[1:] + [torch.cat([ltmv_pred,target[:,14*3:]],1)]
+    elif pred_channel_for_next_stamp:
+        next_tensor = target.clone()
+        next_tensor[:,pred_channel_for_next_stamp] = ltmv_pred
+        start     = start[1:] + [next_tensor]
     else:
         start     = start[1:] + [ltmv_pred]
     #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
     #print(target.shape,torch.std_mean(target))
 
-    if hasattr(model,"train_for_part"): train_for_part = model.train_for_part
-    if hasattr(model,"module") and hasattr(model.module,"train_for_part"): train_for_part = model.module.train_for_part
-    if train_for_part:
-        target = target[:,model.train_for_part]
+    pred_channel_for_next_stamp = None
+    if hasattr(model,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.pred_channel_for_next_stamp
+    if hasattr(model,"module") and hasattr(model.module,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.module.pred_channel_for_next_stamp
+    if pred_channel_for_next_stamp:
+        target = target[:,pred_channel_for_next_stamp]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
@@ -1244,15 +1254,13 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
         
 
     property_names = test_dataset.vnames
+    if hasattr(test_dataset,"pred_channel_for_next_stamp"):
+        property_names = [property_names[t] for t in test_dataset.pred_channel_for_next_stamp]
+        test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp]
     # if 'UVTP' in args.wrapper_model:
-    #     property_names = [property_names[t] for t in eval(args.wrapper_model).train_for_part]
-    
+    #     property_names = [property_names[t] for t in eval(args.wrapper_model).pred_channel_for_next_stamp]
     ## <============= ACCU ===============>
-    accu_list = torch.stack([p['accu'].cpu() for p in fourcastresult.values() if 'accu' in p]).numpy()
-    if accu_list.shape[-1] == 42:
-        property_names = property_names[:42]
-        test_dataset.unit_list = test_dataset.unit_list[:42]
-        
+    accu_list = torch.stack([p['accu'].cpu() for p in fourcastresult.values() if 'accu' in p]).numpy()    
     total_num = len(accu_list)
     accu_list = accu_list.mean(0)# (fourcast_num,property_num)
     real_times = [(predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit for predict_time in range(len(accu_list))]
@@ -1650,9 +1658,14 @@ def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
     #print(dataset_kargs)
     split = args.split if hasattr(args,'split') and args.split else "test"
     test_dataset = dataset_type(split=split, with_idx=True,dataset_tensor=test_dataset_tensor,record_load_tensor=test_record_load,**dataset_kargs)
+    if "UVT" in args.wrapper_model:
+        test_dataset.pred_channel_for_next_stamp = eval(args.wrapper_model).pred_channel_for_next_stamp
+    
     assert hasattr(test_dataset,'clim_tensor')
     test_datasampler  = DistributedSampler(test_dataset,  shuffle=False) if args.distributed else None
     test_dataloader   = DataLoader(test_dataset, args.valid_batch_size, sampler=test_datasampler, num_workers=args.num_workers, pin_memory=False)
+    
+    
     return   test_dataset,   test_dataloader
 
 
@@ -1982,16 +1995,8 @@ def build_model(args):
 
     
     model.mean_path_length = torch.zeros(1)
-    if args.wrapper_model =='UVTP2p':
+    if 'UVT' in args.wrapper_model:
         assert "55" in args.dataset_flag
-        #model.train_for_part = list(range(14*3,14*4-1))
-    elif args.wrapper_model =='UVTP2uvt':
-        assert "55" in args.dataset_flag
-        #model.train_for_part = list(range(14*3))
-    elif args.wrapper_model =='UVTPp2uvt':
-        assert "55" in args.dataset_flag
-        # model.train_for_part_extra = list(range(14*3,14*4-1))
-        # model.train_for_part = list(range(14*3))
     return model
 
 def update_experiment_info(experiment_hub_path,epoch,args):
