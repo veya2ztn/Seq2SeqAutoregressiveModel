@@ -409,6 +409,11 @@ class UVTPt2uvp(FeaturePickModel):
     train_channel_from_next_stamp = list(range(14*2,14*3))
     pred_channel_for_next_stamp   = list(range(14*2)) + list(range(14*3,14*4-1))
 
+class UVTPuv2tp(FeaturePickModel):
+    train_channel_from_next_stamp = list(range(14*2))
+    pred_channel_for_next_stamp   = list(range(14*2,14*4-1))
+
+
 class CombM_UVTP2p2uvt(BaseModel):
     def __init__(self,  args, backbone1, backbone2,ckpt1,ckpt2):
         super().__init__()
