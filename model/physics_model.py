@@ -382,19 +382,32 @@ class FeaturePickModel(BaseModel):
         return self.backbone(Field)
 
 class OnlyPredSpeed(FeaturePickModel):
-    train_for_part = list(range(28))
+    pred_channel_for_next_stamp = list(range(28))
 class WithoutSpeed(FeaturePickModel):
-    train_for_part = list(range(28,70))    
+    pred_channel_for_next_stamp = list(range(28,70))    
 class CrossSpeed(FeaturePickModel):
-    train_for_part_extra = list(range(28))
-    train_for_part = list(range(28,70))
+    train_channel_from_next_stamp = list(range(28))
+    pred_channel_for_next_stamp = list(range(28,70))
 class UVTP2p(FeaturePickModel):
-    train_for_part = list(range(14*3,14*4-1))
+    pred_channel_for_next_stamp = list(range(14*3,14*4-1))
+
+    
 class UVTPp2uvt(FeaturePickModel):
-    train_for_part_extra = list(range(14*3,14*4-1))
-    train_for_part = list(range(14*3))
+    train_channel_from_next_stamp = list(range(14*3,14*4-1))
+    pred_channel_for_next_stamp = list(range(14*3))
+
+
 class UVTP2uvt(FeaturePickModel):
-    train_for_part = list(range(14*3))
+    pred_channel_for_next_stamp = list(range(14*3))
+
+class UVTp2uvt(FeaturePickModel):
+    train_channel_from_this_stamp = list(range(14*3))
+    train_channel_from_next_stamp = list(range(14*3,14*4-1))
+    pred_channel_for_next_stamp   = list(range(14*3))
+
+class UVTPt2uvp(FeaturePickModel):
+    train_channel_from_next_stamp = list(range(14*2,14*3))
+    pred_channel_for_next_stamp   = list(range(14*2)) + list(range(14*3,14*4-1))
 
 class CombM_UVTP2p2uvt(BaseModel):
     def __init__(self,  args, backbone1, backbone2,ckpt1,ckpt2):
