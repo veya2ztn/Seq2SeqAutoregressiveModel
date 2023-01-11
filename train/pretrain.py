@@ -950,9 +950,28 @@ def get_tensor_value(tensor,snap_index,time = 0):
         output_tensor.append(torch.stack(one_batch_tensor))
     return torch.stack(output_tensor)#(B,P,N)
 
+def calculate_next_level_error_once(model, x_t_1, error):
+    '''
+    calculate m(x_t_1)(x_t_1 - \hat{x_t_1})
+    '''
+    assert len(x_t_1.shape) == 4
+    grad       = functorch.jvp(model, (x_t_1,), (error,))[1]  #(B, Xdimension)
+    return grad
+
+def calculate_next_level_error(model, x_t_1, error_list):
+    '''
+    calculate m(x_t_1)(x_t_1 - \hat{x_t_1})
+    '''
+    assert len(x_t_1.shape) == 4
+    grads = vmap(calculate_next_level_error_once, (None,None, 0),randomness='same')(model,x_t_1,error_list)#(N, B, Xdimension)
+    return grads
+
+def get_tensor_norm(tensor,dim):
+    return (torch.sum(tensor**2,dim=dim)).sqrt()#(N,B)
+
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
                     save_prediction_first_step=None,save_prediction_final_step=None,
-                    snap_index=None):
+                    snap_index=None,do_error_propagration_monitor=False):
     accu_series=[]
     rmse_series=[]
     rmse_maps = []
@@ -961,22 +980,22 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
     time_step_1_mode=False
     batch_variance_line_pred = [] 
     batch_variance_line_true = []
+    the_abs_error_measure_list = []
+    the_est_error_measure_list = []
     # we will also record the variance for each slot, assume the input is a time series of data
     # [ (B, P, W, H) -> (B, P, W, H) -> .... -> (B, P, W, H) ,(B, P, W, H)]
     # we would record the variance of each batch on the location (W,H)
     clim = model.clim
     
-    start = batch[0:model.history_length] # start must be a list
-
+    start = batch[0:model.history_length] # start must be a list    
     
     snap_line = []
-    
-
     if snap_index is not None:  
         for i,tensor in enumerate(start):
             # each tensor is like (B, 70, 32, 64) or (B, P, Z, W, H)
             snap_line.append([len(snap_line), get_tensor_value(tensor,snap_index, time=model.history_length),'input'])
     
+    approx_epsilon_lists = []
     for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
         end = batch[i:i+model.pred_len]
         end = end[0] if len(end) == 1 else end
@@ -1002,6 +1021,29 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
 
         ltmv_trues = dataset.inv_normlize_data([target])[0]#.detach().cpu()
         ltmv_preds = ltmv_pred#.detach().cpu()
+
+        the_abs_error_measure = None
+        the_est_error_measure = None
+        if do_error_propagration_monitor and len(approx_epsilon_lists) < 8: # only do this 8 times
+            if len(approx_epsilon_lists) > 0:
+                x_t_1_real = last_target # batch[i-1]
+                epsilon_alevel_2_real   = ltmv_true - model(x_t_1_real).unsqueeze(0) # ltmv_true - model(last_target)
+                epsilon_blevel_2_real   = (ltmv_true - ltmv_pred).unsqueeze(0)
+                approx_epsilon_lists    = calculate_next_level_error(model, x_t_1_real, approx_epsilon_lists) #(N,B,Xdimension)
+                epsilon_blevel_2_approx = epsilon_alevel_2_real + approx_epsilon_lists #(N,B,Xdimension) e+m(t)e
+                the_abs_error_measure   = get_tensor_norm(epsilon_blevel_2_approx - epsilon_blevel_2_real,dim=(2,3,4))#(N,B)
+                the_est_error_measure   = torch.abs(get_tensor_norm(epsilon_blevel_2_approx,dim=(2,3,4)) - 
+                                                    get_tensor_norm(epsilon_alevel_2_real,dim=(2,3,4))   - 
+                                                    get_tensor_norm(approx_epsilon_lists,dim=(2,3,4)) 
+                                                    )#(N,B)
+                approx_epsilon_lists    = torch.cat([epsilon_blevel_2_real,epsilon_blevel_2_approx]) #(N+1,B,Xdimension)
+            else:
+                approx_epsilon_lists = (ltmv_true - ltmv_pred).unsqueeze(0) #(1,B,Xdimension)
+            
+            last_target = ltmv_trues
+        if the_abs_error_measure is not None: the_abs_error_measure_list.append(the_abs_error_measure)
+        if the_est_error_measure is not None: the_est_error_measure_list.append(the_est_error_measure)
+
         if model.pred_len > 1:
             ltmv_trues = ltmv_trues.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)
             ltmv_preds = ltmv_preds.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)\
@@ -1032,7 +1074,6 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
             statistic_dim = tuple(range(2,len(ltmv_true.shape))) # always assume (B,P,Z,W,H)
             batch_variance_line_pred.append(ltmv_pred.std(dim=statistic_dim).detach().cpu())
             batch_variance_line_true.append(ltmv_true.std(dim=statistic_dim).detach().cpu())
-
             #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
             accu_series.append(compute_accu(ltmv_pred - clim.to(ltmv_pred.device), ltmv_true - clim.to(ltmv_pred.device)).detach().cpu())
             rmse_v,rmse_map = compute_rmse(ltmv_pred , ltmv_true, return_map_also=True)
@@ -1043,19 +1084,28 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
         #torch.cuda.empty_cache()
 
     
+
     accu_series = torch.stack(accu_series,1) # (B,fourcast_num,property_num)
     rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,property_num)
     hmse_series = torch.stack(hmse_series,1) # (B,fourcast_num,property_num)
     batch_variance_line_pred = torch.stack(batch_variance_line_pred,1) # (B,fourcast_num,property_num)
     batch_variance_line_true = torch.stack(batch_variance_line_true,1) # (B,fourcast_num,property_num)
-
+    error_norm = torch.stack(error_norm,1) # (B,fourcast_num,1)
     
-    for idx, accu,rmse,hmse, std_pred,std_true in zip(idxes,accu_series,rmse_series,hmse_series,
-                                                batch_variance_line_pred,batch_variance_line_true):
+    for idx, accu,rmse,hmse, std_pred,std_true,errorn in zip(idxes,accu_series,rmse_series,hmse_series,
+                                                batch_variance_line_pred,batch_variance_line_true,error_norm):
         #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
         fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse,'std_pred':std_pred,'std_true':std_true,'snap_line':[],
-                                      "hmse":hmse}
-    
+                                      "hmse":hmse,'error_norm':errorn}
+    if len(the_abs_error_measure_list) > 0 :
+        # `the_abs_error_measure_list` is a list of [    (1,B) , (2,B), (3,B), ..., (8,B) ]
+        the_abs_error_measure_list = torch.cat(the_abs_error_measure_list).permute(1,0) #(36, B) -> (B, 36)
+        the_est_error_measure_list = torch.cat(the_est_error_measure_list).permute(1,0) #(36, B) -> (B, 36)
+        for idx, abs_error, est_error in zip(idxes,the_abs_error_measure_list,the_est_error_measure_list):
+            fourcastresult[idx.item()]['abs_error'] = abs_error
+            fourcastresult[idx.item()]['est_error'] = est_error
+
+
     if snap_index is not None:
         for batch_id,select_batch_id in enumerate(snap_index[0]):
             for snap_each_fourcast_time in snap_line:
@@ -1205,6 +1255,8 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
     if (hmse_list>0).all():
         save_and_log_table(rmse_list,logsys, prefix+'hmse_table', property_names, real_times)           
     
+    ## <============= Error_Norm ===============>
+
     ## <============= STD_Location ===============>
     meanofstd = torch.stack([p['std_pred'].cpu() for p in fourcastresult.values() if 'std_pred' in p]).numpy().mean(0)# (B, (fourcast_num,property_num)
     save_and_log_table(meanofstd,logsys, prefix+'meanofstd_table', property_names, real_times)       
