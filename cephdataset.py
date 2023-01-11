@@ -641,6 +641,9 @@ class WeathBench(BaseDataset):
         self.dataset_flag     = dataset_flag
         self.clim_tensor      = [0]
         self.mean_std         = self.load_numpy_from_url(os.path.join(self.root,"mean_std.npy"))
+        # for name, std in zip(self.all_vnames,self.mean_std[1].flatten()):
+        #     print(f"{name:20s} -> {std:.4f}")
+        # raise
         self.constants        = self.load_numpy_from_url(os.path.join(self.root,"constants.npy"))
         self.mode             = mode
         self.channel_last     = channel_last
