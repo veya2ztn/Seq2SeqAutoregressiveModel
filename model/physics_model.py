@@ -428,3 +428,19 @@ class CombM_UVTP2p2uvt(BaseModel):
         p = self.UVTP2p(UVTP)
         uvt= self.UVTPp2uvt(torch.cat([UVTP,p],1))
         return torch.cat([uvt,p],1)
+
+from model.afnonet import AFNONet
+class ReviseAFONet(BaseModel):
+    feature_engine_path = "checkpoints/WeathBench7066/AFNONet/ts_2_pretrain-2D706N_per_1_step/01_09_02_17_57-seed_73001/backbone.best.pt"
+    def __init__(self,  args, backbone):
+        super().__init__()
+        self.feature_engine  =  AFNONet(img_size=(32,64),depth=12,in_chans=70,embed_dim=768,out_chans=70,n_heads=8,patch_size=2,fno_blocks=4)
+        print(f"load feature_engine model from {self.feature_engine_path}")
+        self.feature_engine.load_state_dict(torch.load(self.feature_engine_path, map_location='cpu')['model'])
+        self.backbone = backbone
+    def forward(self, x):
+        with torch.no_grad():
+            y_rough = self.feature_engine(x)
+        x  = torch.cat([x,y_rough],1)
+        x  = self.backbone(x)
+        return x

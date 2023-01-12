@@ -297,6 +297,23 @@ def create_nodalsnap_table(ckpt_path):
     #     logsys.wandblog(info_pool)
     logsys.close()
 
+def create_multi_fourcast_table(ckpt_path):
+    from train.pretrain import create_multi_epoch_inference,get_test_dataset,parse_default_args,create_logsys
+    args = get_the_args(ckpt_path)
+    args.mode = 'fourcast'
+    args.gpu = args.local_rank = gpu  = local_rank = 0
+    #args.data_root = "datasets/weatherbench"
+    ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
+    args= parse_default_args(args)
+    args.SAVE_PATH = ckpt_path
+    ########## inital log ###################
+    args.distributed = False 
+    test_dataset,   test_dataloader = get_test_dataset(args)
+    logsys = create_logsys(args,False)
+    result_path_list = [os.path.join(root_path,result_path) for result_path in os.listdir(root_path) if "result_of_epoch" in result_path]
+    info_pool_list = create_multi_epoch_inference(result_path_list, logsys,test_dataset)
+    logsys.close()
+
 
 
 
@@ -379,5 +396,6 @@ if __name__ == "__main__":
         elif args.moded == 'createtb':create_fourcast_table(trail_path)
         elif args.moded == 'snap_nodal':run_snap_nodal(trail_path,step=args.fourcast_step,force_fourcast=args.force_fourcast,weight_chose=args.weight_chose)
         elif args.moded == 'createtb_nodalsnap':create_nodalsnap_table(trail_path)
+        elif args.moded == 'createmultitb':create_multi_fourcast_table(trail_path)
         else:
             raise NotImplementedError
