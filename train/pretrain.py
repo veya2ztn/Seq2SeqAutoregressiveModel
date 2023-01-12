@@ -1081,7 +1081,7 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
     start = batch[0:model.history_length] # start must be a list    
     
     snap_line = []
-    if snap_index is not None:  
+    if [snap_index is not None] and [0 not in [len(t) for t in snap_index]]:  
         for i,tensor in enumerate(start):
             # each tensor is like (B, 70, 32, 64) or (B, P, Z, W, H)
             snap_line.append([len(snap_line), get_tensor_value(tensor,snap_index, time=model.history_length),'input'])

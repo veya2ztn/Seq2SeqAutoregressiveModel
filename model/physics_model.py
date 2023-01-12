@@ -413,6 +413,12 @@ class UVTPuv2tp(FeaturePickModel):
     train_channel_from_next_stamp = list(range(14*2))
     pred_channel_for_next_stamp   = list(range(14*2,14*4-1))
 
+class UVTP2tp(FeaturePickModel):
+    pred_channel_for_next_stamp   = list(range(14*2,14*4-1))
+
+class UVTP2uvp(FeaturePickModel):
+    pred_channel_for_next_stamp   = list(range(14*2)) + list(range(14*3,14*4-1))
+
 
 class CombM_UVTP2p2uvt(BaseModel):
     pred_channel_for_next_stamp   = list(range(55))
