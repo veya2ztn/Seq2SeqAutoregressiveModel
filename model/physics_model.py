@@ -415,6 +415,7 @@ class UVTPuv2tp(FeaturePickModel):
 
 
 class CombM_UVTP2p2uvt(BaseModel):
+    pred_channel_for_next_stamp   = list(range(55))
     def __init__(self,  args, backbone1, backbone2,ckpt1,ckpt2):
         super().__init__()
         self.UVTP2p  =  UVTP2p(args,backbone1)

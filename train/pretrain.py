@@ -985,9 +985,9 @@ def calculate_next_level_error(model, x_t_1, error_list):
     grads = vmap(calculate_next_level_error_once, (None,None, 0),randomness='same')(model,x_t_1,error_list)#(N, B, Xdimension)
     return grads
 
-def get_tensor_norm(tensor,dim):
-    return (torch.sum(tensor**2,dim=dim)).sqrt()#(N,B)
-
+def get_tensor_norm(tensor,dim):#<--use mse way
+    #return (torch.sum(tensor**2,dim=dim)).sqrt()#(N,B)
+    return (torch.mean(tensor**2,dim=dim))#(N,B)
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
                     save_prediction_first_step=None,save_prediction_final_step=None,
                     snap_index=None,do_error_propagration_monitor=False):
@@ -1001,6 +1001,10 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
     batch_variance_line_true = []
     the_abs_error_measure_list = []
     the_est_error_measure_list = []
+    epsilon_alevel_v_real_list = []
+    epsilon_blevel_v_real_list = []
+    epsilon_Jacobian_val_list = []
+    epsilon_Jacobian_valn_list = []
     # we will also record the variance for each slot, assume the input is a time series of data
     # [ (B, P, W, H) -> (B, P, W, H) -> .... -> (B, P, W, H) ,(B, P, W, H)]
     # we would record the variance of each batch on the location (W,H)
@@ -1043,26 +1047,36 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
 
         the_abs_error_measure = None
         the_est_error_measure = None
+        epsilon_alevel_v_real = None
+        epsilon_blevel_v_real = None
+        epsilon_Jacobian_val = None
+        epsilon_Jacobian_valn = None
         if do_error_propagration_monitor and len(approx_epsilon_lists) < 8: # only do this 8 times
             if len(approx_epsilon_lists) > 0:
                 x_t_1_real = last_target # batch[i-1]
-                epsilon_alevel_2_real   = ltmv_true - model(x_t_1_real).unsqueeze(0) # ltmv_true - model(last_target)
-                epsilon_blevel_2_real   = (ltmv_true - ltmv_pred).unsqueeze(0)
+                epsilon_alevel_2_real   = ltmv_trues - model(x_t_1_real).unsqueeze(0) # ltmv_true - model(last_target)
+                epsilon_blevel_2_real   = (ltmv_trues - ltmv_preds).unsqueeze(0)
+                normvalue = get_tensor_norm(approx_epsilon_lists,dim=(2,3,4))
                 approx_epsilon_lists    = calculate_next_level_error(model, x_t_1_real, approx_epsilon_lists) #(N,B,Xdimension)
+                epsilon_Jacobian_val   = get_tensor_norm(approx_epsilon_lists,dim=(2,3,4))
+                epsilon_Jacobian_valn   = epsilon_Jacobian_val/normvalue
                 epsilon_blevel_2_approx = epsilon_alevel_2_real + approx_epsilon_lists #(N,B,Xdimension) e+m(t)e
                 the_abs_error_measure   = get_tensor_norm(epsilon_blevel_2_approx - epsilon_blevel_2_real,dim=(2,3,4))#(N,B)
-                the_est_error_measure   = torch.abs(get_tensor_norm(epsilon_blevel_2_approx,dim=(2,3,4)) - 
-                                                    get_tensor_norm(epsilon_alevel_2_real,dim=(2,3,4))   - 
-                                                    get_tensor_norm(approx_epsilon_lists,dim=(2,3,4)) 
-                                                    )#(N,B)
+                epsilon_blevel_v_real  = get_tensor_norm(epsilon_blevel_2_real,dim=(2,3,4))
+                epsilon_alevel_v_real  = get_tensor_norm(epsilon_alevel_2_real,dim=(2,3,4))
+                
+                the_est_error_measure  = torch.abs(epsilon_blevel_v_real-epsilon_alevel_v_real-epsilon_Jacobian_val)#(N,B)
                 approx_epsilon_lists    = torch.cat([epsilon_blevel_2_real,epsilon_blevel_2_approx]) #(N+1,B,Xdimension)
             else:
-                approx_epsilon_lists = (ltmv_true - ltmv_pred).unsqueeze(0) #(1,B,Xdimension)
+                approx_epsilon_lists = (ltmv_trues - ltmv_preds).unsqueeze(0) #(1,B,Xdimension)
             
             last_target = ltmv_trues
-        if the_abs_error_measure is not None: the_abs_error_measure_list.append(the_abs_error_measure)
-        if the_est_error_measure is not None: the_est_error_measure_list.append(the_est_error_measure)
-
+        if the_abs_error_measure is not None: the_abs_error_measure_list.append(the_abs_error_measure.detach().cpu())
+        if the_est_error_measure is not None: the_est_error_measure_list.append(the_est_error_measure.detach().cpu())
+        if epsilon_alevel_v_real is not None: epsilon_alevel_v_real_list.append(epsilon_alevel_v_real.detach().cpu())
+        if epsilon_blevel_v_real is not None: epsilon_blevel_v_real_list.append(epsilon_blevel_v_real.detach().cpu())
+        if epsilon_Jacobian_val  is not None: epsilon_Jacobian_val_list.append(epsilon_Jacobian_val.detach().cpu())
+        if epsilon_Jacobian_valn is not None: epsilon_Jacobian_valn_list.append(epsilon_Jacobian_valn.detach().cpu())
         if model.pred_len > 1:
             ltmv_trues = ltmv_trues.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)
             ltmv_preds = ltmv_preds.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)\
@@ -1119,9 +1133,23 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
         # `the_abs_error_measure_list` is a list of [    (1,B) , (2,B), (3,B), ..., (8,B) ]
         the_abs_error_measure_list = torch.cat(the_abs_error_measure_list).permute(1,0) #(36, B) -> (B, 36)
         the_est_error_measure_list = torch.cat(the_est_error_measure_list).permute(1,0) #(36, B) -> (B, 36)
-        for idx, abs_error, est_error in zip(idxes,the_abs_error_measure_list,the_est_error_measure_list):
+        # `epsilon_Jacobian_val_list` is also a list of [    (1,B) , (2,B), (3,B), ..., (8,B) ]
+        epsilon_Jacobian_val_list  = torch.cat(epsilon_Jacobian_val_list).permute(1,0)
+        epsilon_Jacobian_valn_list = torch.cat(epsilon_Jacobian_valn_list).permute(1,0)
+        # `epsilon_blevel_v_real_list` is a list of values [ (1,B) (1,B) (1,B), ... , (1,B)]
+        epsilon_blevel_v_real_list = torch.cat(epsilon_blevel_v_real_list).permute(1,0)
+        epsilon_alevel_v_real_list = torch.cat(epsilon_alevel_v_real_list).permute(1,0)
+        
+        for idx, abs_error, est_error,epsilon_alevel_v,epsilon_blevel_v,epsilon_Jacobian,epsilon_Jacobian_norm in zip(idxes,
+                the_abs_error_measure_list,the_est_error_measure_list,
+                epsilon_alevel_v_real_list,epsilon_blevel_v_real_list,
+                epsilon_Jacobian_val_list,epsilon_Jacobian_valn_list):
             fourcastresult[idx.item()]['abs_error'] = abs_error
             fourcastresult[idx.item()]['est_error'] = est_error
+            fourcastresult[idx.item()]['alevel_v'] = epsilon_alevel_v
+            fourcastresult[idx.item()]['blevel_v'] = epsilon_blevel_v
+            fourcastresult[idx.item()]['Jacobianv'] = epsilon_Jacobian
+            fourcastresult[idx.item()]['JacobV_N'] = epsilon_Jacobian_norm
 
 
     if snap_index is not None:
@@ -1173,7 +1201,7 @@ def run_one_fourcast_iter_with_history(model, start, batch, idxes, fourcastresul
         fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse}
     return fourcastresult,extra_info
 
-def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None):
+def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do_error_propagration_monitor=False):
     model.eval()
     logsys.eval()
     status     = 'test'
@@ -1211,7 +1239,7 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None):
             fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset,
                                          save_prediction_first_step=save_prediction_first_step,
                                          save_prediction_final_step=save_prediction_final_step,
-                                         snap_index=the_snap_index_in_iter)
+                                         snap_index=the_snap_index_in_iter,do_error_propagration_monitor=do_error_propagration_monitor)
             train_cost += time.time() - now;now = time.time()
             for _ in range(random_repeat):
                 raise NotImplementedError
@@ -1279,7 +1307,9 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
         save_and_log_table(rmse_list,logsys, prefix+'hmse_table', property_names, real_times)           
     
     ## <============= Error_Norm ===============>
-
+    #fourcastresult[idx.item()]['abs_error'] = abs_error
+    #fourcastresult[idx.item()]['est_error'] = est_error
+    
     ## <============= STD_Location ===============>
     meanofstd = torch.stack([p['std_pred'].cpu() for p in fourcastresult.values() if 'std_pred' in p]).numpy().mean(0)# (B, (fourcast_num,property_num)
     save_and_log_table(meanofstd,logsys, prefix+'meanofstd_table', property_names, real_times)       
@@ -1416,7 +1446,7 @@ def run_fourcast(args, model,logsys,test_dataloader=None):
         with open(os.path.join(logsys.ckpt_root,'weight_path'),'w') as f:f.write(args.pretrain_weight)
         fourcastresult  = fourcast_step(test_dataloader, model,logsys,
                                     random_repeat = args.fourcast_randn_initial,
-                                    snap_index=args.snap_index)
+                                    snap_index=args.snap_index,do_error_propagration_monitor=args.do_error_propagration_monitor)
         torch.save(fourcastresult,fourcastresult_path)
         logsys.info(f"save fourcastresult at {fourcastresult_path}")
     else:
@@ -1746,7 +1776,7 @@ def deal_with_tuple_string(patch_size,defult=None):
 def get_ckpt_path(args):
     if args.debug:
         return Path('./debug')
-    TIME_NOW  = time.strftime("%m_%d_%H_%M_%S") if args.distributed else time.strftime("%m_%d_%H_%M_%S")
+    TIME_NOW  = time.strftime("%m_%d_%H_%M")+f"_{args.port}" if args.distributed else time.strftime("%m_%d_%H_%M_%S")
     if args.seed == -1:args.seed = 42;#random.randint(1, 100000)
     if args.seed == -2:args.seed = random.randint(1, 100000)
     TIME_NOW  = f"{TIME_NOW}-seed_{args.seed}"
@@ -1754,7 +1784,7 @@ def get_ckpt_path(args):
     if not hasattr(args,'train_set'):args.train_set='large'
     args.time_step  = ts_for_mode[args.mode] if not args.time_step else args.time_step
     model_name, datasetname, project_name = get_projectname(args)
-    if args.continue_train or ('fourcast' in args.mode):
+    if args.continue_train or (('fourcast' in args.mode) and (not args.do_fourcast_anyway)):
         assert args.pretrain_weight
         #args.mode = "finetune"
         SAVE_PATH = Path(os.path.dirname(args.pretrain_weight))
@@ -2180,6 +2210,10 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                     test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
                 origin_ckpt = logsys.ckpt_root
                 new_ckpt  = os.path.join(logsys.ckpt_root,f'result_of_epoch_{epoch}')
+                try:# in multi process will conflict
+                    if new_ckpt and not os.path.exists(new_ckpt):os.makedirs(new_ckpt)
+                except:
+                    pass
                 logsys.ckpt_root = new_ckpt
                 run_fourcast(args, model,logsys,test_dataloader)
                 logsys.ckpt_root = origin_ckpt
@@ -2334,6 +2368,7 @@ def distributed_initial(args):
     if not hasattr(args,'train_set'):args.train_set='large'
     ip = os.environ.get("MASTER_ADDR", "127.0.0.1")
     port = os.environ.get("MASTER_PORT", f"{54248+np.random.randint(10)}" )
+    args.port = port
     hosts = int(os.environ.get("WORLD_SIZE", "1"))  # number of nodes
     rank = int(os.environ.get("RANK", "0"))  # node id
     gpus = torch.cuda.device_count()  # gpus per node
