@@ -1081,7 +1081,7 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
     start = batch[0:model.history_length] # start must be a list    
     
     snap_line = []
-    if [snap_index is not None] and [0 not in [len(t) for t in snap_index]]:  
+    if (snap_index is not None) and (0 not in [len(t) for t in snap_index]):  
         for i,tensor in enumerate(start):
             # each tensor is like (B, 70, 32, 64) or (B, P, Z, W, H)
             snap_line.append([len(snap_line), get_tensor_value(tensor,snap_index, time=model.history_length),'input'])
@@ -1366,6 +1366,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
     # if 'UVTP' in args.wrapper_model:
     #     property_names = [property_names[t] for t in eval(args.wrapper_model).pred_channel_for_next_stamp]
     ## <============= ACCU ===============>
+    if fourcastresult['snap_index'] is None:del fourcastresult['snap_index']
     accu_list = torch.stack([p['accu'].cpu() for p in fourcastresult.values() if 'accu' in p]).numpy()    
     total_num = len(accu_list)
     accu_list = accu_list.mean(0)# (fourcast_num,property_num)
@@ -1420,7 +1421,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
 
     ## <============= Snap_PLot ==================>
     snap_tables = []
-    if fourcastresult['snap_index'] is not None:
+    if ('snap_index' in fourcastresult) and (fourcastresult['snap_index'] is not None):
         snap_index = fourcastresult['snap_index']
         select_snap_start_time_point = snap_index[0]
         select_snap_show_property_id = snap_index[1]
@@ -1979,13 +1980,13 @@ def parse_default_args(args):
 
 
     args.snap_index = [[0,40,80,12], [t for t in [38,49,13,27] if t < args.output_channel]      # property  Z500 and T850 and v2m and u2m and 
-                       ]
+                       ] 
     if args.wrapper_model == 'PatchWrapper':
         args.snap_index.append({0:[[15],[15]],1:[[13],[15]],2:[[11],[15]],3:[[ 9],[15]],4:[[ 7],[15]],5:[[ 5],[15]]})
     else:
         args.snap_index.append([[15,15,15, 7, 7, 7,23,23,23],
                                 [15,31,45,15,31,45,15,31,45]])
-
+    if args.output_channel<=13:args.snap_index=None
     args.real_batch_size = args.batch_size * args.accumulation_steps * args.ngpus_per_node 
     return args
 
