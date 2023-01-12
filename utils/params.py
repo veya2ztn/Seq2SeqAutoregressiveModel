@@ -50,6 +50,7 @@ def get_args_parser():
     parser.add_argument('--split', type=str, default="")
     parser.add_argument('--log_trace_times', type=int, default=None)
     parser.add_argument('--fourcast_during_train', type=int, default=0)
+    parser.add_argument('--do_fourcast_anyway', type=int, default=0)
     
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
@@ -84,6 +85,7 @@ def get_args_parser():
     parser.add_argument('--split_batch_chunk', type=int, default=16, help='split_batch_chunk')
     parser.add_argument('--gmod_update_mode', type=int, default=2, help='gmod_update_mode')
     parser.add_argument('--gd_alpha', type=float, default=1)
+    parser.add_argument('--do_error_propagration_monitor', type=int, default=0)
     
     parser.add_argument('--model_type1',type=str,default=None)
     parser.add_argument('--model_type2',type=str,default=None)
