@@ -1049,7 +1049,74 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
     #logsys.add_table(prefix+'_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     logsys.add_table('multi_epoch_fourcast_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     
- 
+
+def get_error_propagation(last_pred, last_target, now_target, now_pred, virtual_function,approx_epsilon_lists, tangent_position='right'):
+    the_abs_error_measure = None
+    the_est_error_measure = None
+    epsilon_alevel_v_real = None
+    epsilon_blevel_v_real = None
+    epsilon_Jacobian_val  = None
+    epsilon_Jacobian_valn = None
+    epsilon_Jacobian_a    = None
+    the_angle_between_two = None
+    the_abc_error_measure = None
+    if len(approx_epsilon_lists) > 0:
+        gradient_value          = last_target # batch[i-1]
+        
+        epsilon_alevel_2_real   = now_target - virtual_function(last_target).unsqueeze(0) # ltmv_true - model(last_target)
+        epsilon_blevel_2_real   = (now_target - now_pred).unsqueeze(0)
+        normvalue               = get_tensor_norm(approx_epsilon_lists,dim=(2,3,4))
+        
+        if tangent_position == 'right':
+            tangent_x = last_target
+        elif tangent_position == 'mid':
+            tangent_x = (last_pred + last_target)/2
+        elif tangent_position == 'left':
+            tangent_x = last_pred
+        else:
+            raise NotImplementedError
+
+        approx_epsilon_lists    = calculate_next_level_error(virtual_function, tangent_x, approx_epsilon_lists) #(N+1,B,Xdimension)
+        epsilon_Jacobian_val    = get_tensor_norm(approx_epsilon_lists,dim=(2,3,4))
+        epsilon_Jacobian_valn   = epsilon_Jacobian_val/normvalue
+        epsilon_Jacobian_val    = epsilon_Jacobian_val[1:]
+        epsilon_Jacobian_a      = epsilon_Jacobian_valn[:1] #(1,B)
+        epsilon_Jacobian_valn   = epsilon_Jacobian_valn[1:] #(N,B)
+        approx_epsilon_lists    = approx_epsilon_lists[1:]  #(N,B)
+        epsilon_blevel_2_approx = epsilon_alevel_2_real + approx_epsilon_lists #(N,B,Xdimension) e+m(t)e
+        
+        the_abs_error_measure   = get_tensor_norm(epsilon_blevel_2_approx - epsilon_blevel_2_real,dim=(2,3,4))#(N,B)
+        the_abc_error_measure   = get_tensor_norm(epsilon_blevel_2_approx,dim=(2,3,4)) - get_tensor_norm(epsilon_blevel_2_real,dim=(2,3,4))#(N,B)
+        epsilon_blevel_v_real   = get_tensor_norm(epsilon_blevel_2_real,dim=(3,4))#(N,B,P)
+        epsilon_alevel_v_real   = get_tensor_norm(epsilon_alevel_2_real,dim=(3,4))#(N,B,P)
+        epsilon_blevel_v_real_norm=epsilon_blevel_v_real.mean(2)#(N,B,P) -> (N,B)
+        epsilon_alevel_v_real_norm=epsilon_alevel_v_real.mean(2)#(N,B,P) -> (N,B)
+        the_est_error_measure   = (get_tensor_norm(epsilon_blevel_2_real,dim=(2,3,4)) - 
+                        get_tensor_norm(epsilon_alevel_2_real,dim=(2,3,4)) - 
+                        get_tensor_norm(approx_epsilon_lists,dim=(2,3,4)))#(N,B)
+        the_angle_between_two  = torch.einsum('bpwh,nbpwh->nb',epsilon_alevel_2_real.squeeze(0),approx_epsilon_lists
+                    )/(torch.sum(epsilon_alevel_2_real**2,dim=(2,3,4)).sqrt()*torch.sum(approx_epsilon_lists**2,dim=(2,3,4)).sqrt())#(N,B)
+        approx_epsilon_lists    = torch.cat([epsilon_alevel_2_real, epsilon_blevel_2_real, epsilon_blevel_2_approx]) #(N+2,B,Xdimension)
+    else:
+        epsilon_alevel_2_real   = (now_target - now_pred).unsqueeze(0)
+        epsilon_blevel_2_real   = epsilon_alevel_2_real
+        epsilon_blevel_v_real   = get_tensor_norm(epsilon_blevel_2_real,dim=(3,4))
+        epsilon_alevel_v_real   = get_tensor_norm(epsilon_alevel_2_real,dim=(3,4))
+        approx_epsilon_lists = torch.cat([epsilon_alevel_2_real, epsilon_blevel_2_real])#(2,B,Xdimension)
+    
+    return (now_target, now_pred,approx_epsilon_lists,
+            the_abs_error_measure,
+            the_est_error_measure,
+            the_abc_error_measure,
+            epsilon_alevel_v_real,
+            epsilon_blevel_v_real,
+            epsilon_Jacobian_val ,
+            epsilon_Jacobian_valn,
+            epsilon_Jacobian_a,
+            the_angle_between_two    )
+
+
+
 
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
                     save_prediction_first_step=None,save_prediction_final_step=None,
@@ -1064,11 +1131,13 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
     batch_variance_line_true = []
     the_abs_error_measure_list = []
     the_est_error_measure_list = []
+    the_abc_error_measure_list = []
     epsilon_alevel_v_real_list = []
     epsilon_blevel_v_real_list = []
     epsilon_Jacobian_val_list = []
     epsilon_Jacobian_valn_list = []
     epsilon_Jacobian_a_list = []
+    the_angle_between_two_list = []
     # we will also record the variance for each slot, assume the input is a time series of data
     # [ (B, P, W, H) -> (B, P, W, H) -> .... -> (B, P, W, H) ,(B, P, W, H)]
     # we would record the variance of each batch on the location (W,H)
@@ -1083,6 +1152,7 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
             snap_line.append([len(snap_line), get_tensor_value(tensor,snap_index, time=model.history_length),'input'])
     
     approx_epsilon_lists = []
+    last_pred = last_target = None
     for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
         end = batch[i:i+model.pred_len]
         end = end[0] if len(end) == 1 else end
@@ -1109,48 +1179,21 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
         ltmv_trues = dataset.inv_normlize_data([target])[0]#.detach().cpu()
         ltmv_preds = ltmv_pred#.detach().cpu()
 
-        the_abs_error_measure = None
-        the_est_error_measure = None
-        epsilon_alevel_v_real = None
-        epsilon_blevel_v_real = None
-        epsilon_Jacobian_val = None
-        epsilon_Jacobian_valn = None
-        epsilon_Jacobian_a    = None
         if do_error_propagration_monitor and len(approx_epsilon_lists) < 9: # only do this 8 times
-            if len(approx_epsilon_lists) > 0:
-                x_t_1_real = last_target # batch[i-1]
-                epsilon_alevel_2_real   = ltmv_trues - model(x_t_1_real).unsqueeze(0) # ltmv_true - model(last_target)
-                epsilon_blevel_2_real   = (ltmv_trues - ltmv_preds).unsqueeze(0)
-                normvalue               = get_tensor_norm(approx_epsilon_lists,dim=(2,3,4))
-                
-                approx_epsilon_lists    = calculate_next_level_error(model, x_t_1_real, approx_epsilon_lists) #(N+1,B,Xdimension)
-                epsilon_Jacobian_val    = get_tensor_norm(approx_epsilon_lists,dim=(2,3,4))
-                epsilon_Jacobian_valn   = epsilon_Jacobian_val/normvalue
-                epsilon_Jacobian_val    = epsilon_Jacobian_val[1:]
-                epsilon_Jacobian_a      = epsilon_Jacobian_valn[:1] #(1,B)
-                epsilon_Jacobian_valn   = epsilon_Jacobian_valn[1:] #(N,B)
-                approx_epsilon_lists    = approx_epsilon_lists[1:]  #(N,B)
-                epsilon_blevel_2_approx = epsilon_alevel_2_real + approx_epsilon_lists #(N,B,Xdimension) e+m(t)e
-                the_abs_error_measure   = get_tensor_norm(epsilon_blevel_2_approx - epsilon_blevel_2_real,dim=(2,3,4))#(N,B)
-                epsilon_blevel_v_real   = get_tensor_norm(epsilon_blevel_2_real,dim=(3,4))
-                epsilon_alevel_v_real   = get_tensor_norm(epsilon_alevel_2_real,dim=(3,4))
-                the_est_error_measure   = torch.abs(get_tensor_norm(epsilon_blevel_2_real,dim=(2,3,4))-
-                                                    get_tensor_norm(epsilon_alevel_2_real,dim=(2,3,4))-
-                                                    epsilon_Jacobian_val)#(N,B)
-                approx_epsilon_lists    = torch.cat([epsilon_alevel_2_real, epsilon_blevel_2_real, epsilon_blevel_2_approx]) #(N+2,B,Xdimension)
-            else:
-                approx_epsilon_lists = torch.stack([(ltmv_trues - ltmv_preds),
-                                                    (ltmv_trues - ltmv_preds)])#(2,B,Xdimension)
-            
-            last_target = ltmv_trues
-        if the_abs_error_measure is not None: the_abs_error_measure_list.append(the_abs_error_measure.detach().cpu())
-        if the_est_error_measure is not None: the_est_error_measure_list.append(the_est_error_measure.detach().cpu())
-        if epsilon_alevel_v_real is not None: epsilon_alevel_v_real_list.append(epsilon_alevel_v_real.detach().cpu())
-        if epsilon_blevel_v_real is not None: epsilon_blevel_v_real_list.append(epsilon_blevel_v_real.detach().cpu())
-        if epsilon_Jacobian_val  is not None: epsilon_Jacobian_val_list.append(epsilon_Jacobian_val.detach().cpu())
-        if epsilon_Jacobian_valn is not None: epsilon_Jacobian_valn_list.append(epsilon_Jacobian_valn.detach().cpu())
-        if epsilon_Jacobian_a is not None: epsilon_Jacobian_a_list.append(epsilon_Jacobian_a.detach().cpu())
-        
+            tangent_position = 'mid'
+            (last_target, last_pred,approx_epsilon_lists,
+                the_abs_error_measure,the_est_error_measure,the_abc_error_measure,
+                epsilon_alevel_v_real,epsilon_blevel_v_real,epsilon_Jacobian_val,epsilon_Jacobian_valn,epsilon_Jacobian_a,the_angle_between_two
+            ) = get_error_propagation(last_pred, last_target, ltmv_trues, ltmv_preds, model ,approx_epsilon_lists, tangent_position=tangent_position)
+            if the_abs_error_measure is not None: the_abs_error_measure_list.append(the_abs_error_measure.detach().cpu())
+            if the_est_error_measure is not None: the_est_error_measure_list.append(the_est_error_measure.detach().cpu())
+            if the_abc_error_measure is not None: the_abc_error_measure_list.append(the_abc_error_measure.detach().cpu())
+            if epsilon_alevel_v_real is not None: epsilon_alevel_v_real_list.append(epsilon_alevel_v_real.detach().cpu())
+            if epsilon_blevel_v_real is not None: epsilon_blevel_v_real_list.append(epsilon_blevel_v_real.detach().cpu())
+            if epsilon_Jacobian_val  is not None: epsilon_Jacobian_val_list.append(epsilon_Jacobian_val.detach().cpu())
+            if epsilon_Jacobian_valn is not None: epsilon_Jacobian_valn_list.append(epsilon_Jacobian_valn.detach().cpu())
+            if epsilon_Jacobian_a is not None: epsilon_Jacobian_a_list.append(epsilon_Jacobian_a.detach().cpu())
+            if the_angle_between_two is not None: the_angle_between_two_list.append(the_angle_between_two.detach().cpu())
         if model.pred_len > 1:
             ltmv_trues = ltmv_trues.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)
             ltmv_preds = ltmv_preds.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)\
@@ -1203,29 +1246,35 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
         #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
         fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse,'std_pred':std_pred,'std_true':std_true,'snap_line':[],
                                       "hmse":hmse}
+    
     if len(the_abs_error_measure_list) > 0 :
         # `the_abs_error_measure_list` is a list of [    (1,B) , (2,B), (3,B), ..., (8,B) ]
         the_abs_error_measure_list = torch.cat(the_abs_error_measure_list).permute(1,0) #(36, B) -> (B, 36)
         the_est_error_measure_list = torch.cat(the_est_error_measure_list).permute(1,0) #(36, B) -> (B, 36)
+        the_angle_between_two_list = torch.cat(the_angle_between_two_list).permute(1,0) #(36, B) -> (B, 36)
+        the_abc_error_measure_list = torch.cat(the_abc_error_measure_list).permute(1,0) #(36, B) -> (B, 36)
         # `epsilon_Jacobian_val_list` is also a list of [    (1,B) , (2,B), (3,B), ..., (8,B) ]
         epsilon_Jacobian_val_list  = torch.cat(epsilon_Jacobian_val_list).permute(1,0)
         epsilon_Jacobian_valn_list = torch.cat(epsilon_Jacobian_valn_list).permute(1,0)
         # `epsilon_blevel_v_real_list` is a list of values [ (1,B,P) (1,B,P) (1,B), ... , (1,B)]
         epsilon_blevel_v_real_list = torch.cat(epsilon_blevel_v_real_list).permute(1,0,2)#(B, L, P)
         epsilon_alevel_v_real_list = torch.cat(epsilon_alevel_v_real_list).permute(1,0,2)#(B, L, P)
-        epsilon_Jacobian_a_list    = torch.cat(epsilon_Jacobian_a_list).permute(1,0)
-        for idx, abs_error, est_error,epsilon_alevel_v,epsilon_blevel_v,epsilon_Jacobian,epsilon_Jacobian_norm,epsilon_Jacobian_A_norm in zip(idxes,
-                the_abs_error_measure_list,the_est_error_measure_list,
+        epsilon_Jacobian_a_list    = torch.cat(epsilon_Jacobian_a_list).permute(1,0)#
+        for idx, abs_error, est_error,abc_error,epsilon_alevel_v,epsilon_blevel_v,epsilon_Jacobian,epsilon_Jacobian_norm,epsilon_Jacobian_A_norm,the_angle_between_two in zip(idxes,
+                the_abs_error_measure_list,the_est_error_measure_list,the_abc_error_measure_list,
                 epsilon_alevel_v_real_list,epsilon_blevel_v_real_list,
-                epsilon_Jacobian_val_list,epsilon_Jacobian_valn_list,epsilon_Jacobian_a_list):
+                epsilon_Jacobian_val_list,epsilon_Jacobian_valn_list,epsilon_Jacobian_a_list,
+                the_angle_between_two_list):
             fourcastresult[idx.item()]['abs_error'] = abs_error
             fourcastresult[idx.item()]['est_error'] = est_error
+            fourcastresult[idx.item()]['abc_error'] = abc_error
             fourcastresult[idx.item()]['alevel_v'] = epsilon_alevel_v
             fourcastresult[idx.item()]['blevel_v'] = epsilon_blevel_v
             fourcastresult[idx.item()]['Jacobianv'] = epsilon_Jacobian
             fourcastresult[idx.item()]['JacobV_N'] = epsilon_Jacobian_norm
             fourcastresult[idx.item()]['JacobVA_N'] = epsilon_Jacobian_A_norm
-
+            fourcastresult[idx.item()]['Angle'] = the_angle_between_two
+            
     if snap_index is not None:
         for batch_id,select_batch_id in enumerate(snap_index[0]):
             for snap_each_fourcast_time in snap_line:
