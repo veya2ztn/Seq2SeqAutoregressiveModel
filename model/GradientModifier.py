@@ -382,9 +382,21 @@ class NGmod_RotationDeltaE(NGmod_RotationDelta):
             raise NotImplementedError
         return delta
     def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = '0y0'):
-        y        = modelfun(x) if 'y' in rotation_regular_mode else None
+        y        = modelfun(x) if (('y' in rotation_regular_mode) or 
+                                   ('J' in rotation_regular_mode) or 
+                                   ('M' in rotation_regular_mode)) else None
         delta      = self.get_delta(modelfun, x, y, y_no_grad, t , rotation_regular_mode = rotation_regular_mode)
-        grad      = functorch.jvp(modelfun, (t,), (delta,))[1] 
+        if 'J' in rotation_regular_mode:
+            activate_x = y
+        elif 'm' in rotation_regular_mode:
+            activate_x = (y_no_grad + t)/2
+        elif 'M' in rotation_regular_mode:
+            activate_x = (y + t)/2
+        elif 'j' in rotation_regular_mode:
+            activate_x = y_no_grad
+        else:
+            activate_x = t
+        grad      = functorch.jvp(modelfun, (activate_x,), (delta,))[1] 
         penalty    = (torch.sum(grad**2,dim=(1,2,3))).sqrt().mean()
         return penalty
 

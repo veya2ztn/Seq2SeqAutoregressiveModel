@@ -1049,10 +1049,6 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
     #logsys.add_table(prefix+'_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     logsys.add_table('multi_epoch_fourcast_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     
-
-
-
-       
  
 
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
@@ -1138,7 +1134,9 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
                 the_abs_error_measure   = get_tensor_norm(epsilon_blevel_2_approx - epsilon_blevel_2_real,dim=(2,3,4))#(N,B)
                 epsilon_blevel_v_real   = get_tensor_norm(epsilon_blevel_2_real,dim=(3,4))
                 epsilon_alevel_v_real   = get_tensor_norm(epsilon_alevel_2_real,dim=(3,4))
-                the_est_error_measure   = torch.abs(epsilon_blevel_v_real-epsilon_alevel_v_real-epsilon_Jacobian_val)#(N,B)
+                the_est_error_measure   = torch.abs(get_tensor_norm(epsilon_blevel_2_real,dim=(2,3,4))-
+                                                    get_tensor_norm(epsilon_alevel_2_real,dim=(2,3,4))-
+                                                    epsilon_Jacobian_val)#(N,B)
                 approx_epsilon_lists    = torch.cat([epsilon_alevel_2_real, epsilon_blevel_2_real, epsilon_blevel_2_approx]) #(N+2,B,Xdimension)
             else:
                 approx_epsilon_lists = torch.stack([(ltmv_trues - ltmv_preds),
