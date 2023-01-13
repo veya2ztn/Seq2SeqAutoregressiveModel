@@ -1136,8 +1136,8 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
                 approx_epsilon_lists    = approx_epsilon_lists[1:]  #(N,B)
                 epsilon_blevel_2_approx = epsilon_alevel_2_real + approx_epsilon_lists #(N,B,Xdimension) e+m(t)e
                 the_abs_error_measure   = get_tensor_norm(epsilon_blevel_2_approx - epsilon_blevel_2_real,dim=(2,3,4))#(N,B)
-                epsilon_blevel_v_real   = get_tensor_norm(epsilon_blevel_2_real,dim=(2,3,4))
-                epsilon_alevel_v_real   = get_tensor_norm(epsilon_alevel_2_real,dim=(2,3,4))
+                epsilon_blevel_v_real   = get_tensor_norm(epsilon_blevel_2_real,dim=(3,4))
+                epsilon_alevel_v_real   = get_tensor_norm(epsilon_alevel_2_real,dim=(3,4))
                 the_est_error_measure   = torch.abs(epsilon_blevel_v_real-epsilon_alevel_v_real-epsilon_Jacobian_val)#(N,B)
                 approx_epsilon_lists    = torch.cat([epsilon_alevel_2_real, epsilon_blevel_2_real, epsilon_blevel_2_approx]) #(N+2,B,Xdimension)
             else:
@@ -1212,9 +1212,9 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
         # `epsilon_Jacobian_val_list` is also a list of [    (1,B) , (2,B), (3,B), ..., (8,B) ]
         epsilon_Jacobian_val_list  = torch.cat(epsilon_Jacobian_val_list).permute(1,0)
         epsilon_Jacobian_valn_list = torch.cat(epsilon_Jacobian_valn_list).permute(1,0)
-        # `epsilon_blevel_v_real_list` is a list of values [ (1,B) (1,B) (1,B), ... , (1,B)]
-        epsilon_blevel_v_real_list = torch.cat(epsilon_blevel_v_real_list).permute(1,0)
-        epsilon_alevel_v_real_list = torch.cat(epsilon_alevel_v_real_list).permute(1,0)
+        # `epsilon_blevel_v_real_list` is a list of values [ (1,B,P) (1,B,P) (1,B), ... , (1,B)]
+        epsilon_blevel_v_real_list = torch.cat(epsilon_blevel_v_real_list).permute(1,0,2)#(B, L, P)
+        epsilon_alevel_v_real_list = torch.cat(epsilon_alevel_v_real_list).permute(1,0,2)#(B, L, P)
         epsilon_Jacobian_a_list    = torch.cat(epsilon_Jacobian_a_list).permute(1,0)
         for idx, abs_error, est_error,epsilon_alevel_v,epsilon_blevel_v,epsilon_Jacobian,epsilon_Jacobian_norm,epsilon_Jacobian_A_norm in zip(idxes,
                 the_abs_error_measure_list,the_est_error_measure_list,
