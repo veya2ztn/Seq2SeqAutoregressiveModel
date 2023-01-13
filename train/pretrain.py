@@ -1767,7 +1767,7 @@ def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
     #print(dataset_kargs)
     split = args.split if hasattr(args,'split') and args.split else "test"
     test_dataset = dataset_type(split=split, with_idx=True,dataset_tensor=test_dataset_tensor,record_load_tensor=test_record_load,**dataset_kargs)
-    if hasattr(eval(args.wrapper_model),'pred_channel_for_next_stamp'):
+    if args.wrapper_model and hasattr(eval(args.wrapper_model),'pred_channel_for_next_stamp'):
         test_dataset.pred_channel_for_next_stamp = eval(args.wrapper_model).pred_channel_for_next_stamp
     
     assert hasattr(test_dataset,'clim_tensor')
