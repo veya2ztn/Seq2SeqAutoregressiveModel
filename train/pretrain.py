@@ -1359,7 +1359,8 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do
                 the_snap_index_in_iter[0] = [batch_id for batch_id, idx in enumerate(idxes) if idx in select_start_timepoints]
                 if len(the_snap_index_in_iter[0]) == 0: the_snap_index_in_iter=None
             #if the_snap_index_in_iter is None:continue
-            fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset,
+            with torch.cuda.amp.autocast(enabled=model.use_amp):
+                fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset,
                                          save_prediction_first_step=save_prediction_first_step,
                                          save_prediction_final_step=save_prediction_final_step,
                                          snap_index=the_snap_index_in_iter,do_error_propagration_monitor=do_error_propagration_monitor)
@@ -2331,7 +2332,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if epoch < start_epoch:continue
             if (args.fourcast_during_train) and (epoch%args.fourcast_during_train == 0):
                 if test_dataloader is None:
-                    test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
+                    test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=None,test_record_load=None)# should disable at 
                 origin_ckpt = logsys.ckpt_root
                 new_ckpt  = os.path.join(logsys.ckpt_root,f'result_of_epoch_{epoch}')
                 try:# in multi process will conflict
@@ -2339,7 +2340,10 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                 except:
                     pass
                 logsys.ckpt_root = new_ckpt
+                use_amp = model.use_amp
+                model.use_amp= True
                 run_fourcast(args, model,logsys,test_dataloader)
+                model.use_amp=use_amp
                 logsys.ckpt_root = origin_ckpt
             if hasattr(model,'set_epoch'):model.set_epoch(epoch=epoch,epoch_total=args.epochs)
             if hasattr(model,'module') and hasattr(model.module,'set_epoch'):model.module.set_epoch(epoch=epoch,epoch_total=args.epochs)

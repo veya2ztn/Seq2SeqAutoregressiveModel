@@ -374,9 +374,9 @@ class NGmod_RotationDeltaXE(NGmod_RotationDelta):
 class NGmod_RotationDeltaE(NGmod_RotationDelta):
     def get_delta(self, modelfun, x, y, y_no_grad, t, rotation_regular_mode = '0y0'):
         
-        if rotation_regular_mode =='0y0':
+        if "y" in rotation_regular_mode:
             delta = self.normed(t - y)
-        elif rotation_regular_mode =='0v0':
+        elif "v" in rotation_regular_mode:
             delta = self.normed(t - y_no_grad) # actually the ||J|| is around 0.97~1.03, use normed value to check this
         else:
             raise NotImplementedError
