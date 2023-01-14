@@ -2331,7 +2331,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         if args.tracemodel:logsys.wandb_watch(model,log_freq=100)
         for epoch in master_bar:
             if epoch < start_epoch:continue
-            if (args.fourcast_during_train) and (epoch%args.fourcast_during_train == 0):
+            if (args.fourcast_during_train) and (epoch%args.fourcast_during_train == 0 and args.pretrain_weight):
                 if test_dataloader is None:
                     test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=None,test_record_load=None)# should disable at 
                 origin_ckpt = logsys.ckpt_root
