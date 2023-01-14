@@ -437,7 +437,7 @@ class NGmod_RotationDeltaETwo(NGmod_RotationDelta):
         Mdelta    = functorch.jvp(modelfun, (activate_x,), (delta,))[1] 
         Target_delta = modelfun(t) - modelfun(activate_y)
         penalty   = (Target_delta - Mdelta)
-        penalty    = (torch.sum(penalty**2))
+        penalty    = (torch.mean(penalty**2))
         return penalty
 
 
