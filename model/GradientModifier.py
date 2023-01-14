@@ -381,6 +381,7 @@ class NGmod_RotationDeltaE(NGmod_RotationDelta):
         else:
             raise NotImplementedError
         return delta
+    
     def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = '0y0'):
         y        = modelfun(x) if (('y' in rotation_regular_mode) or 
                                    ('J' in rotation_regular_mode) or 
@@ -396,8 +397,47 @@ class NGmod_RotationDeltaE(NGmod_RotationDelta):
             activate_x = y_no_grad
         else:
             activate_x = t
-        grad      = functorch.jvp(modelfun, (activate_x,), (delta,))[1] 
-        penalty    = (torch.sum(grad**2,dim=(1,2,3))).sqrt().mean()
+        Mdelta      = functorch.jvp(modelfun, (activate_x,), (delta,))[1] 
+        penalty    = (torch.sum(Mdelta**2,dim=(1,2,3))).sqrt().mean()
+        return penalty
+
+
+class NGmod_RotationDeltaETwo(NGmod_RotationDelta):
+    def get_delta(self, modelfun, x, y, y_no_grad, t, rotation_regular_mode = '0y0'):
+        
+        if "y" in rotation_regular_mode:
+            delta = t - y
+        elif "v" in rotation_regular_mode:
+            delta = t - y_no_grad
+        else:
+            raise NotImplementedError
+        return delta
+    
+    def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = 'Myj'):
+        y        = modelfun(x) if (('y' in rotation_regular_mode) or 
+                           ('J' in rotation_regular_mode) or 
+                           ('M' in rotation_regular_mode)) else None
+        delta      = self.get_delta(modelfun, x, y, y_no_grad, t , rotation_regular_mode = rotation_regular_mode)
+        if 'm' in rotation_regular_mode:
+            activate_x = (y_no_grad + t)/2
+        elif 'M' in rotation_regular_mode:
+            activate_x = (y + t)/2
+        else:
+            raise NotImplementedError
+        if 'j' in rotation_regular_mode: 
+            # principly, should use no graded y cause is you has already calculate the f[f(x)] then 
+            # why not directly calculate the error between f[f(x_t)] and x_{t+2}
+            # In short, the goal of this term is try to avoid calculate the backward of f[f(x_t)].
+            activate_y = y_no_grad
+        elif 'J' in rotation_regular_mode:
+            activate_y = y 
+        else:
+            raise NotImplementedError
+
+        Mdelta    = functorch.jvp(modelfun, (activate_x,), (delta,))[1] 
+        Target_delta = modelfun(t) - modelfun(activate_y)
+        penalty   = (Target_delta - Mdelta)
+        penalty    = (torch.sum(penalty**2))
         return penalty
 
 
