@@ -256,6 +256,8 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     pred_channel_for_next_stamp = None
     if hasattr(model,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.pred_channel_for_next_stamp
     if hasattr(model,"module") and hasattr(model.module,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.module.pred_channel_for_next_stamp
+    fourcast_for_2D70N = None
+    if hasattr(model,"fourcast_for_2D70N"): fourcast_for_2D70N = model.fourcast_for_2D70N
     
     if train_channel_from_this_stamp:
         assert len(normlized_Field.shape)==4
@@ -290,6 +292,11 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     elif pred_channel_for_next_stamp:
         next_tensor = target.clone().type(ltmv_pred.dtype)
         next_tensor[:,pred_channel_for_next_stamp] = ltmv_pred
+        start     = start[1:] + [next_tensor]
+    elif fourcast_for_2D70N:
+        next_tensor = target.clone().type(ltmv_pred.dtype)
+        picked_property = list(range(0,14*4-1)) + list(range(14*4,14*5-1))
+        next_tensor[:,picked_property] = ltmv_pred[:,picked_property]
         start     = start[1:] + [next_tensor]
     else:
         start     = start[1:] + [ltmv_pred]
@@ -707,10 +714,11 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                             ngloss += grad_modifier.lambda2 * Nodeloss2
                             Nodeloss2=Nodeloss2.item()
                     if ngloss is not None:
-                        if model.use_amp:
-                            loss_scaler.scale(ngloss).backward()    
-                        else:
-                            ngloss.backward()
+                        loss_scaler.scale(ngloss).backward()    
+                        # if model.use_amp:
+                        #     loss_scaler.scale(ngloss).backward()    
+                        # else:
+                        #     ngloss.backward()
 
                     # for idx,(name,p) in enumerate(model.named_parameters()):
                     #     print(f"{chunk_id}:{name}:{p.device}:{p.norm()}:{p.grad.norm() if p.grad is not None else None}")
@@ -737,10 +745,9 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             if skip:continue
             
             loss /= accumulation_steps
-            if model.use_amp:
-                loss_scaler.scale(loss).backward()    
-            else:
-                loss.backward()
+            loss_scaler.scale(loss).backward()    
+            # else:
+            #     loss.backward()
 
             #select_para= list(range(5)) + [-5,-4,-3,-2,-1] 
             
@@ -753,14 +760,17 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             if grad_modifier and grad_modifier.path_length_regularize and step%grad_modifier.path_length_regularize==0:
                 mean_path_length = model.mean_path_length.to(device)
                 
-                with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
+                with torch.cuda.amp.autocast(enabled=model.use_amp):
                     path_loss, mean_path_length, path_lengths = grad_modifier.getPathLengthloss(model.module if hasattr(model,'module') else model, #<-- its ok use `model.module`` or `model`, but model.module avoid unknow error of functorch 
                                 batch[0], mean_path_length, path_length_mode=grad_modifier.path_length_mode )
-                the_loss = path_loss*grad_modifier.gd_alpha
-                if grad_modifier.use_amp:
+                
+                if path_loss<grad_modifier.loss_wall:
+                    the_loss = path_loss*grad_modifier.gd_alpha
                     loss_scaler.scale(the_loss).backward()    
-                else:
-                    the_loss.backward()
+                # if grad_modifier.use_amp:
+                #     loss_scaler.scale(the_loss).backward()    
+                # else:
+                #     the_loss.backward()
 
                 #pnormlist = [[name,p.grad] for name, p in model.named_parameters() if p.grad is not None]
                 #name,norm = pnormlist[0]
@@ -793,17 +803,19 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                 #rotation_loss.backward()
                 if grad_modifier.only_eval:
                     with torch.no_grad(): 
-                        with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
+                        with torch.cuda.amp.autocast(enabled=model.use_amp):
                             rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)                     
                 else:
-                    with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
+                    with torch.cuda.amp.autocast(enabled=model.use_amp):
                         rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, #<-- its ok use `model.module`` or `model`, but model.module avoid unknow error of functorch 
                                 batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)                    
-                    the_loss = rotation_loss*grad_modifier.gd_alpha
-                    if grad_modifier.use_amp:
-                        loss_scaler.scale(the_loss).backward()    
-                    else:
-                        the_loss.backward()
+                    if rotation_loss<grad_modifier.loss_wall: 
+                        the_loss = rotation_loss*grad_modifier.gd_alpha
+                        loss_scaler.scale(the_loss).backward() 
+                    # if grad_modifier.use_amp:
+                    #     loss_scaler.scale(the_loss).backward()    
+                    # else:
+                    #     the_loss.backward()
                 
                 rotation_loss = rotation_loss.item()
                 
@@ -838,11 +850,13 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                 nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
 
             if (step+1) % accumulation_steps == 0:
-                if model.use_amp:                  
-                    loss_scaler.step(optimizer)
-                    loss_scaler.update()   
-                else:
-                    optimizer.step()
+                loss_scaler.step(optimizer)
+                loss_scaler.update()   
+                # if model.use_amp:                  
+                #     loss_scaler.step(optimizer)
+                #     loss_scaler.update()   
+                # else:
+                #     optimizer.step()
                 count_update += 1
                 optimizer.zero_grad()
                 didunscale = False
@@ -978,10 +992,12 @@ def run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, op
             if skip:continue
             
             loss /= accumulation_steps
-            if model.use_amp:
-                loss_scaler.scale(loss).backward()    
-            else:
-                loss.backward()
+            loss_scaler.scale(loss).backward()    
+
+            # if model.use_amp:
+            #     loss_scaler.scale(loss).backward()    
+            # else:
+            #     loss.backward()
   
             rotation_loss = None
             if grad_modifier and grad_modifier.rotation_regularize and step%grad_modifier.rotation_regularize==0:
@@ -990,14 +1006,14 @@ def run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, op
                 #rotation_loss.backward()
                 if grad_modifier.only_eval:
                     with torch.no_grad(): 
-                        with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
+                        with torch.cuda.amp.autocast(enabled=model.use_amp):
                             rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, 
                                     batch[0], 
                                     ltmv_pred.detach(),
                                     target,
                                     rotation_regular_mode = grad_modifier.rotation_regular_mode)                     
                 else:
-                    with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
+                    with torch.cuda.amp.autocast(enabled=model.use_amp):
                         rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, #<-- its ok use `model.module`` or `model`, but model.module avoid unknow error of functorch 
                                 batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)                    
                     the_loss = rotation_loss*grad_modifier.gd_alpha
@@ -1040,11 +1056,13 @@ def run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, op
                 nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
 
             if (step+1) % accumulation_steps == 0:
-                if model.use_amp:                  
-                    loss_scaler.step(optimizer)
-                    loss_scaler.update()   
-                else:
-                    optimizer.step()
+                loss_scaler.step(optimizer)
+                loss_scaler.update()   
+                # if model.use_amp:                  
+                #     loss_scaler.step(optimizer)
+                #     loss_scaler.update()   
+                # else:
+                #     optimizer.step()
                 count_update += 1
                 optimizer.zero_grad()
                 didunscale = False
@@ -1328,15 +1346,7 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
                     save_prediction_first_step=None,save_prediction_final_step=None,
                     snap_index=None,do_error_propagration_monitor=False):
     if dataset.dataset_flag=='2D70N':
-        train_channel_from_this_stamp = None
-        if hasattr(model,"train_channel_from_this_stamp"): train_channel_from_this_stamp = model.train_channel_from_this_stamp
-        if hasattr(model,"module") and hasattr(model.module,"train_channel_from_this_stamp"): train_channel_from_this_stamp = model.module.train_channel_from_this_stamp
-        train_channel_from_next_stamp = None
-        if hasattr(model,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.train_channel_from_next_stamp
-        if hasattr(model,"module") and hasattr(model.module,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.module.train_channel_from_next_stamp
-        pred_channel_for_next_stamp = None
-        if hasattr(model,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.pred_channel_for_next_stamp
-        if hasattr(model,"module") and hasattr(model.module,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.module.pred_channel_for_next_stamp
+        model.fourcast_for_2D70N = True
         
     accu_series=[]
     rmse_series=[]
@@ -2444,7 +2454,8 @@ def build_optimizer(args,model):
         optimizer.grad_modifier.split_batch_chunk = args.split_batch_chunk
         optimizer.grad_modifier.update_mode = args.gmod_update_mode
         optimizer.grad_modifier.coef = None
-        optimizer.grad_modifier.use_amp = bool(args.gdamp)
+        optimizer.grad_modifier.use_amp = bool(args.use_amp) #bool(args.gdamp)# we will force two amp same
+        optimizer.grad_modifier.loss_wall = args.gd_loss_wall
         optimizer.grad_modifier.only_eval = args.gdeval
         optimizer.grad_modifier.gd_alpha  = args.gd_alpha
         
@@ -2502,7 +2513,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     model           = build_model(args)
     #param_groups    = timm.optim.optim_factory.add_weight_decay(model, args.weight_decay)
     optimizer,lr_scheduler,criterion = build_optimizer(args,model)
-    loss_scaler     = torch.cuda.amp.GradScaler(enabled=True)
+    loss_scaler     = torch.cuda.amp.GradScaler(enabled=args.use_amp)
     logsys.info(f'use lr_scheduler:{lr_scheduler}')
 
     args.pretrain_weight = args.pretrain_weight.strip()
