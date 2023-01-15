@@ -406,6 +406,17 @@ class NGmod_RotationDeltaE(NGmod_RotationDelta):
         penalty    = (torch.sum(Mdelta**2,dim=(1,2,3))).sqrt().mean()
         return penalty
 
+class NGmod_RotationDeltaESet(NGmod_RotationDeltaE):
+    def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = '0y0', set_value=0.65):
+        y        = modelfun(x) if (('y' in rotation_regular_mode) or 
+                                   ('J' in rotation_regular_mode) or 
+                                   ('M' in rotation_regular_mode)) else None
+        delta      = self.get_delta(modelfun, x, y, y_no_grad, t , rotation_regular_mode = rotation_regular_mode)
+        activate_x  = self.get_activate_x(modelfun, x, y, y_no_grad, t , rotation_regular_mode = rotation_regular_mode)
+        Mdelta      = functorch.jvp(modelfun, (activate_x,), (delta,))[1] 
+        penalty    = (torch.sum(Mdelta**2,dim=(1,2,3))).sqrt().mean()
+        penalty = (penalty - set_value)**2
+        return penalty
 class NGmod_RotationDeltaET(NGmod_RotationDeltaE):
     
     def get_delta(self, modelfun, x, y, y_no_grad, t, rotation_regular_mode = '0y0'):
