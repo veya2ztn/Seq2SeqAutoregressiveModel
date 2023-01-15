@@ -2440,6 +2440,7 @@ def build_optimizer(args,model):
         'NGmod_RotationDeltaE':NGmod_RotationDeltaE,
         'NGmod_RotationDeltaET':NGmod_RotationDeltaET,
         'NGmod_RotationDeltaETwo':NGmod_RotationDeltaETwo,
+        'NGmod_RotationDeltaESet':NGmod_RotationDeltaESet,
         'NGmod_RotationDeltaEThreeTwo':NGmod_RotationDeltaEThreeTwo,
         'NGmod_RotationDeltaXS':NGmod_RotationDeltaXS,
         'NGmod_RotationDeltaY':NGmod_RotationDeltaY,
