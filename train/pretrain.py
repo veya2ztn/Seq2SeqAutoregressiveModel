@@ -1327,6 +1327,17 @@ def get_error_propagation(last_pred, last_target, now_target, now_pred, virtual_
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
                     save_prediction_first_step=None,save_prediction_final_step=None,
                     snap_index=None,do_error_propagration_monitor=False):
+    if dataset.dataset_flag=='2D70N':
+        train_channel_from_this_stamp = None
+        if hasattr(model,"train_channel_from_this_stamp"): train_channel_from_this_stamp = model.train_channel_from_this_stamp
+        if hasattr(model,"module") and hasattr(model.module,"train_channel_from_this_stamp"): train_channel_from_this_stamp = model.module.train_channel_from_this_stamp
+        train_channel_from_next_stamp = None
+        if hasattr(model,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.train_channel_from_next_stamp
+        if hasattr(model,"module") and hasattr(model.module,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.module.train_channel_from_next_stamp
+        pred_channel_for_next_stamp = None
+        if hasattr(model,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.pred_channel_for_next_stamp
+        if hasattr(model,"module") and hasattr(model.module,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.module.pred_channel_for_next_stamp
+        
     accu_series=[]
     rmse_series=[]
     rmse_maps = []
