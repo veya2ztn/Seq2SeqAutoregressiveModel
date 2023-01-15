@@ -593,9 +593,14 @@ class RandomSelectPatchFetcher:
             out = [t[0] for t in out]
         return out 
 
-
-
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
+    if optimizer.grad_modifier and optimizer.grad_modifier.__class__.__name__=='NGmod_RotationDeltaEThreeTwo':
+        assert data_loader.dataset.time_step==3
+        return run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status)
+    else:
+        return run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status)
+
+def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     
     if status == 'train':
         model.train()
@@ -790,6 +795,207 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
                     with torch.no_grad(): 
                         with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
                             rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)                     
+                else:
+                    with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
+                        rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, #<-- its ok use `model.module`` or `model`, but model.module avoid unknow error of functorch 
+                                batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)                    
+                    the_loss = rotation_loss*grad_modifier.gd_alpha
+                    if grad_modifier.use_amp:
+                        loss_scaler.scale(the_loss).backward()    
+                    else:
+                        the_loss.backward()
+                
+                rotation_loss = rotation_loss.item()
+                
+            # In order to use multiGPU train, I have to use Loss update scenario, suprisely, it is not worse than split scenario
+            # if optimizer.grad_modifier is not None:
+            #     #assert not model.use_amp
+            #     #assert accumulation_steps == 1 
+            #     if model.use_amp and not didunscale:
+            #         loss_scaler.unscale_(optimizer) # do unscaler here for right gradient modify like clip or norm
+            #         didunscale = True
+            #     assert len(batch)==2 # we now only allow one 
+            #     assert isinstance(batch[0],torch.Tensor)
+            #     with controlamp(model.use_amp)():
+            #         optimizer.grad_modifier.backward(model, batch[0], batch[1], strict=False)
+            #         Nodeloss1, Nodeloss12, Nodeloss2 = optimizer.grad_modifier.inference(model, batch[0], batch[1], strict=False)
+            
+
+            #nan_count, skip = nan_diagnose_grad(model,nan_count,logsys)
+            # if skip:
+            #     optimizer.zero_grad()
+            #     continue
+            if hasattr(model,'module') and grad_modifier:
+                for p in model.parameters():
+                    if p.grad is not None:
+                        p.grad = p.grad/dist.get_world_size()
+                        dist.all_reduce(p.grad) #<--- pytorch DDP doesn't support high order gradient. This step need!
+
+            if model.clip_grad:
+                if model.use_amp:
+                    assert accumulation_steps == 1
+                    loss_scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
+
+            if (step+1) % accumulation_steps == 0:
+                if model.use_amp:                  
+                    loss_scaler.step(optimizer)
+                    loss_scaler.update()   
+                else:
+                    optimizer.step()
+                count_update += 1
+                optimizer.zero_grad()
+                didunscale = False
+        else:
+            with torch.no_grad():
+                with torch.cuda.amp.autocast(enabled=model.use_amp):
+                    loss, abs_loss, iter_info_pool,ltmv_pred,target =run_one_iter(model, batch, criterion, status, gpu, data_loader.dataset)
+                    if optimizer.grad_modifier is not None:
+                        if grad_modifier.lambda1!=0:
+                            Nodeloss1 = grad_modifier.getL1loss(model, batch[0],coef=grad_modifier.coef)
+                            Nodeloss1=Nodeloss1.item()
+                        if grad_modifier.lambda2!=0:
+                            Nodeloss2 = grad_modifier.getL2loss(model, batch[0],coef=grad_modifier.coef)
+                            Nodeloss2=Nodeloss2.item()
+        if logsys.do_iter_log > 0:
+            if logsys.do_iter_log ==  1:iter_info_pool={} # disable forward extra information
+            iter_info_pool[f'{status}_loss_gpu{gpu}']       =  loss.item()
+        else:
+            iter_info_pool={}
+        if Nodeloss1  > 0:iter_info_pool[f'{status}_Nodeloss1_gpu{gpu}']  = Nodeloss1
+        if Nodeloss2  > 0:iter_info_pool[f'{status}_Nodeloss2_gpu{gpu}']  = Nodeloss2
+        if path_loss is not None:iter_info_pool[f'{status}_path_loss_gpu{gpu}']  = path_loss
+        if path_length is not None:iter_info_pool[f'{status}_path_length_gpu{gpu}']  = path_length
+        if rotation_loss is not None:iter_info_pool[f'{status}_rotation_loss_gpu{gpu}']= rotation_loss
+        total_diff  += abs_loss.item()
+        #total_num   += len(batch) - 1 #batch 
+        total_num   += 1 
+
+        train_cost.append(time.time() - now);now = time.time()
+        time_step_now = len(batch)
+        if (step) % intervel==0:
+            for key, val in iter_info_pool.items():
+                logsys.record(key, val, epoch*batches + step, epoch_flag='iter')
+        if (step) % intervel==0 or step<30:
+            outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [TIME LEN]:{len(batch)} [RUN Gmod]:{run_gmod}  abs_loss:{abs_loss.item():.4f} loss:{loss.item():.4f} cost:[Date]:{np.mean(data_cost):.1e} [Train]:{np.mean(train_cost):.1e} ")
+            #print(data_loader.dataset.record_load_tensor.mean().item())
+            data_cost  = []
+            train_cost = []
+            rest_cost = []
+            inter_b.lwrite(outstring, end="\r")
+
+
+    if hasattr(model,'module') and status == 'valid':
+        for x in [total_diff, total_num]:
+            dist.barrier()
+            dist.reduce(x, 0)
+
+    loss_val = total_diff/ total_num
+    loss_val = loss_val.item()
+    return loss_val
+ 
+
+def run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
+    
+    if status == 'train':
+        model.train()
+        logsys.train()
+    elif status == 'valid':
+        model.eval()
+        logsys.eval()
+    else:
+        raise NotImplementedError
+    accumulation_steps = model.accumulation_steps # should be 16 for finetune. but I think its ok.
+    half_model = next(model.parameters()).dtype == torch.float16
+
+    data_cost  = []
+    train_cost = []
+    rest_cost  = []
+    now = time.time()
+
+    Fethcher   = RandomSelectPatchFetcher if( status =='train' and \
+                                              data_loader.dataset.use_offline_data and \
+                                              data_loader.dataset.split=='train' and \
+                                              'Patch' in data_loader.dataset.__class__.__name__) else Datafetcher
+    device     = next(model.parameters()).device
+    prefetcher = Fethcher(data_loader,device)
+    #raise
+    batches    = len(data_loader)
+
+    inter_b    = logsys.create_progress_bar(batches,unit=' img',unit_scale=data_loader.batch_size)
+    gpu        = dist.get_rank() if hasattr(model,'module') else 0
+
+    if start_step == 0:optimizer.zero_grad()
+    #intervel = batches//100 + 1
+    intervel = batches//logsys.log_trace_times + 1
+    inter_b.lwrite(f"load everything, start_{status}ing......", end="\r")
+
+    
+    total_diff,total_num  = torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
+    nan_count = 0
+    Nodeloss1 = Nodeloss2 = Nodeloss12 = 0
+    path_loss = path_length = rotation_loss = None
+    didunscale = False
+    grad_modifier = optimizer.grad_modifier
+    skip = False
+    count_update = 0
+    
+    while inter_b.update_step():
+        #if inter_b.now>10:break
+        step = inter_b.now
+        
+        run_gmod = False
+        if grad_modifier is not None:
+            control = step if grad_modifier.update_mode==2 else count_update
+            run_gmod = (control%grad_modifier.ngmod_freq==0)
+
+        batch = prefetcher.next()
+
+        # In this version(2022-12-22) we will split normal and ngmod processing
+        # we will do normal train with normal batchsize and learning rate multitimes
+        # then do ngmod train 
+        # Notice, one step = once backward not once forward
+        
+        #[print(t[0].shape) for t in batch]
+        if step < start_step:continue
+        #batch = data_loader.dataset.do_normlize_data(batch)
+        
+        batch = make_data_regular(batch,half_model)
+        #if len(batch)==1:batch = batch[0] # for Field -> Field_Dt dataset
+        data_cost.append(time.time() - now);now = time.time()
+        assert len(batch) == 3
+        if status == 'train':
+            if hasattr(model,'set_step'):model.set_step(step=step,epoch=epoch)
+            if hasattr(model,'module') and hasattr(model.module,'set_step'):model.module.set_step(step=step,epoch=epoch)
+            
+            # one batch is [(B,P,W,H),(B,P,W,H),(B,P,W,H)]
+            # the the input should be 
+            batch = [torch.cat([batch[0],batch[1]]),torch.cat([batch[1],batch[2]])]
+            with torch.cuda.amp.autocast(enabled=model.use_amp):
+                loss, abs_loss, iter_info_pool,ltmv_pred,target  =run_one_iter(model, batch, criterion, 'train', gpu, data_loader.dataset)
+            
+            loss, nan_count, skip = nan_diagnose_weight(model,loss,nan_count,logsys)
+            if skip:continue
+            
+            loss /= accumulation_steps
+            if model.use_amp:
+                loss_scaler.scale(loss).backward()    
+            else:
+                loss.backward()
+  
+            rotation_loss = None
+            if grad_modifier and grad_modifier.rotation_regularize and step%grad_modifier.rotation_regularize==0:
+                # amp will destroy the train
+                #rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)
+                #rotation_loss.backward()
+                if grad_modifier.only_eval:
+                    with torch.no_grad(): 
+                        with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
+                            rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, 
+                                    batch[0], 
+                                    ltmv_pred.detach(),
+                                    target,
+                                    rotation_regular_mode = grad_modifier.rotation_regular_mode)                     
                 else:
                     with torch.cuda.amp.autocast(enabled=grad_modifier.use_amp):
                         rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, #<-- its ok use `model.module`` or `model`, but model.module avoid unknow error of functorch 
@@ -2211,7 +2417,9 @@ def build_optimizer(args,model):
         'NGmod_absolute_set_level':NGmod_absolute_set_level,
         'NGmod_RotationDeltaX':NGmod_RotationDeltaX,
         'NGmod_RotationDeltaE':NGmod_RotationDeltaE,
+        'NGmod_RotationDeltaET':NGmod_RotationDeltaET,
         'NGmod_RotationDeltaETwo':NGmod_RotationDeltaETwo,
+        'NGmod_RotationDeltaEThreeTwo':NGmod_RotationDeltaEThreeTwo,
         'NGmod_RotationDeltaXS':NGmod_RotationDeltaXS,
         'NGmod_RotationDeltaY':NGmod_RotationDeltaY,
         'NGmod_pathlength':NGmod_pathlength,
@@ -2331,7 +2539,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         if args.tracemodel:logsys.wandb_watch(model,log_freq=100)
         for epoch in master_bar:
             if epoch < start_epoch:continue
-            if (args.fourcast_during_train) and (epoch%args.fourcast_during_train == 0 and args.pretrain_weight):
+            if (args.fourcast_during_train) and (epoch%args.fourcast_during_train == 0 and (epoch>0 or args.pretrain_weight)):
                 if test_dataloader is None:
                     test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=None,test_record_load=None)# should disable at 
                 origin_ckpt = logsys.ckpt_root
@@ -2496,7 +2704,7 @@ def distributed_initial(args):
     args.ngpus_per_node = ngpus_per_node
     if not hasattr(args,'train_set'):args.train_set='large'
     ip = os.environ.get("MASTER_ADDR", "127.0.0.1")
-    port = os.environ.get("MASTER_PORT", f"{54248+np.random.randint(10)}" )
+    port = os.environ.get("MASTER_PORT", f"{64248+np.random.randint(10)}" )
     args.port = port
     hosts = int(os.environ.get("WORLD_SIZE", "1"))  # number of nodes
     rank = int(os.environ.get("RANK", "0"))  # node id
