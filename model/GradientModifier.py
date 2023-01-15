@@ -371,6 +371,8 @@ class NGmod_RotationDeltaXE(NGmod_RotationDelta):
         return penalty
     
 
+
+
 class NGmod_RotationDeltaE(NGmod_RotationDelta):
     def get_delta(self, modelfun, x, y, y_no_grad, t, rotation_regular_mode = '0y0'):
         
@@ -382,11 +384,7 @@ class NGmod_RotationDeltaE(NGmod_RotationDelta):
             raise NotImplementedError
         return delta
     
-    def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = '0y0'):
-        y        = modelfun(x) if (('y' in rotation_regular_mode) or 
-                                   ('J' in rotation_regular_mode) or 
-                                   ('M' in rotation_regular_mode)) else None
-        delta      = self.get_delta(modelfun, x, y, y_no_grad, t , rotation_regular_mode = rotation_regular_mode)
+    def get_activate_x(self,modelfun, x, y, y_no_grad, t, rotation_regular_mode = '0y0'):
         if 'J' in rotation_regular_mode:
             activate_x = y
         elif 'm' in rotation_regular_mode:
@@ -397,9 +395,39 @@ class NGmod_RotationDeltaE(NGmod_RotationDelta):
             activate_x = y_no_grad
         else:
             activate_x = t
+        return activate_x
+    def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = '0y0'):
+        y        = modelfun(x) if (('y' in rotation_regular_mode) or 
+                                   ('J' in rotation_regular_mode) or 
+                                   ('M' in rotation_regular_mode)) else None
+        delta      = self.get_delta(modelfun, x, y, y_no_grad, t , rotation_regular_mode = rotation_regular_mode)
+        activate_x  = self.get_activate_x(modelfun, x, y, y_no_grad, t , rotation_regular_mode = rotation_regular_mode)
         Mdelta      = functorch.jvp(modelfun, (activate_x,), (delta,))[1] 
         penalty    = (torch.sum(Mdelta**2,dim=(1,2,3))).sqrt().mean()
         return penalty
+
+class NGmod_RotationDeltaET(NGmod_RotationDeltaE):
+    
+    def get_delta(self, modelfun, x, y, y_no_grad, t, rotation_regular_mode = '0y0'):
+        
+        if "y" in rotation_regular_mode:
+            delta = self.normed(t - y)
+        elif "v" in rotation_regular_mode:
+            delta = self.normed(t - y_no_grad) # actually the ||J|| is around 0.97~1.03, use normed value to check this
+        else:
+            raise NotImplementedError
+        return delta
+    def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = '0y0'):
+        y        = modelfun(x) if (('y' in rotation_regular_mode) or 
+                                   ('J' in rotation_regular_mode) or 
+                                   ('M' in rotation_regular_mode)) else None
+        delta      = self.get_delta(modelfun, x, y, y_no_grad, t , rotation_regular_mode = rotation_regular_mode)
+        activate_x  = self.get_activate_x(modelfun, x, y, y_no_grad, t , rotation_regular_mode = rotation_regular_mode)
+        
+        Mdelta      = functorch.jvp(modelfun, (activate_x,), (delta,))[1] 
+        penalty    = torch.mean(Mdelta**2)
+        return penalty
+
 
 
 class NGmod_RotationDeltaETwo(NGmod_RotationDelta):
@@ -413,6 +441,7 @@ class NGmod_RotationDeltaETwo(NGmod_RotationDelta):
             raise NotImplementedError
         return delta
     
+
     def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = 'Myj'):
         y        = modelfun(x) if (('y' in rotation_regular_mode) or 
                            ('J' in rotation_regular_mode) or 
@@ -440,6 +469,44 @@ class NGmod_RotationDeltaETwo(NGmod_RotationDelta):
         penalty    = (torch.mean(penalty**2))
         return penalty
 
+
+
+class NGmod_RotationDeltaEThreeTwo(NGmod_RotationDeltaETwo):
+    
+    def getRotationDeltaloss(self, modelfun, x_t_and_x_tp1, x_tp1_and_x_tp2_pred, 
+                          x_tp1_and_x_tp2, rotation_regular_mode = 'Myj'):
+        
+        Btimes2, P, W, H = x_t_and_x_tp1.shape
+        Batch_size = Btimes2//2
+        assert Batch_size*2 == Btimes2
+        x_t,  x_tp1_pred, x_tp1 = x_t_and_x_tp1[:Batch_size], x_tp1_and_x_tp2_pred[:Batch_size] ,x_tp1_and_x_tp2[:Batch_size]
+        x_tp1, x_tp2_pred, x_tp2 = x_t_and_x_tp1[Batch_size:], x_tp1_and_x_tp2_pred[Batch_size:] ,x_tp1_and_x_tp2[Batch_size:]
+        x_tp1_pred_backward = x_tp2_pred_backward = None
+        if ('y' in rotation_regular_mode) or ('J' in rotation_regular_mode) or ('M' in rotation_regular_mode):
+            x_tp1_and_x_tp2_pred_backward = modelfun(x_t_and_x_tp1)
+            x_tp1_pred_backward = x_tp1_and_x_tp2_pred_backward[:Batch_size]
+            x_tp2_pred_backward = x_tp1_and_x_tp2_pred_backward[Batch_size:]
+        
+        delta      = self.get_delta(modelfun, x_t, x_tp1_pred_backward, x_tp1_pred, x_tp1 , rotation_regular_mode = rotation_regular_mode)
+        # none normlized delta
+        if 'm' in rotation_regular_mode:  activate_x = (x_tp1_pred      + x_tp1)/2
+        elif 'M' in rotation_regular_mode: activate_x = (x_tp1_pred_backward + x_tp1)/2
+        else:
+            raise NotImplementedError
+        Mdelta    = functorch.jvp(modelfun, (activate_x,), (delta,))[1] 
+
+        
+        if 'j' in rotation_regular_mode: 
+            activate_y = x_tp2_pred
+        elif 'J' in rotation_regular_mode:
+            activate_y = x_tp2_pred_backward
+        else:
+            raise NotImplementedError
+
+        Single_Delta = x_tp2 - activate_y
+        penalty   = Single_Delta + Mdelta
+        penalty    = (torch.mean(penalty**2))
+        return penalty
 
 
 class NGmod_RotationDeltaXS(NGmod_RotationDeltaX):
