@@ -764,7 +764,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                     path_loss, mean_path_length, path_lengths = grad_modifier.getPathLengthloss(model.module if hasattr(model,'module') else model, #<-- its ok use `model.module`` or `model`, but model.module avoid unknow error of functorch 
                                 batch[0], mean_path_length, path_length_mode=grad_modifier.path_length_mode )
                 
-                if path_loss<grad_modifier.loss_wall:
+                if path_loss > grad_modifier.loss_wall:
                     the_loss = path_loss*grad_modifier.gd_alpha
                     loss_scaler.scale(the_loss).backward()    
                 # if grad_modifier.use_amp:
@@ -809,7 +809,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                     with torch.cuda.amp.autocast(enabled=model.use_amp):
                         rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, #<-- its ok use `model.module`` or `model`, but model.module avoid unknow error of functorch 
                                 batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)                    
-                    if rotation_loss<grad_modifier.loss_wall: 
+                    if rotation_loss > grad_modifier.loss_wall: 
                         the_loss = rotation_loss*grad_modifier.gd_alpha
                         loss_scaler.scale(the_loss).backward() 
                     # if grad_modifier.use_amp:
