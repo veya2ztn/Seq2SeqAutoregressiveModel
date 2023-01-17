@@ -445,6 +445,32 @@ class CombM_UVTP2p2uvt(BaseModel):
         uvt= self.UVTPp2uvt(torch.cat([UVTP,p],1))
         return torch.cat([uvt,p],1)
 
+class CombM_UVTP2p2uvt_1By1(CombM_UVTP2p2uvt):
+    def set_epoch(self,epoch,epoch_total):
+        if epoch%2 == 0:
+            for p in self.UVTP2p.parameters():p.requires_grad=False
+            for p in self.UVTPp2uvt.parameters():p.requires_grad=True
+        else:
+            for p in self.UVTP2p.parameters():p.requires_grad=True
+            for p in self.UVTPp2uvt.parameters():p.requires_grad=False
+    def forward(self, UVTP):
+        p = self.UVTP2p(UVTP)
+        uvt= self.UVTPp2uvt(torch.cat([UVTP,p],1))
+        return torch.cat([uvt,p],1)
+class CombM_UVTP2p2uvt_2By1(CombM_UVTP2p2uvt):
+    def set_epoch(self,epoch,epoch_total):
+        if epoch%3 in [0,1]:
+            for p in self.UVTP2p.parameters():p.requires_grad=False
+            for p in self.UVTPp2uvt.parameters():p.requires_grad=True
+        else:
+            for p in self.UVTP2p.parameters():p.requires_grad=True
+            for p in self.UVTPp2uvt.parameters():p.requires_grad=False
+    def forward(self, UVTP):
+        p = self.UVTP2p(UVTP)
+        uvt= self.UVTPp2uvt(torch.cat([UVTP,p],1))
+        return torch.cat([uvt,p],1)
+
+
 class CombM_UVTP2p2uvtFix(BaseModel):
     pred_channel_for_next_stamp   = list(range(55))
     def __init__(self,  args, backbone1, backbone2,ckpt1,ckpt2):
