@@ -86,6 +86,7 @@ def get_args_parser():
     parser.add_argument('--gmod_update_mode', type=int, default=2, help='gmod_update_mode')
     parser.add_argument('--gd_alpha', type=float, default=1)
     parser.add_argument('--gd_loss_wall', type=float, default=0)
+    parser.add_argument('--gd_loss_target', type=float, default=None)
     
     parser.add_argument('--do_error_propagration_monitor', type=int, default=0)
     
