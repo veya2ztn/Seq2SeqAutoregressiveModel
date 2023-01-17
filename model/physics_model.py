@@ -437,7 +437,6 @@ class CombM_UVTP2p2uvt(BaseModel):
         self.UVTP2p  =  UVTP2p(args,backbone1)
         print(f"load UVTP2p model from {ckpt1}")
         self.UVTP2p.load_state_dict(torch.load(ckpt1, map_location='cpu')['model'])
-        for p in self.UVTP2p.parameters():p.requires_grad=False
         self.UVTPp2uvt = UVTPp2uvt(args,backbone2)
         print(f"load UVTPp2uvt model from {ckpt2}")
         self.UVTPp2uvt.load_state_dict(torch.load(ckpt2, map_location='cpu')['model'])
@@ -446,13 +445,28 @@ class CombM_UVTP2p2uvt(BaseModel):
         uvt= self.UVTPp2uvt(torch.cat([UVTP,p],1))
         return torch.cat([uvt,p],1)
 
-class CombM_UVTP2p2uvtFix(CombM_UVTP2p2uvt):
+class CombM_UVTP2p2uvtFix(BaseModel):
+    pred_channel_for_next_stamp   = list(range(55))
+    def __init__(self,  args, backbone1, backbone2,ckpt1,ckpt2):
+        super().__init__()
+        self.UVTP2p  =  UVTP2p(args,backbone1)
+        print(f"load UVTP2p model from {ckpt1}")
+        self.UVTP2p.load_state_dict(torch.load(ckpt1, map_location='cpu')['model'])
+        for p in self.UVTP2p.parameters():p.requires_grad=False
+        self.UVTPp2uvt = UVTPp2uvt(args,backbone2)
+        print(f"load UVTPp2uvt model from {ckpt2}")
+        self.UVTPp2uvt.load_state_dict(torch.load(ckpt2, map_location='cpu')['model'])
     def forward(self, UVTP):
         assert not next(self.UVTP2p.parameters()).requires_grad
         p = self.UVTP2p(UVTP)
         uvt= self.UVTPp2uvt(torch.cat([UVTP,p],1))
         return torch.cat([uvt,p],1)
-
+class CombM_UVTP2p2uvtFix2(CombM_UVTP2p2uvt):
+    def forward(self, UVTP):
+        with torch.no_grad():
+            p = self.UVTP2p(UVTP)
+        uvt= self.UVTPp2uvt(torch.cat([UVTP,p],1))
+        return torch.cat([uvt,p],1)
 
 from model.afnonet import AFNONet
 class ReviseAFONet(BaseModel):
