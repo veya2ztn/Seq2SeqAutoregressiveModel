@@ -809,8 +809,11 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                     with torch.cuda.amp.autocast(enabled=model.use_amp):
                         rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, #<-- its ok use `model.module`` or `model`, but model.module avoid unknow error of functorch 
                                 batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)                    
-                    if rotation_loss > grad_modifier.loss_wall: 
-                        the_loss = rotation_loss*grad_modifier.gd_alpha
+                    if rotation_loss > grad_modifier.loss_wall: #default grad_modifier.loss_wall is 0
+                        if grad_modifier.loss_target:
+                            the_loss = abs(rotation_loss-grad_modifier.loss_target)*grad_modifier.gd_alpha
+                        else:
+                            the_loss = rotation_loss*grad_modifier.gd_alpha
                         loss_scaler.scale(the_loss).backward() 
                     # if grad_modifier.use_amp:
                     #     loss_scaler.scale(the_loss).backward()    
@@ -2458,7 +2461,7 @@ def build_optimizer(args,model):
         optimizer.grad_modifier.loss_wall = args.gd_loss_wall
         optimizer.grad_modifier.only_eval = args.gdeval
         optimizer.grad_modifier.gd_alpha  = args.gd_alpha
-        
+        optimizer.grad_modifier.loss_target = args.gd_loss_target
         if args.gmod_coef:
             _, pixelnorm_std = np.load(args.gmod_coef)
             pixelnorm_std   = torch.Tensor(pixelnorm_std).reshape(1,70,32,64) #<--- should pad 
