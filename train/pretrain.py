@@ -809,7 +809,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                     with torch.cuda.amp.autocast(enabled=model.use_amp):
                         rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, #<-- its ok use `model.module`` or `model`, but model.module avoid unknow error of functorch 
                                 batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)                    
-                    if rotation_loss > grad_modifier.loss_wall: 
+                    if grad_modifier.loss_wall and rotation_loss > grad_modifier.loss_wall: 
                         the_loss = rotation_loss*grad_modifier.gd_alpha
                         loss_scaler.scale(the_loss).backward() 
                     # if grad_modifier.use_amp:
@@ -1286,7 +1286,6 @@ def get_error_propagation(last_pred, last_target, now_target, now_pred, virtual_
     the_abc_error_measure = None
     if len(approx_epsilon_lists) > 0:
         gradient_value          = last_target # batch[i-1]
-        
         epsilon_alevel_2_real   = now_target - virtual_function(last_target).unsqueeze(0) # ltmv_true - model(last_target)
         epsilon_blevel_2_real   = (now_target - now_pred).unsqueeze(0)
         normvalue               = get_tensor_norm(approx_epsilon_lists,dim=(2,3,4))
