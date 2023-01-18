@@ -457,9 +457,12 @@ class CombM_UVTP2p2uvt_1By1(CombM_UVTP2p2uvt):
         self.pred_channel_for_next_stamp = list(range(14*3,14*4-1))
         for p in self.UVTP2p.parameters():p.requires_grad=True
         for p in self.UVTPp2uvt.parameters():p.requires_grad=False
-    def set_epoch(self,epoch,epoch_total):
-        if epoch%2 == 0:self.enter_into_phase1()
-        else:self.enter_into_phase2()
+    def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
+        if not eval_mode:
+            if epoch%2 == 0:self.enter_into_phase1()
+            else:self.enter_into_phase2()
+        else:
+           self.enter_into_phase1()
     def forward(self, UVTP):
         B, P, L, W, H = UVTP.shape 
         assert L==2
@@ -484,11 +487,27 @@ class CombM_UVTP2p2uvt_1By1(CombM_UVTP2p2uvt):
 
 
 class CombM_UVTP2p2uvt_2By1(CombM_UVTP2p2uvt_1By1):
-    def set_epoch(self,epoch,epoch_total):
-        if epoch%3 in [0,1]:self.enter_into_phase1()
-        else:self.enter_into_phase2()
+    def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
+        if not eval_mode:
+            if epoch%3 in [0,1]:self.enter_into_phase1()
+            else:self.enter_into_phase2()
+        else:
+           self.enter_into_phase1()
+class CombM_UVTP2p2uvt_10By1(CombM_UVTP2p2uvt_1By1):
+    def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
+        if not eval_mode:
+            if epoch%11 == list(range(10)):self.enter_into_phase1()
+            else:self.enter_into_phase2()
+        else:
+           self.enter_into_phase1()
 
-
+class CombM_UVTP2p2uvt_5By5(CombM_UVTP2p2uvt_1By1):
+    def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
+        if not eval_mode:
+            if epoch%10 == list(range(5)):self.enter_into_phase1()
+            else:self.enter_into_phase2()
+        else:
+           self.enter_into_phase1()
 
 class CombM_UVTP2p2uvtFix(BaseModel):
     pred_channel_for_next_stamp   = list(range(55))
