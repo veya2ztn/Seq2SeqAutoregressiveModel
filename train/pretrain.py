@@ -2021,7 +2021,7 @@ def seed_worker(worker_id):# Multiprocessing randomnes for multiGPU train #https
 def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     dataset_type   = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
     
-    train_dataset  = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,
+    train_dataset  = dataset_type(split="train" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,
                                   record_load_tensor=train_record_load,**args.dataset_kargs)
     val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,
                                   record_load_tensor=valid_record_load,**args.dataset_kargs)
@@ -2494,6 +2494,12 @@ def build_optimizer(args,model):
 
     return optimizer,lr_scheduler,criterion
 
+def fast_set_model_epoch(model,**kargs):
+    if hasattr(model,'set_epoch'):model.set_epoch(**kargs)
+    if hasattr(model,'module') and hasattr(model.module,'set_epoch'):model.module.set_epoch(**kargs)
+            
+
+
 def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     if local_rank==0:print(f"we are at mode={args.mode}")
@@ -2583,13 +2589,13 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                 run_fourcast(args, model,logsys,test_dataloader)
                 model.use_amp=use_amp
                 logsys.ckpt_root = origin_ckpt
-            if hasattr(model,'set_epoch'):model.set_epoch(epoch=epoch,epoch_total=args.epochs)
-            if hasattr(model,'module') and hasattr(model.module,'set_epoch'):model.module.set_epoch(epoch=epoch,epoch_total=args.epochs)
+            fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=False)
             logsys.record('learning rate',optimizer.param_groups[0]['lr'],epoch, epoch_flag='epoch')
             train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
             if (not args.more_epoch_train) and (lr_scheduler is not None):lr_scheduler.step(epoch)
             #torch.cuda.empty_cache()
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys,status='train') if 'small' in args.train_set else -1
+            fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
             if (epoch%args.valid_every_epoch == 0 and not (epoch==0 and args.skip_first_valid)) or (epoch == args.epochs - 1):
                 val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             logsys.metric_dict.update({'valid_loss':val_loss},epoch)
