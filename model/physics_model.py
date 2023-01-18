@@ -446,29 +446,48 @@ class CombM_UVTP2p2uvt(BaseModel):
         return torch.cat([uvt,p],1)
 
 class CombM_UVTP2p2uvt_1By1(CombM_UVTP2p2uvt):
+    phase = "UVTP2(p)->UVTP(p)2(u)(v)(t)"
+    def enter_into_phase1(self):
+        self.phase = "UVTP2(p)->UVTP(p)2(u)(v)(t)"
+        self.pred_channel_for_next_stamp = list(range(55))
+        for p in self.UVTP2p.parameters():p.requires_grad=False
+        for p in self.UVTPp2uvt.parameters():p.requires_grad=True
+    def enter_into_phase2(self):
+        self.phase = "UVTPp2(u)(v)(t)->(u)(v)(t)p2[p]"
+        self.pred_channel_for_next_stamp = list(range(14*3,14*4-1))
+        for p in self.UVTP2p.parameters():p.requires_grad=True
+        for p in self.UVTPp2uvt.parameters():p.requires_grad=False
     def set_epoch(self,epoch,epoch_total):
-        if epoch%2 == 0:
-            for p in self.UVTP2p.parameters():p.requires_grad=False
-            for p in self.UVTPp2uvt.parameters():p.requires_grad=True
-        else:
-            for p in self.UVTP2p.parameters():p.requires_grad=True
-            for p in self.UVTPp2uvt.parameters():p.requires_grad=False
+        if epoch%2 == 0:self.enter_into_phase1()
+        else:self.enter_into_phase2()
     def forward(self, UVTP):
-        p = self.UVTP2p(UVTP)
-        uvt= self.UVTPp2uvt(torch.cat([UVTP,p],1))
-        return torch.cat([uvt,p],1)
-class CombM_UVTP2p2uvt_2By1(CombM_UVTP2p2uvt):
+        B, P, L, W, H = UVTP.shape 
+        assert L==2
+        UVTP1=UVTP[:,:,0]
+        UVTP2=UVTP[:,:,1]
+        # we will inject 3 time stamp data each iter the first two will stack 
+        # and achieve a (B,2,55,32,64) tensor and the last one is target
+        # in "UVTP2(p)->UVTP(p)2(u)(v)(t)" mode, we fix UVTP2p and train UVTPp2uvt
+        # so we only need the second time stamp data and target time stamp
+        if self.phase == "UVTP2(p)->UVTP(p)2(u)(v)(t)":
+            UVTP = UVTP2
+            p = self.UVTP2p(UVTP)
+            uvt= self.UVTPp2uvt(torch.cat([UVTP,p],1))
+            return torch.cat([uvt,p],1)#(B,42,32,64)
+        elif self.phase == "UVTPp2(u)(v)(t)->(u)(v)(t)p2[p]":
+            p  = UVTP2[:,42:55]
+            UVTP = UVTP1
+            uvt = self.UVTPp2uvt(torch.cat([UVTP,p],1))
+            p  = self.UVTP2p(torch.cat([uvt,p],1))
+            return p #(B,13,32,64)
+        
+
+
+class CombM_UVTP2p2uvt_2By1(CombM_UVTP2p2uvt_1By1):
     def set_epoch(self,epoch,epoch_total):
-        if epoch%3 in [0,1]:
-            for p in self.UVTP2p.parameters():p.requires_grad=False
-            for p in self.UVTPp2uvt.parameters():p.requires_grad=True
-        else:
-            for p in self.UVTP2p.parameters():p.requires_grad=True
-            for p in self.UVTPp2uvt.parameters():p.requires_grad=False
-    def forward(self, UVTP):
-        p = self.UVTP2p(UVTP)
-        uvt= self.UVTPp2uvt(torch.cat([UVTP,p],1))
-        return torch.cat([uvt,p],1)
+        if epoch%3 in [0,1]:self.enter_into_phase1()
+        else:self.enter_into_phase2()
+
 
 
 class CombM_UVTP2p2uvtFix(BaseModel):
@@ -478,17 +497,12 @@ class CombM_UVTP2p2uvtFix(BaseModel):
         self.UVTP2p  =  UVTP2p(args,backbone1)
         print(f"load UVTP2p model from {ckpt1}")
         self.UVTP2p.load_state_dict(torch.load(ckpt1, map_location='cpu')['model'])
-        for p in self.UVTP2p.parameters():p.requires_grad=False
+        #for p in self.UVTP2p.parameters():p.requires_grad=False
         self.UVTPp2uvt = UVTPp2uvt(args,backbone2)
         print(f"load UVTPp2uvt model from {ckpt2}")
         self.UVTPp2uvt.load_state_dict(torch.load(ckpt2, map_location='cpu')['model'])
     def forward(self, UVTP):
-        assert not next(self.UVTP2p.parameters()).requires_grad
-        p = self.UVTP2p(UVTP)
-        uvt= self.UVTPp2uvt(torch.cat([UVTP,p],1))
-        return torch.cat([uvt,p],1)
-class CombM_UVTP2p2uvtFix2(CombM_UVTP2p2uvt):
-    def forward(self, UVTP):
+        #assert not next(self.UVTP2p.parameters()).requires_grad ## use torch.no_grad is same
         with torch.no_grad():
             p = self.UVTP2p(UVTP)
         uvt= self.UVTPp2uvt(torch.cat([UVTP,p],1))
