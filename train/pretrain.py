@@ -910,7 +910,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
     loss_val = total_diff/ total_num
     loss_val = loss_val.item()
     return loss_val
- 
+
 
 def run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     
@@ -1117,6 +1117,7 @@ def run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, op
     loss_val = loss_val.item()
     return loss_val
  
+
 
 def nan_diagnose_weight(model,loss, nan_count,logsys):
     skip = False
@@ -2020,7 +2021,7 @@ def seed_worker(worker_id):# Multiprocessing randomnes for multiGPU train #https
 def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     dataset_type   = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
     
-    train_dataset  = dataset_type(split="train" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,
+    train_dataset  = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,
                                   record_load_tensor=train_record_load,**args.dataset_kargs)
     val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,
                                   record_load_tensor=valid_record_load,**args.dataset_kargs)
@@ -2339,12 +2340,15 @@ def build_model(args):
         args.model_kargs['in_chans'] = 55 
         args.model_kargs['out_chans'] = 13
         args.model_kargs['unique_up_sample_channel'] = 0
+        args.model_kargs['history_length'] = 1
         backbone1 = eval(args.model_type1)(**args.model_kargs)
         args.model_kargs['in_chans'] = 68
         args.model_kargs['out_chans'] = 42
+        args.model_kargs['history_length'] = 1
         backbone2 = eval(args.model_type2)(**args.model_kargs)
         args.model_kargs['in_chans'] = 55
         args.model_kargs['out_chans'] = 55
+        args.model_kargs['history_length'] = 1
         model = eval(args.wrapper_model)(args,backbone1,backbone2,args.backbone1_ckpt_path,args.backbone2_ckpt_path)
     else:
         model = eval(args.model_type)(**args.model_kargs)
