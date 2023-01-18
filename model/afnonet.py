@@ -75,9 +75,9 @@ from  torch.cuda.amp import custom_fwd,custom_bwd
 
 class BaseModel(nn.Module):
 
-    def set_epoch(self,epoch,epoch_total):
+    def set_epoch(self,epoch,epoch_total,**kargs):
         pass
-    def set_step(self,step,epoch):
+    def set_step(self,step,epoch,**kargs):
         pass
     def get_w_resolution_pad(self,shape):
         w_now   = shape[-2]
