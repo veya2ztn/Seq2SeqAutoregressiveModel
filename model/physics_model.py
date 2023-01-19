@@ -484,7 +484,10 @@ class CombM_UVTP2p2uvt_1By1(CombM_UVTP2p2uvt):
             p  = self.UVTP2p(torch.cat([uvt,p],1))
             return p #(B,13,32,64)
         
-
+class CombM_UVTP2p2uvt_1By0(CombM_UVTP2p2uvt_1By1):
+    def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
+        self.enter_into_phase1()
+        
 
 class CombM_UVTP2p2uvt_2By1(CombM_UVTP2p2uvt_1By1):
     def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
