@@ -2587,7 +2587,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                 use_amp = model.use_amp
                 model.use_amp= True
                 run_fourcast(args, model,logsys,test_dataloader)
-                model.use_amp=use_amp
+                model.use_amp=use_amp 
                 logsys.ckpt_root = origin_ckpt
             fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=False)
             logsys.record('learning rate',optimizer.param_groups[0]['lr'],epoch, epoch_flag='epoch')
