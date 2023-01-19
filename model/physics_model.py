@@ -496,7 +496,7 @@ class CombM_UVTP2p2uvt_2By1(CombM_UVTP2p2uvt_1By1):
 class CombM_UVTP2p2uvt_10By1(CombM_UVTP2p2uvt_1By1):
     def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
         if not eval_mode:
-            if epoch%11 == list(range(10)):self.enter_into_phase1()
+            if epoch%11 in list(range(10)):self.enter_into_phase1()
             else:self.enter_into_phase2()
         else:
            self.enter_into_phase1()
@@ -504,7 +504,23 @@ class CombM_UVTP2p2uvt_10By1(CombM_UVTP2p2uvt_1By1):
 class CombM_UVTP2p2uvt_5By5(CombM_UVTP2p2uvt_1By1):
     def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
         if not eval_mode:
-            if epoch%10 == list(range(5)):self.enter_into_phase1()
+            if epoch%10 in list(range(5)):self.enter_into_phase1()
+            else:self.enter_into_phase2()
+        else:
+           self.enter_into_phase1()
+
+class CombM_UVTP2p2uvt_rand7030(CombM_UVTP2p2uvt_1By1):
+    def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
+        if not eval_mode:
+            if np.random.rand()<0.7:self.enter_into_phase1()
+            else:self.enter_into_phase2()
+        else:
+           self.enter_into_phase1()
+
+class CombM_UVTP2p2uvt_rand9010(CombM_UVTP2p2uvt_1By1):
+    def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
+        if not eval_mode:
+            if np.random.rand()<0.9:self.enter_into_phase1()
             else:self.enter_into_phase2()
         else:
            self.enter_into_phase1()
