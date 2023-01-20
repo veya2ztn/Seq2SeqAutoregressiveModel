@@ -481,6 +481,41 @@ class NGmod_RotationDeltaETwo(NGmod_RotationDelta):
         return penalty
 
 
+class NGmod_RotationDeltaNmin(NGmod_RotationDelta):
+    def get_delta(self, modelfun, x, y, y_no_grad, t, rotation_regular_mode = '0y0'):
+        
+        if "y" in rotation_regular_mode:
+            delta = t - y
+        elif "v" in rotation_regular_mode:
+            delta = t - y_no_grad
+        else:
+            raise NotImplementedError
+        return delta
+    
+
+    def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = '0yJ'):
+        y        = modelfun(x) if (('y' in rotation_regular_mode) or 
+                           ('J' in rotation_regular_mode) or 
+                           ('M' in rotation_regular_mode)) else None
+        delta      = self.get_delta(modelfun, x, y, y_no_grad, t , rotation_regular_mode = rotation_regular_mode)
+        if 'j' in rotation_regular_mode: 
+            # principly, should use no graded y cause is you has already calculate the f[f(x)] then 
+            # why not directly calculate the error between f[f(x_t)] and x_{t+2}
+            # In short, the goal of this term is try to avoid calculate the backward of f[f(x_t)].
+            activate_y = y_no_grad
+        elif 'J' in rotation_regular_mode:
+            activate_y = y 
+        else:
+            raise NotImplementedError
+
+        Target_delta = modelfun(t) - modelfun(activate_y)
+        amplifier  = (torch.log(torch.mean(Target_delta**2,dim=(1,2,3))) - 
+                torch.log(torch.mean(delta**2,dim=(1,2,3)))
+                )
+        penalty   = amplifier.mean() #notice this value samller than 0, thus the loss_wall should set -100
+        return penalty
+
+
 
 class NGmod_RotationDeltaEThreeTwo(NGmod_RotationDeltaETwo):
     
