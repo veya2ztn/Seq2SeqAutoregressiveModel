@@ -488,6 +488,13 @@ class CombM_UVTP2p2uvt_1By0(CombM_UVTP2p2uvt_1By1):
     def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
         self.enter_into_phase1()
         
+class CombM_UVTP2p2uvt_0By1(CombM_UVTP2p2uvt_1By1):
+    def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
+        if not eval_mode:
+            self.enter_into_phase2()
+        else:
+           self.enter_into_phase1()
+
 
 class CombM_UVTP2p2uvt_2By1(CombM_UVTP2p2uvt_1By1):
     def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
