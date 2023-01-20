@@ -51,6 +51,7 @@ def get_args_parser():
     parser.add_argument('--log_trace_times', type=int, default=None)
     parser.add_argument('--fourcast_during_train', type=int, default=0)
     parser.add_argument('--do_fourcast_anyway', type=int, default=0)
+    parser.add_argument('--do_train_shuffle', type=int, default=1)
     
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
