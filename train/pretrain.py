@@ -1399,7 +1399,7 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
             with torch.no_grad():
                 ltmv_pred = dataset.recovery(start[-1])
                 target    = dataset.recovery(end)
-                
+                 
         for extra_info_from_model in extra_info_from_model_list:
             for key, val in extra_info_from_model.items():
                 if i not in extra_info:extra_info[i] = {}
