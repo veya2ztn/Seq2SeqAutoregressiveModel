@@ -2423,6 +2423,22 @@ class CenterWeightMSE(nn.Module):
         else:
             return torch.mean(((pred-real)*self.weight.to(pred.device))**2)
 
+class PressureWeightMSE(nn.Module):
+    def __init__(self, alpha=0.5,min_weight=0.1,level=14):
+        super().__init__()
+        self.alpha    = alpha
+        self.min_weight = min_weight
+        self.level = level
+        self.weight = 1-torch.exp(-alpha*torch.arange(level))+min_weight
+        self.weight = self.weight/self.weight.sum()*level
+        self.weight = self.weight.reshape(1,1,level,1,1)
+    def forward(self, pred, real):
+
+        delta = (pred - real)**2
+        B,P,W,H=delta.shape
+        delta = delta.reshape(B,-1,self.level,W,H)*self.weight.to(pred.device)
+        return delta.mean()
+
 def build_optimizer(args,model):
     if args.opt == 'adamw':
         param_groups    = timm.optim.optim_factory.param_groups_weight_decay(model, args.weight_decay)
@@ -2491,7 +2507,8 @@ def build_optimizer(args,model):
     elif args.criterion == 'pred_time_weighted_mse':
         print(args.dataset_patch_range)
         criterion=[ CenterWeightMSE(args.dataset_patch_range - i, args.dataset_patch_range) for i in range(args.time_step - args.history_length)]
-
+    elif args.criterion == 'PressureWeightMSE':
+        criterion       = PressureWeightMSE()
 
     return optimizer,lr_scheduler,criterion
 
