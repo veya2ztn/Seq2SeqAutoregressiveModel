@@ -142,6 +142,7 @@ def get_args_parser():
     parser.add_argument('--force_fourcast', default=0, type=int)
     parser.add_argument('--snap_index', type=str, default=None)
     parser.add_argument('--wandb_id', type=str, default=None)
+    parser.add_argument('--gd_alpha_stratagy', type=str, default='normal')
     
     # Optimizer parameters # feed into timm
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER', help='Optimizer (default: "adamw"')

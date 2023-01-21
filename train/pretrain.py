@@ -2489,7 +2489,7 @@ def build_optimizer(args,model):
         optimizer.grad_modifier.loss_wall = args.gd_loss_wall
         optimizer.grad_modifier.only_eval = args.gdeval
         optimizer.grad_modifier.gd_alpha  = args.gd_alpha
-        optimizer.grad_modifier.alpha_stratagy = args.alpha_stratagy
+        optimizer.grad_modifier.alpha_stratagy = args.gd_alpha_stratagy
         optimizer.grad_modifier.loss_target = args.gd_loss_target
         if args.gmod_coef:
             _, pixelnorm_std = np.load(args.gmod_coef)
