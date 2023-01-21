@@ -2650,9 +2650,9 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                         #os.system(f'cp {latest_ckpt_p} {latest_ckpt_p}-epoch{epoch}')
             
 
-        if os.path.exists(now_best_path) and args.do_final_fourcast and not args.distributed:
+        if os.path.exists(now_best_path) and args.do_final_fourcast:# and not args.distributed:
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
-            start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=now_best_path, only_model=True)
+            start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=now_best_path, only_model=True,loc = 'cuda:{}'.format(args.gpu))
             run_fourcast(args, model,logsys)
         if result_tensor is not None and local_rank==0:
             result_tensor[local_rank] = min_loss
