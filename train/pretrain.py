@@ -811,6 +811,8 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                                 batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)                    
                     if grad_modifier.alpha_stratagy == 'softwarmup50.90':
                         gd_alpha = grad_modifier.gd_alpha*min(max((np.exp((epoch-50)/40)-1)/(np.exp(1)-1),0),1)
+                    elif grad_modifier.alpha_stratagy == 'softwarmup00.80':
+                        gd_alpha = grad_modifier.gd_alpha*min(max((np.exp((epoch-0)/80)-1)/(np.exp(1)-1),0),1)
                     elif grad_modifier.alpha_stratagy == 'normal':
                         gd_alpha=grad_modifier.gd_alpha
                     else:
