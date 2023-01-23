@@ -481,6 +481,24 @@ def once_forward(model,i,start,end,dataset,time_step_1_mode):
     else:   
        return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
 
+def full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list):
+    hidden_fourcast_list_next=[]
+    extra_loss=0
+    for t in hidden_fourcast_list:
+        alpha = model.consistancy_alpha[len(full_fourcast_error_list)]
+        if alpha>0 and t is not None:
+            hidden_fourcast = model(t)
+            hidden_error  = criterion(ltmv_pred,hidden_fourcast) # can also be criterion(target,hidden_fourcast)
+            hidden_fourcast_list_next.append(hidden_fourcast)
+            full_fourcast_error_list.append(hidden_error.item())
+            extra_loss += alpha*hidden_error
+        else:
+            hidden_fourcast_list_next.append(None)
+            full_fourcast_error_list.append(0)
+    hidden_fourcast_list = hidden_fourcast_list_next + [target]
+    #print(full_fourcast_error_list)
+    return hidden_fourcast_list,full_fourcast_error_list,extra_loss
+
 def run_one_iter(model, batch, criterion, status, gpu, dataset):
     iter_info_pool={}
     loss = 0
@@ -496,12 +514,20 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
         raise
     pred_step = 0
     start = batch[0:model.history_length] # start must be a list
-    
+    full_fourcast_error_list = []
+    hidden_fourcast_list = [] 
+    # length depend on pred_len time_step=2 --> 1+1
+    #                time_step=3 --> 1+2+2
+    #                time_step=4 --> 1+2+3
+    # use_consistancy_alpha to control activate amplitude
     for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
         end = batch[i:i+model.pred_len]
         end = end[0] if len(end) == 1 else end
         ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
-
+        if hasattr(model,"consistancy_alpha") and model.consistancy_alpha: 
+            hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list)
+            extra_loss += extra_loss2
+            
         if extra_loss !=0:
             iter_info_pool[f'{status}_extra_loss_gpu{gpu}_timestep{i}'] = extra_loss.item()
         for extra_info_from_model in extra_info_from_model_list:
@@ -511,20 +537,20 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
         ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
 
         if 'Delta' in dataset.__class__.__name__:
-            loss  += criterion(ltmv_pred,target)
+            loss  += criterion(ltmv_pred,target)+ extra_loss
             with torch.no_grad():
                 normlized_field_predict = dataset.combine_base_delta(start[-1][0], start[-1][1]) 
                 normlized_field_real    = dataset.combine_base_delta(      end[0],       end[1])  
                 abs_loss = criterion(normlized_field_predict,normlized_field_real)
             
         elif 'deseasonal' in dataset.__class__.__name__:
-            loss  += criterion(ltmv_pred,target)
+            loss  += criterion(ltmv_pred,target)+ extra_loss
             with torch.no_grad():
                 normlized_field_predict = dataset.addseasonal(start[-1][0], start[-1][1])
                 normlized_field_real    = dataset.addseasonal(end[0], end[1])
                 abs_loss = criterion(normlized_field_predict,normlized_field_real)
         elif '68pixelnorm' in dataset.__class__.__name__:
-            loss  += criterion(ltmv_pred,target)
+            loss  += criterion(ltmv_pred,target)+ extra_loss
             with torch.no_grad():
                 normlized_field_predict = dataset.recovery(start[-1])
                 normlized_field_real    = dataset.recovery(end)
@@ -545,6 +571,10 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
             iter_info_pool[f'{status}_rmse_gpu{gpu}_timestep{i}']     =  compute_rmse(normlized_field_predict,normlized_field_real).mean().item()
         if model.random_time_step_train and i >= random_run_step:
             break
+    if hasattr(model,"consistancy_alpha") and model.consistancy_alpha: 
+        hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list)
+        loss+= extra_loss2
+        iter_info_pool[f'{status}_full_fourcast_error_gpu{gpu}'] =  full_fourcast_error_list
     # loss = loss/(len(batch) - 1)
     # diff = diff/(len(batch) - 1)
     loss = loss/pred_step
@@ -2130,10 +2160,10 @@ def get_projectname(args):
         #print(project_name)
     return model_name, datasetname,project_name
 
-def deal_with_tuple_string(patch_size,defult=None):
+def deal_with_tuple_string(patch_size,defult=None,dtype=int):
     if isinstance(patch_size,str):
         if len(patch_size)>0:
-            patch_size  = tuple([int(t) for t in patch_size.split(',')])
+            patch_size  = tuple([dtype(t) for t in patch_size.split(',')])
             if len(patch_size) == 1: patch_size=patch_size[0]
         else:
             patch_size = defult
@@ -2401,7 +2431,7 @@ def build_model(args):
     model.clip_grad= args.clip_grad
     model.pred_len = args.pred_len
     model.accumulation_steps = args.accumulation_steps
-
+    model.consistancy_alpha = deal_with_tuple_string(args.consistancy_alpha,[],dtype=float)
     
     model.mean_path_length = torch.zeros(1)
     if 'UVT' in args.wrapper_model:
