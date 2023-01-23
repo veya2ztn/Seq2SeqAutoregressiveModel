@@ -1793,7 +1793,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
 
     return info_pool_list
 
-def run_fourcast(args, model,logsys,test_dataloader=None):
+def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True):
     import warnings
     warnings.filterwarnings("ignore")
     logsys.info_log_path = os.path.join(logsys.ckpt_root, 'fourcast.info')
@@ -1823,12 +1823,13 @@ def run_fourcast(args, model,logsys,test_dataloader=None):
         logsys.info(f"load fourcastresult at {fourcastresult_path}")
         fourcastresult = torch.load(fourcastresult_path)
 
-    if not args.distributed:
-        create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
-    else:
-        dist.barrier()
-        if dist.get_rank() == 0:
+    if do_table:
+        if not args.distributed:
             create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
+        else:
+            dist.barrier()
+            if dist.get_rank() == 0:
+                create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
     return 1
 
 
@@ -2623,7 +2624,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                 logsys.ckpt_root = new_ckpt
                 use_amp = model.use_amp
                 model.use_amp= True
-                run_fourcast(args, model,logsys,test_dataloader)
+                run_fourcast(args, model,logsys,test_dataloader,do_table=False)
                 model.use_amp=use_amp 
                 logsys.ckpt_root = origin_ckpt
             fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=False)
