@@ -493,7 +493,7 @@ class NGmod_RotationDeltaNmin(NGmod_RotationDelta):
         return delta
     
 
-    def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = '0yJ'):
+    def getRotationDeltaloss(self, modelfun, x, y_no_grad, t , rotation_regular_mode = '0yJ'): 
         y        = modelfun(x) if (('y' in rotation_regular_mode) or 
                            ('J' in rotation_regular_mode) or 
                            ('M' in rotation_regular_mode)) else None
