@@ -1821,7 +1821,8 @@ def run_fourcast(args, model,logsys,test_dataloader=None):
         create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
     else:
         dist.barrier()
-        if dist.get_rank() == 0:create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
+        if dist.get_rank() == 0:
+            create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
     return 1
 
 
