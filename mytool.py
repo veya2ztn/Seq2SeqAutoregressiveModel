@@ -229,14 +229,15 @@ def remove_trail_path(trial_path):
         #os.system(f"ls {trail_path}")
         os.system(f"rm -rf {trail_path}")
 
-def create_fourcast_table(ckpt_path):
-    #if "figures" in os.listdir(ckpt_path):return
+def create_fourcast_table(ckpt_path,force_fourcast=False):
+    if "figures" in os.listdir(ckpt_path) and not force_fourcast:return
     if "fourcastresult.gpu_0" not in os.listdir(ckpt_path):return
     from train.pretrain import create_fourcast_metric_table,get_test_dataset,LoggingSystem,parse_default_args,create_logsys
     import torch
     # if 'rmse_unit_table' in os.listdir(ckpt_path):
     #     return
     args = get_the_args(ckpt_path)
+    
     args.mode = 'fourcast'
     args.gpu = args.local_rank = gpu  = local_rank = 0
     #args.data_root = "datasets/weatherbench"
@@ -393,7 +394,7 @@ if __name__ == "__main__":
         elif args.moded == 'tb2wandb':assign_trail_job(trail_path)
         elif args.moded == 'cleantmp':remove_trail_path(trail_path)
         elif args.moded == 'cleanwgt':remove_weight(trail_path)
-        elif args.moded == 'createtb':create_fourcast_table(trail_path)
+        elif args.moded == 'createtb':create_fourcast_table(trail_path,force_fourcast=args.force_fourcast)
         elif args.moded == 'snap_nodal':run_snap_nodal(trail_path,step=args.fourcast_step,force_fourcast=args.force_fourcast,weight_chose=args.weight_chose)
         elif args.moded == 'createtb_nodalsnap':create_nodalsnap_table(trail_path)
         elif args.moded == 'createmultitb':create_multi_fourcast_table(trail_path)
