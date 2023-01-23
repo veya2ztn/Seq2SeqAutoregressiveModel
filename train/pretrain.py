@@ -1819,7 +1819,9 @@ def run_fourcast(args, model,logsys,test_dataloader=None):
 
     if not args.distributed:
         create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
-    
+    else:
+        dist.barrier()
+        if dist.get_rank() == 0:create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
     return 1
 
 
@@ -2656,6 +2658,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
             start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=now_best_path, only_model=True,loc = 'cuda:{}'.format(args.gpu))
             run_fourcast(args, model,logsys)
+            
         if result_tensor is not None and local_rank==0:
             result_tensor[local_rank] = min_loss
     logsys.close()
