@@ -808,7 +808,10 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                 else:
                     with torch.cuda.amp.autocast(enabled=model.use_amp):
                         rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, #<-- its ok use `model.module`` or `model`, but model.module avoid unknow error of functorch 
-                                batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)                    
+                                batch[0], ltmv_pred.detach() if len(batch)==2 else None, batch[1],#target,##<-- same reason, should be next stamp rather than last
+                                rotation_regular_mode = grad_modifier.rotation_regular_mode)                    
+                    # notice this y must be x_{t+1}_pred, this works when time_step=2,
+                    # when time_step > 2, the provided ltmv_pred is the last pred not the next.
                     if grad_modifier.alpha_stratagy == 'softwarmup50.90':
                         gd_alpha = grad_modifier.gd_alpha*min(max((np.exp((epoch-50)/40)-1)/(np.exp(1)-1),0),1)
                     elif grad_modifier.alpha_stratagy == 'softwarmup00.80':
@@ -1805,6 +1808,9 @@ def run_fourcast(args, model,logsys,test_dataloader=None):
     gpu       = dist.get_rank() if hasattr(model,'module') else 0
     fourcastresult_path = os.path.join(logsys.ckpt_root,f"fourcastresult.gpu_{gpu}")
     if not os.path.exists(fourcastresult_path) or  args.force_fourcast:
+        if args.force_fourcast:
+            print("re-fourcast, and we will remove old fourcastresult")
+            os.system("rm {logsys.ckpt_root}/fourcastresult.gpu_*")
         logsys.info(f"use dataset ==> {test_dataset.__class__.__name__}")
         logsys.info("starting fourcast~!")
         with open(os.path.join(logsys.ckpt_root,'weight_path'),'w') as f:f.write(args.pretrain_weight)
