@@ -574,7 +574,8 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
     if hasattr(model,"consistancy_alpha") and model.consistancy_alpha: 
         hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list)
         loss+= extra_loss2
-        iter_info_pool[f'{status}_full_fourcast_error_gpu{gpu}'] =  full_fourcast_error_list
+        for iii, val in enumerate(full_fourcast_error_list):
+            if val >0: iter_info_pool[f'{status}_full_fourcast_error_{iii}_gpu{gpu}'] =  val
     # loss = loss/(len(batch) - 1)
     # diff = diff/(len(batch) - 1)
     loss = loss/pred_step
