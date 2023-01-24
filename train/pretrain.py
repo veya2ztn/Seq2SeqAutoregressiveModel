@@ -2686,7 +2686,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                 update_experiment_info(experiment_hub_path,epoch,args)
                 if ((epoch>args.save_warm_up) and (epoch%args.save_every_epoch==0)) or (epoch==args.epochs-1) or (epoch in args.epoch_save_list):
                     logsys.info(f"saving latest model ....", show=False)
-                    save_model(model, epoch+1, 0, optimizer, lr_scheduler, loss_scaler, min_loss, latest_ckpt_p)
+                    save_model(model, epoch=epoch+1, step=0, optimizer=optimizer, lr_scheduler=lr_scheduler, loss_scaler=loss_scaler, min_loss=min_loss, path=latest_ckpt_p)
                     logsys.info(f"done ....",show=False)
                     if epoch in args.epoch_save_list:
                         save_model(model, path=f'{latest_ckpt_p}-epoch{epoch}', only_model=True)
