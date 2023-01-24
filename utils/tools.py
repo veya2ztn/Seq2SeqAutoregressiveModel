@@ -37,8 +37,12 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
             print("loading model weight success...........")
             optimizer.load_state_dict(ckpt['optimizer'])
             print("loading optimizer weight success...........")
-            if lr_scheduler is not None:lr_scheduler.load_state_dict(ckpt['lr_scheduler'])
-            print("loading lr_scheduler weight success...........")
+            if lr_scheduler is not None:
+                lr_scheduler.load_state_dict(ckpt['lr_scheduler'])
+                print("loading lr_scheduler weight success...........")
+            else:
+                print("loading lr_scheduler weight fail...........")
+            
             loss_scaler.load_state_dict(ckpt['loss_scaler'])
             print("loading loss_scaler weight success...........")
             start_epoch = ckpt["epoch"]
@@ -66,7 +70,7 @@ def save_model(model, epoch=0, step=0, optimizer=None, lr_scheduler=None, loss_s
             'step': step,
             'min_loss': min_loss
         }
-    # in case, the driver full we first do save and then mv 
+    # in case the driver full, we first do save and then mv 
     tmp_path = str(path)+'.tmp'
     torch.save(states, tmp_path)
     os.system(f"mv {tmp_path} {path}")
