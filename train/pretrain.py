@@ -835,7 +835,9 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                 if grad_modifier.only_eval:
                     with torch.no_grad(): 
                         with torch.cuda.amp.autocast(enabled=model.use_amp):
-                            rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, batch[0], ltmv_pred.detach() ,target,rotation_regular_mode = grad_modifier.rotation_regular_mode)                     
+                            rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, 
+                            batch[0], ltmv_pred.detach() if len(batch)==2 else None, batch[1],
+                            rotation_regular_mode = grad_modifier.rotation_regular_mode)                     
                 else:
                     with torch.cuda.amp.autocast(enabled=model.use_amp):
                         rotation_loss= grad_modifier.getRotationDeltaloss(model.module if hasattr(model,'module') else model, #<-- its ok use `model.module`` or `model`, but model.module avoid unknow error of functorch 
