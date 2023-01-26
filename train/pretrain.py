@@ -564,8 +564,17 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
         
         if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall: 
             hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list)
+            if hasattr(model,"vertical_constrain") and model.vertical_constrain and len(hidden_fourcast_list)>=2:
+                all_hidden_fourcast_list = [ltmv_pred]+hidden_fourcast_list
+                first_level_error_tensor = all_hidden_fourcast_list[-1] - all_hidden_fourcast_list[-2] #epsilon_2^I
+                for il in range(len(all_hidden_fourcast_list)-2):
+                    hidden_error_tensor = all_hidden_fourcast_list[-2] - all_hidden_fourcast_list[il]
+                    verticalQ = torch.mean((hidden_error_tensor*first_level_error_tensor)**2) # <epsilon_2^I|epsilon_2^II-epsilon_2^I>
+                    iter_info_pool[f'{status}_vertical_error_{i}_{il}_gpu{gpu}'] =  verticalQ.item()
+                    extra_loss2+= model.vertical_constrain*verticalQ # we only
             if not model.consistancy_eval:loss+= extra_loss2
-
+            
+                
         iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
         if status != "train":
             iter_info_pool[f'{status}_accu_gpu{gpu}_timestep{i}']     =  compute_accu(normlized_field_predict,normlized_field_real).mean().item()
@@ -573,7 +582,7 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
         if model.random_time_step_train and i >= random_run_step:
             break
     if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall: 
-        hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list)
+        hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,None,hidden_fourcast_list)
         if not model.consistancy_eval:loss+= extra_loss2
         for iii, val in enumerate(full_fourcast_error_list):
             if val >0: iter_info_pool[f'{status}_full_fourcast_error_{iii}_gpu{gpu}'] =  val
@@ -2437,6 +2446,7 @@ def build_model(args):
     model.accumulation_steps = args.accumulation_steps
     model.consistancy_alpha = deal_with_tuple_string(args.consistancy_alpha,[],dtype=float)
     model.consistancy_eval = args.consistancy_eval
+    model.vertical_constrain= args.vertical_constrain
     model.consistancy_activate_wall = args.consistancy_activate_wall
     model.mean_path_length = torch.zeros(1)
     if 'UVT' in args.wrapper_model:
