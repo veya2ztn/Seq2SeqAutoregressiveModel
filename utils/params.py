@@ -72,6 +72,8 @@ def get_args_parser():
     parser.add_argument('--canonical_fft', default=1, type=int)
     parser.add_argument('--unique_up_sample_channel', default=0, type=int)
     parser.add_argument('--n_heads', default=8, type=int)
+
+    parser.add_argument('--consistancy_activate_wall', default=100, type=float)
     
     parser.add_argument('--pred_len', type=int, default=1)
     parser.add_argument('--label_len', type=int, default=3)
@@ -166,7 +168,9 @@ def get_args_parser():
     parser.add_argument('--cooldown-epochs', type=int, default=10, metavar='N', help='epochs to cooldown LR at min_lr, after cyclic schedule ends')
     parser.add_argument('--patience-epochs', type=int, default=10, metavar='N', help='patience epochs for Plateau LR scheduler (default: 10')
     parser.add_argument('--decay-rate', '--dr', type=float, default=0.1, metavar='RATE', help='LR decay rate (default: 0.1)')
-
+    parser.add_argument('--scheduler_inital_epochs', type=int, default=None)
+    
+    
 
 
     # Augmentation parameters

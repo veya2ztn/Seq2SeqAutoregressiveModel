@@ -524,15 +524,13 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
         end = batch[i:i+model.pred_len]
         end = end[0] if len(end) == 1 else end
         ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
-        if hasattr(model,"consistancy_alpha") and model.consistancy_alpha: 
-            hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list)
-            extra_loss += extra_loss2
+        
             
         if extra_loss !=0:
             iter_info_pool[f'{status}_extra_loss_gpu{gpu}_timestep{i}'] = extra_loss.item()
         for extra_info_from_model in extra_info_from_model_list:
             for name, value in extra_info_from_model.items():
-                iter_info_pool[f'valid_on_{status}_{name}_timestep{i}'] = value
+                iter_info_pool[f'{status}_on_{status}_{name}_timestep{i}'] = value
         
         ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
 
@@ -564,6 +562,9 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
         diff += abs_loss
         pred_step+=1
         
+        if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall: 
+            hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list)
+            loss+= extra_loss2
 
         iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
         if status != "train":
@@ -571,7 +572,7 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
             iter_info_pool[f'{status}_rmse_gpu{gpu}_timestep{i}']     =  compute_rmse(normlized_field_predict,normlized_field_real).mean().item()
         if model.random_time_step_train and i >= random_run_step:
             break
-    if hasattr(model,"consistancy_alpha") and model.consistancy_alpha: 
+    if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall: 
         hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list)
         loss+= extra_loss2
         for iii, val in enumerate(full_fourcast_error_list):
@@ -2435,7 +2436,7 @@ def build_model(args):
     model.pred_len = args.pred_len
     model.accumulation_steps = args.accumulation_steps
     model.consistancy_alpha = deal_with_tuple_string(args.consistancy_alpha,[],dtype=float)
-    
+    model.consistancy_activate_wall = args.consistancy_activate_wall
     model.mean_path_length = torch.zeros(1)
     if 'UVT' in args.wrapper_model:
         assert "55" in args.dataset_flag
@@ -2553,6 +2554,8 @@ def build_optimizer(args,model):
         optimizer.grad_modifier.rotation_regular_mode = args.rotation_regular_mode if args.rotation_regular_mode else None
     lr_scheduler = None
     if args.sched:
+        if not args.scheduler_inital_epochs:
+            args.scheduler_inital_epochs = args.epochs
         lr_scheduler, _ = create_scheduler(args, optimizer)
 
     if args.criterion == 'mse':
