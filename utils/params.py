@@ -74,6 +74,7 @@ def get_args_parser():
     parser.add_argument('--n_heads', default=8, type=int)
 
     parser.add_argument('--consistancy_activate_wall', default=100, type=float)
+    parser.add_argument('--consistancy_eval', default=0, type=int)
     
     parser.add_argument('--pred_len', type=int, default=1)
     parser.add_argument('--label_len', type=int, default=3)
