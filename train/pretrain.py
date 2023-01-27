@@ -2403,10 +2403,32 @@ def build_model(args):
         args.model_kargs['out_chans'] = 13
         args.model_kargs['unique_up_sample_channel'] = 0
         args.model_kargs['history_length'] = 1
+        if args.model_type1 == 'AFNONet':
+            pass
+        else:
+            raise NotImplementedError
         backbone1 = eval(args.model_type1)(**args.model_kargs)
         args.model_kargs['in_chans'] = 68
         args.model_kargs['out_chans'] = 42
         args.model_kargs['history_length'] = 1
+        if args.model_type2 == 'AFNONet':
+            pass
+        elif args.model_type2 == 'smallAFNONet':
+            args.model_kargs['depth'] = 6
+            args.model_kargs['in_chans'] = 68
+            args.model_kargs['out_chans'] = 42
+            args.model_kargs['history_length'] = 1
+            args.model_type2='AFNONet'
+        elif args.model_type2 == 'tinyAFNONet':
+            args.model_kargs['embed_dim'] = 384
+            args.model_kargs['depth'] = 6
+            args.model_kargs['in_chans'] = 68
+            args.model_kargs['out_chans'] = 42
+            args.model_kargs['history_length'] = 1
+            args.model_type2='AFNONet'
+        else:
+            raise NotImplementedError
+        
         backbone2 = eval(args.model_type2)(**args.model_kargs)
         args.model_kargs['in_chans'] = 55
         args.model_kargs['out_chans'] = 55
