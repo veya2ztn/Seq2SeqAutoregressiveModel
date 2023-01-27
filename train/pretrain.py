@@ -2587,8 +2587,8 @@ def build_optimizer(args,model):
         optimizer.grad_modifier.rotation_regular_mode = args.rotation_regular_mode if args.rotation_regular_mode else None
     lr_scheduler = None
     if args.sched:
-        if not args.scheduler_inital_epochs:
-            args.scheduler_inital_epochs = args.epochs
+        # if not args.scheduler_inital_epochs:
+        #     args.scheduler_inital_epochs = args.epochs
         lr_scheduler, _ = create_scheduler(args, optimizer)
 
     if args.criterion == 'mse':
