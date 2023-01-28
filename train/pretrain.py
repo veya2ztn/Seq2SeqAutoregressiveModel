@@ -2405,10 +2405,11 @@ def build_model(args):
         args.model_kargs['out_chans'] = 13
         args.model_kargs['unique_up_sample_channel'] = 0
         args.model_kargs['history_length'] = 1
-        if args.model_type1 == 'AFNONet':
-            pass
-        else:
-            raise NotImplementedError
+        # if args.model_type1 == 'AFNONet':
+        #     pass
+        # else:
+        #     print("the ")
+        #     #raise NotImplementedError
         backbone1 = eval(args.model_type1)(**args.model_kargs)
         args.model_kargs['in_chans'] = 68
         args.model_kargs['out_chans'] = 42
