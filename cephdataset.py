@@ -741,7 +741,19 @@ class WeathBench(BaseDataset):
         else:
             return data
 
-
+    def get_mesh_lon_lat(self,tH=32,tW=64):
+        sH = 720
+        sW = 1440
+        steph = sH /float(tH)
+        stepw = sW /float(tW)
+        x     = np.arange(0, sW, stepw).astype('int')
+        y     = np.linspace(0, sH-1, tH, dtype='int')
+        x, y  = np.meshgrid(x, y)
+        latitude   = np.linspace(90,-90,721)
+        longitude  = np.linspace(0,360,1440)
+        LaLotude = np.stack([latitude[y],longitude[x]])/180*np.pi
+        LaLotudeVector = np.stack([np.cos(LaLotude[1])*np.cos(LaLotude[0]),np.cos(LaLotude[1])*np.sin(LaLotude[0]),np.sin(LaLotude[1])],2)
+        return LaLotude,LaLotudeVector
 class WeathBench71(WeathBench):
     default_root='datasets/weatherbench'
     _component_list= ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
@@ -807,6 +819,34 @@ class WeathBench71(WeathBench):
         else:
             return odata
     
+    def generate_runtime_data(self,idx,reversed_part=False):
+        odata=self.load_otensor(idx)
+        if reversed_part:
+            odata = odata.clone() if isinstance(odata,torch.Tensor) else odata.copy()
+            odata[reversed_part] = -odata[reversed_part]
+        data = odata[self.channel_choice]
+        eg = torch if isinstance(data,torch.Tensor) else np
+        if '3D70' in self.normalize_type:
+            # 3D should modify carefully
+            data[14*4-1] = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
+            total_precipitaiton = odata[4]
+            newdata = data[14*5-1].clone() if isinstance(data,torch.Tensor) else data[14*5-1].copy()
+            newdata[total_precipitaiton>0] = 100
+            newdata[data[14*5-1]>100]=data[14*5-1][data[14*5-1]>100]
+            data[14*5-1] = newdata
+            shape= data.shape
+            data = data.reshape(5,14,*shape[-2:])
+        elif '2D70' in self.normalize_type:
+            data[14*4-1]    = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
+            total_precipitaiton = odata[4]
+            data[14*5-1]    = total_precipitaiton
+        
+        if 'gauss_norm' in self.normalize_type:
+            data=  (data - self.mean)/self.std
+        elif 'unit_norm' in self.normalize_type:
+            data = data/self.std
+        return data
+
     def get_item(self,idx,reversed_part=False):
         '''
         Notice for 3D case, we return (5,14,32,64) data tensor
@@ -814,32 +854,8 @@ class WeathBench71(WeathBench):
         if self.use_offline_data:
             data =  self.dataset_tensor[idx]
         else:
-            odata=self.load_otensor(idx)
-            if reversed_part:
-                odata = odata.clone() if isinstance(odata,torch.Tensor) else odata.copy()
-                odata[reversed_part] = -odata[reversed_part]
-            data = odata[self.channel_choice]
-            eg = torch if isinstance(data,torch.Tensor) else np
-            if '3D70' in self.normalize_type:
-                # 3D should modify carefully
-                data[14*4-1] = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
-                total_precipitaiton = odata[4]
-                newdata = data[14*5-1].clone() if isinstance(data,torch.Tensor) else data[14*5-1].copy()
-                newdata[total_precipitaiton>0] = 100
-                newdata[data[14*5-1]>100]=data[14*5-1][data[14*5-1]>100]
-                data[14*5-1] = newdata
-                shape= data.shape
-                data = data.reshape(5,14,*shape[-2:])
-            elif '2D70' in self.normalize_type:
-                data[14*4-1]    = eg.ones_like(data[14*4-1])*50 # modifiy the groud Geopotential, we use 5m height
-                total_precipitaiton = odata[4]
-                data[14*5-1]    = total_precipitaiton
-            
-            if 'gauss_norm' in self.normalize_type:
-                data=  (data - self.mean)/self.std
-            elif 'unit_norm' in self.normalize_type:
-                data = data/self.std
-
+            data = self.generate_runtime_data(idx,reversed_part=reversed_part)
+        
         if self.use_time_stamp:
             return data, self.timestamp[idx]
         else:
@@ -966,7 +982,70 @@ class WeathBench7066(WeathBench71):
         # mean, std = self.mean_std[:,_list].reshape(2,5,14,1,1)
         # config_pool['3D70O'] =(_list  ,'3D', (0,1) , lambda x:do_batch_normlize(x,mean,std),lambda x:inv_batch_normlize(x,mean,std))
         return config_pool
-    
+
+class WeathBench64x128(WeathBench71):
+    default_root='datasets/weatherbench64x128'
+    use_offline_data = False
+    time_unit=1
+    years_split={'train':range(1979, 2016),
+           'valid':range(2016, 2018),
+           'test':range(2018,2019),
+           'ftest':range(1979,1980),
+            'all': range(1979, 2022),
+            'debug':range(1979,1980)}
+    datatimelist_pool={'train':np.arange(np.datetime64("1979-01-01")+np.timedelta64(7, "h"), np.datetime64("2016-01-01"), np.timedelta64(1, "h")),
+              'valid':np.arange(np.datetime64("2016-01-01"), np.datetime64("2018-01-01"), np.timedelta64(1, "h")),
+             'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(1, "h")),
+             'ftest':np.arange(np.datetime64("1979-01-02"), np.datetime64("1980-01-01"), np.timedelta64(1, "h"))}
+    def __init__(self,**kargs):
+        use_offline_data = kargs.get('use_offline_data',0) 
+        assert use_offline_data == 0
+        super().__init__(**kargs)
+        self.add_LunaSolarDirectly =  kargs.get('add_LunaSolarDirectly',False) 
+        self.LaLotude,self.LaLotudeVector = self.get_mesh_lon_lat(64,128)
+        self.add_ConstDirectly =  kargs.get('add_ConstDirectly',False) 
+        
+    @staticmethod
+    def create_offline_dataset_templete(split='test', root=None, use_offline_data=False, **kargs):
+        # not allow, it will take too much memory
+        return None,None
+
+    def config_pool_initial(self):
+        _list = self._component_list
+        vector_scalar_mean = self.mean_std.copy()
+        vector_scalar_mean[:,self.volicity_idx] = 0
+        _list2 = [_list[iii] for iii in (list(range(0,14*4-1))+list(range(14*4,14*5-1)))]
+        config_pool={
+            '2D55N': (self._component_list55 ,'gauss_norm'  , self.mean_std[:,self._component_list55].reshape(2,55,1,1), identity, identity ),
+            '2D68K': (self._component_list68 ,'gauss_norm'  , self.mean_std[:,self._component_list68].reshape(2,68,1,1), identity, identity ),
+            '2D68N': (self._component_list68 ,'gauss_norm'  , self.mean_std[:,self._component_list68].reshape(2,68,1,1), identity, identity ),
+            '2D70V': (_list ,'gauss_norm'   , vector_scalar_mean[:,_list].reshape(2,70,1,1), identity, identity ),
+            '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
+            '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
+            '3D70N': (_list ,'gauss_norm_3D', self.mean_std[:,_list].reshape(2,5,14,1,1), identity, identity ),
+        }
+        return config_pool
+
+    def get_item(self,idx,reversed_part=False):
+        data = self.generate_runtime_data(idx,reversed_part=reversed_part)
+        if self.add_LunaSolarDirectly:
+            timenow = self.datatimelist_pool[self.split][idx]
+            moon_lon, moon_lat = get_sub_luna_point(timenow.item())
+            sun_lon, sun_lat = get_sub_sun_point(timenow.item())
+            sun_vector = np.stack([np.cos(sun_lat/180*np.pi)*np.cos(sun_lon/180*np.pi),
+                        np.cos(sun_lat/180*np.pi)*np.sin(sun_lon/180*np.pi),
+                        np.sin(sun_lat/180*np.pi)])
+            moon_vector = np.stack([np.cos(moon_lat/180*np.pi)*np.cos(moon_lon/180*np.pi),
+                        np.cos(moon_lat/180*np.pi)*np.sin(moon_lon/180*np.pi),
+                        np.sin(moon_lat/180*np.pi)])
+            sun_mask = (self.LaLotudeVector@sun_vector).reshape(1,64,128)
+            moon_mask = (self.LaLotudeVector@moon_vector).reshape(1,64,128)
+            data = np.concatenate([data,sun_mask,moon_mask])
+        if self.add_ConstDirectly:
+            data = np.concatenate([data,self.constants])
+        return data
+
+
 class WeathBench7066Self(WeathBench7066):
     # use for property relation check
     def __init__(self,**kargs):
@@ -1102,21 +1181,7 @@ class WeathBench69SolarLunaMask(WeathBench7066):
         pick_list = list(range(55)) + list(range(56,69))
         self.dataset_tensor      = self.dataset_tensor[:,pick_list]
         self.LaLotude,self.LaLotudeVector = self.get_mesh_lon_lat()
-    def get_mesh_lon_lat(self):
-        sH = 720
-        sW = 1440
-        tH = 32
-        tW = 64
-        steph = sH /float(tH)
-        stepw = sW /float(tW)
-        x     = np.arange(0, sW, stepw).astype('int')
-        y     = np.linspace(0, sH-1, tH, dtype='int')
-        x, y  = np.meshgrid(x, y)
-        latitude   = np.linspace(90,-90,721)
-        longitude  = np.linspace(0,360,1440)
-        LaLotude = np.stack([latitude[y],longitude[x]])/180*np.pi
-        LaLotudeVector = np.stack([np.cos(LaLotude[1])*np.cos(LaLotude[0]),np.cos(LaLotude[1])*np.sin(LaLotude[0]),np.sin(LaLotude[1])],2)
-        return LaLotude,LaLotudeVector
+    
     @staticmethod
     def create_offline_dataset_templete(split='test', root=None, use_offline_data=False, **kargs):
         if root is None:root = WeathBench7066.default_root
