@@ -124,7 +124,7 @@ def get_args_parser():
     'WeathBench71','ERA5Tiny12_47_96_Normal','ERA5CephDataset','WeathBench68pixelnorm','WeathBench69SolarLunaMask',
     'WeathBench7066deseasonal','WeathBench7066PatchDataset','ERA5CephSmallPatchDataset',
     'WeathBench7066Self','ERA5CephSmallDataset','ERA5Tiny12_47_96','WeathBench7066',
-    'WeathBench7066DeltaDataset','WeathBench55withoutH'])
+    'WeathBench7066DeltaDataset','WeathBench55withoutH','WeathBench64x128'])
     parser.add_argument('--dataset_flag', default="", type=str)
     parser.add_argument('--time_reverse_flag', default='only_forward', type=str)
     parser.add_argument('--time_intervel', type=int, default=1)
@@ -134,6 +134,8 @@ def get_args_parser():
     parser.add_argument('--use_position_idx', type=int, default=0)
     parser.add_argument('--cross_sample', type=int, default=1)
     parser.add_argument('--use_inmemory_dataset',type=int,default=0)
+    parser.add_argument('--add_ConstDirectly',type=int,default=0)
+    parser.add_argument('--add_LunaSolarDirectly',type=int,default=0)
     parser.add_argument('--random_dataset',type=int,default=0)
     parser.add_argument('--num_workers',type=int,default=2)
     parser.add_argument('--use_offline_data',type=int,default=0)

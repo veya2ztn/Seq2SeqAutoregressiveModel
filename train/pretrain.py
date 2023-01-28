@@ -36,6 +36,7 @@ from model.patch_model import *
 from model.time_embeding_model import *
 from model.physics_model import *
 from model.othermodels import *
+from model.FeaturePickModel import *
 from utils.params import get_args
 from utils.tools import getModelSize, load_model, save_model
 from utils.eval import single_step_evaluate
@@ -2245,7 +2246,8 @@ def parse_default_args(args):
     dataset_kargs['time_reverse_flag'] = 'only_forward' if not hasattr(args,'time_reverse_flag') else args.time_reverse_flag
     
     dataset_kargs['use_offline_data'] = args.use_offline_data
-
+    dataset_kargs['add_ConstDirectly'] = args.add_ConstDirectly
+    dataset_kargs['add_LunaSolarDirectly'] = args.add_LunaSolarDirectly
     if hasattr(args,'dataset_flag') and args.dataset_flag:dataset_kargs['dataset_flag']= args.dataset_flag
     if hasattr(args,'time_intervel'):dataset_kargs['time_intervel']= args.time_intervel
     if hasattr(args,'cross_sample'):dataset_kargs['cross_sample']= args.cross_sample
@@ -2472,7 +2474,8 @@ def build_model(args):
     model.consistancy_activate_wall = args.consistancy_activate_wall
     model.mean_path_length = torch.zeros(1)
     if 'UVT' in args.wrapper_model:
-        assert "55" in args.dataset_flag
+        print(f"notice we are in property_pick mode, be careful. Current dataset is {args.dataset_type}")
+        #assert "55" in args.dataset_flag
     return model
 
 def update_experiment_info(experiment_hub_path,epoch,args):
