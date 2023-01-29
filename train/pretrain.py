@@ -488,7 +488,7 @@ def full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,tar
     for t in hidden_fourcast_list:
         alpha = model.consistancy_alpha[len(full_fourcast_error_list)]
         if alpha>0 and t is not None:
-            hidden_fourcast = model(t)
+            hidden_fourcast = model(t )
             hidden_error  = criterion(ltmv_pred,hidden_fourcast) # can also be criterion(target,hidden_fourcast)
             hidden_fourcast_list_next.append(hidden_fourcast)
             full_fourcast_error_list.append(hidden_error.item())
@@ -582,7 +582,9 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
             iter_info_pool[f'{status}_rmse_gpu{gpu}_timestep{i}']     =  compute_rmse(normlized_field_predict,normlized_field_real).mean().item()
         if model.random_time_step_train and i >= random_run_step:
             break
-    if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall: 
+    if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall:
+        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode) 
+        ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
         hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,None,hidden_fourcast_list)
         if not model.consistancy_eval:loss+= extra_loss2
         for iii, val in enumerate(full_fourcast_error_list):
