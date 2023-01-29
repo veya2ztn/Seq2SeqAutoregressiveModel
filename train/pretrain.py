@@ -2704,7 +2704,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             logsys.record('learning rate',optimizer.param_groups[0]['lr'],epoch, epoch_flag='epoch')
             train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
             freeze_learning_rate = (args.scheduler_min_lr and optimizer.param_groups[0]['lr'] < args.scheduler_min_lr)  and (args.scheduler_inital_epochs and epoch > args.scheduler_inital_epochs)
-            if (not args.more_epoch_train) and (lr_scheduler is not None) and freeze_learning_rate:lr_scheduler.step(epoch)
+            if (not args.more_epoch_train) and (lr_scheduler is not None) and not freeze_learning_rate:lr_scheduler.step(epoch)
             #torch.cuda.empty_cache()
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys,status='train') if 'small' in args.train_set else -1
             fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
