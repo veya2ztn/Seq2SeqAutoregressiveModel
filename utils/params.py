@@ -112,6 +112,7 @@ def get_args_parser():
     parser.add_argument('--num-layers', type=int, default=12)
     parser.add_argument('--checkpoint-activations', action='store_true')
     parser.add_argument('--autoresume', action='store_true')
+    parser.add_argument('--find_unused_parameters', type=int, default=0)
     
     parser.add_argument('--wrapper_model', default='', type=str, help='Name of model to train',
         #   choices=["",'DeltaModel','EulerEquationModel','ConVectionModel',
@@ -173,7 +174,7 @@ def get_args_parser():
     parser.add_argument('--patience-epochs', type=int, default=10, metavar='N', help='patience epochs for Plateau LR scheduler (default: 10')
     parser.add_argument('--decay-rate', '--dr', type=float, default=0.1, metavar='RATE', help='LR decay rate (default: 0.1)')
     parser.add_argument('--scheduler_inital_epochs', type=int, default=None)
-    
+    parser.add_argument('--scheduler_min_lr', type=float, default=None)
     
 
 
