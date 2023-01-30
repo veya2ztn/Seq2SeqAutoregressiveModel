@@ -482,6 +482,9 @@ def once_forward(model,i,start,end,dataset,time_step_1_mode):
     else:   
        return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
 
+
+
+
 def full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list):
     hidden_fourcast_list_next=[]
     extra_loss=0
@@ -1259,7 +1262,10 @@ def calculate_next_level_error_once(model, x_t_1, error):
     '''
     calculate m(x_t_1)(x_t_1 - \hat{x_t_1})
     '''
+    if  len(x_t_1.shape) == 3:x_t_1=x_t_1[None]
     assert len(x_t_1.shape) == 4
+    if  len(error.shape) == 3:error=error[None]
+    assert len(error.shape) == 4
     grad       = functorch.jvp(model, (x_t_1,), (error,))[1]  #(B, Xdimension)
     return grad
 
@@ -1269,6 +1275,13 @@ def calculate_next_level_error(model, x_t_1, error_list):
     '''
     assert len(x_t_1.shape) == 4
     grads = vmap(calculate_next_level_error_once, (None,None, 0),randomness='same')(model,x_t_1,error_list)#(N, B, Xdimension)
+    return grads
+def calculate_next_level_error_batch(model, x_t_1, error_list):
+    '''
+    calculate m(x_t_1)(x_t_1 - \hat{x_t_1})
+    '''
+    assert len(x_t_1.shape) == 4
+    grads = vmap(calculate_next_level_error_once, (None,0, 0),randomness='same')(model,x_t_1,error_list)#(N, B, Xdimension)
     return grads
 
 def get_tensor_norm(tensor,dim):#<--use mse way
@@ -1336,7 +1349,13 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
     logsys.add_table('multi_epoch_fourcast_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     
 
+
+
 def get_error_propagation(last_pred, last_target, now_target, now_pred, virtual_function,approx_epsilon_lists, tangent_position='right'):
+    #### below is for error esitimation that do not access intermediate level of epsilon
+    #### for example, epsilon_{t+6}^{III}. Instead, we use M = J(0.5*X_{t+5}^O + 0.5*X_{t+5}^I ) to calculate error
+    #### recurrently. That is  epsilon_{t+6}^{III} = epsilon_{t+6}^{I} + M*epsilon_{t+5}^{II} where epsilon_{t+5}^{II} is
+    #### calculated from epsilon_{t+5}^{II} = epsilon_{t+5}^{I} + M*epsilon_{t+4}^{I}
     the_abs_error_measure = None
     the_est_error_measure = None
     epsilon_alevel_v_real = None
@@ -1348,8 +1367,8 @@ def get_error_propagation(last_pred, last_target, now_target, now_pred, virtual_
     the_abc_error_measure = None
     if len(approx_epsilon_lists) > 0:
         gradient_value          = last_target # batch[i-1]
-        epsilon_alevel_2_real   = now_target - virtual_function(last_target).unsqueeze(0) # ltmv_true - model(last_target)
-        epsilon_blevel_2_real   = (now_target - now_pred).unsqueeze(0)
+        epsilon_alevel_2_real   = now_target - virtual_function(last_target).unsqueeze(0) # ltmv_true - model(last_target) ## epsilon_{t+4}^I
+        epsilon_blevel_2_real   = (now_target - now_pred).unsqueeze(0)                                                     ## epsilon_{t+4}^{III}
         normvalue               = get_tensor_norm(approx_epsilon_lists,dim=(2,3,4))
         
         if tangent_position == 'right':
@@ -1361,7 +1380,8 @@ def get_error_propagation(last_pred, last_target, now_target, now_pred, virtual_
         else:
             raise NotImplementedError
 
-        approx_epsilon_lists    = calculate_next_level_error(virtual_function, tangent_x, approx_epsilon_lists) #(N+1,B,Xdimension)
+        approx_epsilon_lists    = calculate_next_level_error(virtual_function, tangent_x, approx_epsilon_lists) 
+        ## M*epsilon_{t+3}^{I}, M*epsilon_{t+3}^{II}, M*epsilon_{t+3}^{III}, M*epsilon_{t+3}^{IV}
         epsilon_Jacobian_val    = get_tensor_norm(approx_epsilon_lists,dim=(2,3,4))
         epsilon_Jacobian_valn   = epsilon_Jacobian_val/normvalue
         epsilon_Jacobian_val    = epsilon_Jacobian_val[1:]
@@ -1370,7 +1390,7 @@ def get_error_propagation(last_pred, last_target, now_target, now_pred, virtual_
         approx_epsilon_lists    = approx_epsilon_lists[1:]  #(N,B)
         epsilon_blevel_2_approx = epsilon_alevel_2_real + approx_epsilon_lists #(N,B,Xdimension) e+m(t)e
         
-        the_abs_error_measure   = get_tensor_norm(epsilon_blevel_2_approx - epsilon_blevel_2_real,dim=(2,3,4))#(N,B)
+        the_abs_error_measure   = get_tensor_norm(epsilon_blevel_2_approx - epsilon_blevel_2_real,dim=(2,3,4))#(N,B) # || epsilon_{t+3}^{III} - epsilon_{t+3}^{I} - M epsilon_{t+2}^{II} ||
         the_abc_error_measure   = get_tensor_norm(epsilon_blevel_2_approx,dim=(2,3,4)) - get_tensor_norm(epsilon_blevel_2_real,dim=(2,3,4))#(N,B)
         epsilon_blevel_v_real   = get_tensor_norm(epsilon_blevel_2_real,dim=(3,4))#(N,B,P)
         epsilon_alevel_v_real   = get_tensor_norm(epsilon_alevel_2_real,dim=(3,4))#(N,B,P)
@@ -1400,8 +1420,84 @@ def get_error_propagation(last_pred, last_target, now_target, now_pred, virtual_
             epsilon_Jacobian_a,
             the_angle_between_two    )
 
+def once_forward_error_evaluation(model,now_level_batch):
+    target_level_batch = now_level_batch[:,1:]
+    error_record  = []
+    real_res_error_record = []
+    appx_res_error_record = []
+    real_appx_delta_record  = []
+    appx_res_angle_record = []
+    real_res_angle_record = []
+    real_res_error = appx_res_error = real_appx_delta = first_level_batch = None
+    ltmv_preds =  []
+    while now_level_batch.shape[1]>1:
 
+        B,L = now_level_batch.shape[:2]
+        tshp= now_level_batch.shape[2:]
+        next_level_batch         = model(now_level_batch[:,:-1].flatten(0,1)).reshape(B,L-1,*tshp)
 
+        next_level_error_tensor  = target_level_batch[:,-(L-1):] - next_level_batch 
+        next_level_error         = get_tensor_norm(next_level_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P)
+        
+        if first_level_batch is None:
+            first_level_batch        = next_level_batch
+            first_level_error_tensor = next_level_error_tensor
+        else:
+            real_res_error_tensor = first_level_batch[:,-(L-1):] - next_level_batch
+            real_res_error        = get_tensor_norm(real_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
+            base_error = first_level_error_tensor[:,-(L-1):]
+            real_res_angle        = torch.einsum('btpwh,btpwh->bt',real_res_error_tensor, base_error)/(torch.sum(real_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
+            #real_res_error_alpha  = real_res_error/error_record[-1][:,-(L-1):] #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
+            real_appx_delta       = get_tensor_norm(real_res_error_tensor - appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
+            
+            real_res_error_record.append(real_res_error)
+            real_appx_delta_record.append(real_appx_delta)
+            real_res_angle_record.append(real_res_angle)
+        ltmv_preds.append(next_level_error_tensor[:,0:1])
+        error_record.append(next_level_error)
+        if L>2:
+            tangent_x             = (target_level_batch[:,-(L-2):] + next_level_batch[:,-(L-2):])/2
+            appx_res_error_tensor = calculate_next_level_error_batch(model, tangent_x.flatten(0,1), next_level_error_tensor[:,-(L-2):].flatten(0,1)).reshape(B,L-2,*tshp)
+            base_error = first_level_error_tensor[:,-(L-2):]
+            appx_res_angle        = torch.einsum('btpwh,btpwh->bt',appx_res_error_tensor, base_error)/(torch.sum(appx_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
+            appx_res_error        = get_tensor_norm(appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
+            appx_res_error_record.append(appx_res_error)
+            appx_res_angle_record.append(appx_res_angle)
+            #appx_res_error_alpha  = appx_res_error/error_record[-1][:,-(L-1):]  #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
+        now_level_batch = next_level_batch
+    error_record          = torch.cat(error_record,1).detach().cpu()
+    real_res_error_record = torch.cat(real_res_error_record,1).detach().cpu()
+    real_appx_delta_record= torch.cat(real_appx_delta_record,1).detach().cpu()
+    real_res_angle_record = torch.cat(real_res_angle_record,1).detach().cpu()
+    appx_res_error_record = torch.cat(appx_res_error_record,1).detach().cpu()
+    appx_res_angle_record = torch.cat(appx_res_angle_record,1).detach().cpu()
+
+    ltmv_preds = torch.cat(ltmv_preds,1)
+    ltmv_trues = target_level_batch
+    error_information={
+        "error_record"          :error_record,
+        "real_res_error_record" :real_res_error_record,
+        "real_appx_delta_record":real_appx_delta_record,
+        "real_res_angle_record" :real_res_angle_record,
+        "appx_res_error_record" :appx_res_error_record,
+        "appx_res_angle_record" :appx_res_angle_record,
+    }
+    return ltmv_preds, ltmv_trues, error_information
+
+def recovery_tensor(dataset,start,end,ltmv_pred,target):
+        if 'Delta' in dataset.__class__.__name__:
+            with torch.no_grad():
+                ltmv_pred = dataset.combine_base_delta(start[-1][1], start[-1][0]) 
+                target    = dataset.combine_base_delta(      end[1],       end[0])  
+        elif 'deseasonal' in dataset.__class__.__name__:
+            with torch.no_grad():
+                ltmv_pred = dataset.addseasonal(start[-1][1], start[-1][0])
+                target    = dataset.addseasonal(end[1], end[0])
+        elif '68pixelnorm' in dataset.__class__.__name__:
+            with torch.no_grad():
+                ltmv_pred = dataset.recovery(start[-1])
+                target    = dataset.recovery(end)    
+        return ltmv_pred,target
 
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
                     save_prediction_first_step=None,save_prediction_final_step=None,
@@ -1417,18 +1513,10 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
     time_step_1_mode=False
     batch_variance_line_pred = [] 
     batch_variance_line_true = []
-    the_abs_error_measure_list = []
-    the_est_error_measure_list = []
-    the_abc_error_measure_list = []
-    epsilon_alevel_v_real_list = []
-    epsilon_blevel_v_real_list = []
-    epsilon_Jacobian_val_list = []
-    epsilon_Jacobian_valn_list = []
-    epsilon_Jacobian_a_list = []
-    the_angle_between_two_list = []
     # we will also record the variance for each slot, assume the input is a time series of data
     # [ (B, P, W, H) -> (B, P, W, H) -> .... -> (B, P, W, H) ,(B, P, W, H)]
     # we would record the variance of each batch on the location (W,H)
+    error_information = None
     clim = model.clim
     
     start = batch[0:model.history_length] # start must be a list    
@@ -1439,61 +1527,49 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
             # each tensor is like (B, 70, 32, 64) or (B, P, Z, W, H)
             snap_line.append([len(snap_line), get_tensor_value(tensor,snap_index, time=model.history_length),'input'])
     
-    approx_epsilon_lists = []
-    last_pred = last_target = None
-    for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
-        end = batch[i:i+model.pred_len]
-        end = end[0] if len(end) == 1 else end
-        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
-        if 'Delta' in dataset.__class__.__name__:
-            with torch.no_grad():
-                ltmv_pred = dataset.combine_base_delta(start[-1][1], start[-1][0]) 
-                target    = dataset.combine_base_delta(      end[1],       end[0])  
-        elif 'deseasonal' in dataset.__class__.__name__:
-            with torch.no_grad():
-                ltmv_pred = dataset.addseasonal(start[-1][1], start[-1][0])
-                target    = dataset.addseasonal(end[1], end[0])
-        elif '68pixelnorm' in dataset.__class__.__name__:
-            with torch.no_grad():
-                ltmv_pred = dataset.recovery(start[-1])
-                target    = dataset.recovery(end)
-                 
-        for extra_info_from_model in extra_info_from_model_list:
-            for key, val in extra_info_from_model.items():
-                if i not in extra_info:extra_info[i] = {}
-                if key not in extra_info[i]:extra_info[i][key] = []
-                extra_info[i][key].append(val)
-
-        ltmv_trues = dataset.inv_normlize_data([target])[0]#.detach().cpu()
-        ltmv_preds = ltmv_pred#.detach().cpu()
-
-        if do_error_propagration_monitor and len(approx_epsilon_lists) < 9: # only do this 8 times
-            tangent_position = 'mid'
-            (last_target, last_pred,approx_epsilon_lists,
-                the_abs_error_measure,the_est_error_measure,the_abc_error_measure,
-                epsilon_alevel_v_real,epsilon_blevel_v_real,epsilon_Jacobian_val,epsilon_Jacobian_valn,epsilon_Jacobian_a,the_angle_between_two
-            ) = get_error_propagation(last_pred, last_target, ltmv_trues, ltmv_preds, model ,approx_epsilon_lists, tangent_position=tangent_position)
-            if the_abs_error_measure is not None: the_abs_error_measure_list.append(the_abs_error_measure.detach().cpu())
-            if the_est_error_measure is not None: the_est_error_measure_list.append(the_est_error_measure.detach().cpu())
-            if the_abc_error_measure is not None: the_abc_error_measure_list.append(the_abc_error_measure.detach().cpu())
-            if epsilon_alevel_v_real is not None: epsilon_alevel_v_real_list.append(epsilon_alevel_v_real.detach().cpu())
-            if epsilon_blevel_v_real is not None: epsilon_blevel_v_real_list.append(epsilon_blevel_v_real.detach().cpu())
-            if epsilon_Jacobian_val  is not None: epsilon_Jacobian_val_list.append(epsilon_Jacobian_val.detach().cpu())
-            if epsilon_Jacobian_valn is not None: epsilon_Jacobian_valn_list.append(epsilon_Jacobian_valn.detach().cpu())
-            if epsilon_Jacobian_a is not None: epsilon_Jacobian_a_list.append(epsilon_Jacobian_a.detach().cpu())
-            if the_angle_between_two is not None: the_angle_between_two_list.append(the_angle_between_two.detach().cpu())
-        if model.pred_len > 1:
+    # approx_epsilon_lists = []
+    # last_pred = last_target = None
+    i = model.history_length
+    while i<len(batch):#for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
+        
+        if do_error_propagration_monitor and i < do_error_propagration_monitor:
+            # in this mode, we will concat all batch to accelarate computing. so far, only support batch=[X_{t},X_{t+1},X_{t+2}]
+            monitor_batch = torch.stack(batch[:do_error_propagration_monitor],1) #[X_{t},X_{t+1},...,X_{t+2}]-> (B,T,P,W,H)
+            ltmv_preds, ltmv_trues,error_information = once_forward_error_evaluation(model,monitor_batch)
+            i = do_error_propagration_monitor-1
+            start = [ltmv_preds[:,-1]]
+            time_list  = range(1,do_error_propagration_monitor)
             ltmv_trues = ltmv_trues.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)
-            ltmv_preds = ltmv_preds.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)\
-            time_list  = range(i,i+model.pred_len)
+            ltmv_preds = ltmv_preds.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)
         else:
-            ltmv_trues = ltmv_trues.unsqueeze(0)
-            ltmv_preds = ltmv_preds.unsqueeze(0)
-            time_list  = [i]
+            end = batch[i:i+model.pred_len]
+            end = end[0] if len(end) == 1 else end
+            ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
+            ltmv_pred, target = recovery_tensor(dataset,start,end,ltmv_pred,target)
+            ltmv_trues = dataset.inv_normlize_data([target])[0]#.detach().cpu() ### use CUDA computing
+            ltmv_preds = ltmv_pred#.detach().cpu()
+            time_list  = range(i,i+model.pred_len)
+            for extra_info_from_model in extra_info_from_model_list:
+                for key, val in extra_info_from_model.items():
+                    if i not in extra_info:extra_info[i] = {}
+                    if key not in extra_info[i]:extra_info[i][key] = []
+                    extra_info[i][key].append(val)
+        
+            if model.pred_len > 1:
+                ltmv_trues = ltmv_trues.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)
+                ltmv_preds = ltmv_preds.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)
+            else:
+                ltmv_trues = ltmv_trues.unsqueeze(0)
+                ltmv_preds = ltmv_preds.unsqueeze(0)
+        
+        i+=model.pred_len         
 
-        if save_prediction_first_step is not None and i==model.history_length:save_prediction_first_step[idxes] = ltmv_pred.detach().cpu()
-        if save_prediction_final_step is not None and i==len(batch) - 1:save_prediction_final_step[idxes] = ltmv_pred.detach().cpu()
-
+        #######################################################
+        ############### computing processing ##################
+        #######################################################
+        ### save intermediate cost too much 
+        # if save_prediction_first_step is not None and i==model.history_length:save_prediction_first_step[idxes] = ltmv_pred.detach().cpu()
+        # if save_prediction_final_step is not None and i==len(batch) - 1:save_prediction_final_step[idxes] = ltmv_pred.detach().cpu()
         for j,(ltmv_true,ltmv_pred) in enumerate(zip(ltmv_trues,ltmv_preds)):
             time = time_list[j]
             ### enter CPU computing
@@ -1521,8 +1597,6 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
             hmse_series.append(hmse_value.detach().cpu())
         #torch.cuda.empty_cache()
 
-    
-
     accu_series = torch.stack(accu_series,1) # (B,fourcast_num,property_num)
     rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,property_num)
     hmse_series = torch.stack(hmse_series,1) # (B,fourcast_num,property_num)
@@ -1535,34 +1609,12 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
         fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse,'std_pred':std_pred,'std_true':std_true,'snap_line':[],
                                       "hmse":hmse}
     
-    if len(the_abs_error_measure_list) > 0 :
-        # `the_abs_error_measure_list` is a list of [    (1,B) , (2,B), (3,B), ..., (8,B) ]
-        the_abs_error_measure_list = torch.cat(the_abs_error_measure_list).permute(1,0) #(36, B) -> (B, 36)
-        the_est_error_measure_list = torch.cat(the_est_error_measure_list).permute(1,0) #(36, B) -> (B, 36)
-        the_angle_between_two_list = torch.cat(the_angle_between_two_list).permute(1,0) #(36, B) -> (B, 36)
-        the_abc_error_measure_list = torch.cat(the_abc_error_measure_list).permute(1,0) #(36, B) -> (B, 36)
-        # `epsilon_Jacobian_val_list` is also a list of [    (1,B) , (2,B), (3,B), ..., (8,B) ]
-        epsilon_Jacobian_val_list  = torch.cat(epsilon_Jacobian_val_list).permute(1,0)
-        epsilon_Jacobian_valn_list = torch.cat(epsilon_Jacobian_valn_list).permute(1,0)
-        # `epsilon_blevel_v_real_list` is a list of values [ (1,B,P) (1,B,P) (1,B), ... , (1,B)]
-        epsilon_blevel_v_real_list = torch.cat(epsilon_blevel_v_real_list).permute(1,0,2)#(B, L, P)
-        epsilon_alevel_v_real_list = torch.cat(epsilon_alevel_v_real_list).permute(1,0,2)#(B, L, P)
-        epsilon_Jacobian_a_list    = torch.cat(epsilon_Jacobian_a_list).permute(1,0)#
-        for idx, abs_error, est_error,abc_error,epsilon_alevel_v,epsilon_blevel_v,epsilon_Jacobian,epsilon_Jacobian_norm,epsilon_Jacobian_A_norm,the_angle_between_two in zip(idxes,
-                the_abs_error_measure_list,the_est_error_measure_list,the_abc_error_measure_list,
-                epsilon_alevel_v_real_list,epsilon_blevel_v_real_list,
-                epsilon_Jacobian_val_list,epsilon_Jacobian_valn_list,epsilon_Jacobian_a_list,
-                the_angle_between_two_list):
-            fourcastresult[idx.item()]['abs_error'] = abs_error
-            fourcastresult[idx.item()]['est_error'] = est_error
-            fourcastresult[idx.item()]['abc_error'] = abc_error
-            fourcastresult[idx.item()]['alevel_v'] = epsilon_alevel_v
-            fourcastresult[idx.item()]['blevel_v'] = epsilon_blevel_v
-            fourcastresult[idx.item()]['Jacobianv'] = epsilon_Jacobian
-            fourcastresult[idx.item()]['JacobV_N'] = epsilon_Jacobian_norm
-            fourcastresult[idx.item()]['JacobVA_N'] = epsilon_Jacobian_A_norm
-            fourcastresult[idx.item()]['Angle'] = the_angle_between_two
-            
+    if error_information is not None:
+        for key, tensor in error_information.items():
+            for idx,t in zip(idxes,tensor):
+                fourcastresult[idx.item()][key]  = t
+
+
     if snap_index is not None:
         for batch_id,select_batch_id in enumerate(snap_index[0]):
             for snap_each_fourcast_time in snap_line:
@@ -1854,9 +1906,9 @@ def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True):
     gpu       = dist.get_rank() if hasattr(model,'module') else 0
     fourcastresult_path = os.path.join(logsys.ckpt_root,f"fourcastresult.gpu_{gpu}")
     if not os.path.exists(fourcastresult_path) or  args.force_fourcast:
-        if args.force_fourcast:
+        if args.force_fourcast and  gpu==0:
             print("re-fourcast, and we will remove old fourcastresult")
-            os.system("rm {logsys.ckpt_root}/fourcastresult.gpu_*")
+            os.system(f"rm {logsys.ckpt_root}/fourcastresult.gpu_*")
         logsys.info(f"use dataset ==> {test_dataset.__class__.__name__}")
         logsys.info("starting fourcast~!")
         with open(os.path.join(logsys.ckpt_root,'weight_path'),'w') as f:f.write(args.pretrain_weight)
