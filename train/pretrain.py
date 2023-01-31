@@ -527,6 +527,7 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
     for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
         end = batch[i:i+model.pred_len]
         end = end[0] if len(end) == 1 else end
+
         ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
         
             
@@ -2697,7 +2698,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     args.pretrain_weight = args.pretrain_weight.strip()
     logsys.info(f"loading weight from {args.pretrain_weight}")
     start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
-                        only_model= ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu))
+                        only_model= ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu),strict=bool(args.load_model_strict))
     start_epoch = start_epoch if args.continue_train else 0
 
     if args.more_epoch_train:

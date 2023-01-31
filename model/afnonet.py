@@ -313,6 +313,7 @@ class AFNONet(BaseModel):
         self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim,conv_simple=conv_simple)
         num_patches      = self.patch_embed.num_patches
         patch_size       = self.patch_embed.patch_size
+        self.patch_size = patch_size
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
         self.unique_up_sample_channel =unique_up_sample_channel= out_chans if unique_up_sample_channel == 0 else unique_up_sample_channel
@@ -355,9 +356,11 @@ class AFNONet(BaseModel):
                 conf_list[slot]['kernel_size'].append(conv_set[patch][slot][0])
                 conf_list[slot]['stride'].append(conv_set[patch][slot][1])
                 conf_list[slot]['padding'].append(conv_set[patch][slot][2])
+        self.conf_list = conf_list
         #transposeconv_engine = [nn.ConvTranspose1d,nn.ConvTranspose2d,nn.ConvTranspose3d][len(img_size)-1]
-        transposeconv_engine = transposeconv_engines(len(img_size),conv_simple=conv_simple)
-        self.pre_logits = nn.Sequential(OrderedDict([
+        self.transposeconv_engine =transposeconv_engine= transposeconv_engines(len(img_size),conv_simple=conv_simple)
+        self.pre_logits = nn.Sequential(
+        OrderedDict([
             ('conv1', transposeconv_engine(embed_dim, unique_up_sample_channel*16, **conf_list[0])),
             ('act1', nn.Tanh()),
             ('conv2', transposeconv_engine(unique_up_sample_channel*16, unique_up_sample_channel*4, **conf_list[1])),
@@ -423,7 +426,7 @@ class AFNONet(BaseModel):
         else:
             pass
 
-    def forward(self, x):
+    def forward(self, x, return_feature=False):
         ### we assume always feed the tensor (B, p*z, h, w)
         shape = x.shape
         #print(x.shape)
@@ -438,6 +441,8 @@ class AFNONet(BaseModel):
         #timer.restart(level=0)
         #print(torch.std_mean(x))
         x = self.forward_features(x);#print(torch.std_mean(x))
+        if return_feature:
+            fea = x
         #timer.record('forward_features',level=0)
         x = self.final_dropout(x)
         #timer.record('final_dropout',level=0)
@@ -455,6 +460,8 @@ class AFNONet(BaseModel):
             x = x[...,pad:-pad,:]
         #timer.show_stat()
         #print("============================")
+        if return_feature:
+            return x,fea
         return x
 
 from vit_pytorch import ViT

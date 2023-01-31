@@ -4,13 +4,15 @@ import torch.nn.functional as F
 import torch
 import numpy as np
 from .afnonet import AFNONet,BaseModel
+from collections import OrderedDict
+
 
 class FeaturePickModel(BaseModel):
     def __init__(self, args, backbone):
         super().__init__()
         self.backbone =  backbone
-    def forward(self, Field):
-        return self.backbone(Field)
+    def forward(self, Field,**kargs):
+        return self.backbone(Field,**kargs)
 
 class OnlyPredSpeed(FeaturePickModel):
     pred_channel_for_next_stamp = list(range(28))
@@ -85,12 +87,18 @@ class CombM_UVTP2p2uvt_1By1(CombM_UVTP2p2uvt):
     def enter_into_phase1(self):
         self.phase = "UVTP2(p)->UVTP(p)2(u)(v)(t)"
         self.pred_channel_for_next_stamp = list(range(55))
+        self.UVTP2p.eval()
         for p in self.UVTP2p.parameters():p.requires_grad=False
+        self.UVTPp2uvt.train()
         for p in self.UVTPp2uvt.parameters():p.requires_grad=True
+        # notice a totally freeze stratagy should free running mean and runing var in model as model.eval()
+        # However, for example, the baseline model `AFNONET` only has LayerNorm which is not effect by the model.eval() and the dropout=0 when setting
     def enter_into_phase2(self):
         self.phase = "UVTPp2(u)(v)(t)->(u)(v)(t)p2[p]"
         self.pred_channel_for_next_stamp = list(range(14*3,14*4-1))
+        self.UVTP2p.train()
         for p in self.UVTP2p.parameters():p.requires_grad=True
+        self.UVTPp2uvt.eval()
         for p in self.UVTPp2uvt.parameters():p.requires_grad=False
     def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
         if not eval_mode:
@@ -118,6 +126,63 @@ class CombM_UVTP2p2uvt_1By1(CombM_UVTP2p2uvt):
             uvt = self.UVTPp2uvt(torch.cat([UVTP,p],1))
             p  = self.UVTP2p(torch.cat([uvt,p],1))
             return p #(B,13,32,64)
+
+
+class CombM_UVTP2p2uvt2p(BaseModel):
+    phase = "eval_mode"
+    def __init__(self,  args, backbone1, backbone2,ckpt1="",ckpt2=""):
+        super().__init__()
+        self.UVTP2p  =  UVTP2p(args,backbone1)
+        print(f"load UVTP2p model from {ckpt1}")
+        if ckpt1:self.UVTP2p.load_state_dict(torch.load(ckpt1, map_location='cpu')['model'])
+        self.UVTPp2uvt = UVTPp2uvt(args,backbone2)
+        print(f"load UVTPp2uvt model from {ckpt2}")
+        if ckpt2:self.UVTPp2uvt.load_state_dict(torch.load(ckpt2, map_location='cpu')['model'])
+        assert self.UVTP2p.backbone.patch_size == self.UVTPp2uvt.backbone.patch_size
+        
+        embed_dim = self.UVTP2p.backbone.embed_dim + self.UVTPp2uvt.backbone.embed_dim
+        unique_up_sample_channel = self.UVTP2p.backbone.unique_up_sample_channel
+        conf_list = self.UVTP2p.backbone.conf_list
+        transposeconv_engine = self.UVTP2p.backbone.transposeconv_engine
+        out_chans = 13
+        self.refine_layer =  nn.Sequential(OrderedDict([
+            ('conv1', transposeconv_engine(embed_dim, unique_up_sample_channel*16, **conf_list[0])),
+            ('act1', nn.Tanh()),
+            ('conv2', transposeconv_engine(unique_up_sample_channel*16, unique_up_sample_channel*4, **conf_list[1])),
+            ('act2', nn.Tanh()),
+            ('conv3', transposeconv_engine(unique_up_sample_channel*4,                   out_chans, **conf_list[2]))
+        ]))
+    
+    def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
+        self.UVTP2p.eval()
+        for p in self.UVTP2p.parameters():p.requires_grad=False
+        self.UVTPp2uvt.eval()
+        for p in self.UVTPp2uvt.parameters():p.requires_grad=False
+        if not eval_mode:
+            self.phase = "train_mode"
+            self.pred_channel_for_next_stamp   = list(range(14*3,14*4-1))
+        else:
+            self.phase = "eval_mode"
+            self.pred_channel_for_next_stamp = list(range(55))
+
+    def forward(self, UVTP):
+        B, P, L, W, H = UVTP.shape 
+        assert L==2
+        UVTP1=UVTP[:,:,0]
+        UVTP2=UVTP[:,:,1]
+        # we will inject 3 time stamp data each iter the first two will stack 
+        # and achieve a (B,2,55,32,64) tensor and the last one is target
+        # in "UVTP2(p)->UVTP(p)2(u)(v)(t)" mode, we fix UVTP2p and train UVTPp2uvt
+        # so we only need the second time stamp data and target time stamp
+        
+        UVTP     = UVTP2
+        p,fea1   = self.UVTP2p(UVTP,return_feature = True)
+        uvt,fea2 = self.UVTPp2uvt(torch.cat([UVTP,p],1),return_feature = True)
+        p_refine = self.refine_layer(torch.cat([fea1,fea2],1))
+        if self.phase == "eval_mode":
+            return torch.cat([uvt,p_refine],1)#(B,42,32,64)
+        else:
+            return p_refine #(B,13,32,64)
         
 class CombM_UVTP2p2uvt_1By0(CombM_UVTP2p2uvt_1By1):
     def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
@@ -130,7 +195,6 @@ class CombM_UVTP2p2uvt_0By1(CombM_UVTP2p2uvt_1By1):
         else:
            self.enter_into_phase1()
 
-
 class CombM_UVTP2p2uvt_2By1(CombM_UVTP2p2uvt_1By1):
     def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
         if not eval_mode:
@@ -138,6 +202,7 @@ class CombM_UVTP2p2uvt_2By1(CombM_UVTP2p2uvt_1By1):
             else:self.enter_into_phase2()
         else:
            self.enter_into_phase1()
+
 class CombM_UVTP2p2uvt_10By1(CombM_UVTP2p2uvt_1By1):
     def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
         if not eval_mode:

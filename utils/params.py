@@ -100,6 +100,7 @@ def get_args_parser():
     parser.add_argument('--model_type2',type=str,default=None)
     parser.add_argument('--backbone1_ckpt_path',type=str,default="")
     parser.add_argument('--backbone2_ckpt_path',type=str,default="")
+    parser.add_argument('--load_model_strict',type=int,default=1)
 
     parser.add_argument('--conv_simple',type=int,default=1)    
     #### fno parameters
