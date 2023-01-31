@@ -26,7 +26,7 @@ def get_args_parser():
     parser.add_argument('--rank', type=int, default=0, help='rank')
     parser.add_argument('--share_memory', type=int, default=1, help='share_memory_flag')
     parser.add_argument('--continue_train', type=int, default=0, help='continue_train')
-    parser.add_argument('--accumulation_steps', type=int, default=4, help='accumulation_steps')
+    parser.add_argument('--accumulation_steps', type=int, default=1, help='accumulation_steps')
     parser.add_argument('--use_wandb', type=str, default="off", help='when to activate wandb')
     parser.add_argument('--GDMod_type', type=str, default='off')
     parser.add_argument('--GDMod_lambda1', type=float, default=1)
