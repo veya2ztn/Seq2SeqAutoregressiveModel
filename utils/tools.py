@@ -20,7 +20,7 @@ def getModelSize(model):
     return param_sum, buffer_sum, all_size
 
 
-def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=None, only_model=False,loc = 'cuda:0'):
+def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=None, only_model=False,loc = 'cuda:0',strict=True):
 
     start_epoch, start_step = 0, 0
     min_loss = np.inf
@@ -30,7 +30,7 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
 
         if only_model:
             
-            model.load_state_dict(ckpt['model'])
+            model.load_state_dict(ckpt['model'],strict=strict)
             print("loading model weight success...........")
         else:
             model.load_state_dict(ckpt['model'])
