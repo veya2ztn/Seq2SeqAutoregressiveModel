@@ -22,18 +22,26 @@ class CrossSpeed(FeaturePickModel):
     train_channel_from_next_stamp = list(range(28))
     pred_channel_for_next_stamp = list(range(28,70))
 class UVTP2p(FeaturePickModel):
+    default_input_channel  = 55 
+    default_output_channel = 13  
     pred_channel_for_next_stamp = list(range(14*3,14*4-1))
 
     
 class UVTPp2uvt(FeaturePickModel):
+    default_input_channel  = 55 + 13
+    default_output_channel = 55 - 13 
     train_channel_from_next_stamp = list(range(14*3,14*4-1))
     pred_channel_for_next_stamp = list(range(14*3))
 
 
 class UVTP2uvt(FeaturePickModel):
+    default_input_channel  = 55 
+    default_output_channel = 55 - 13 
     pred_channel_for_next_stamp = list(range(14*3))
 
 class UVTp2uvt(FeaturePickModel):
+    default_input_channel  = 55 
+    default_output_channel = 55 - 13 
     train_channel_from_this_stamp = list(range(14*3))
     train_channel_from_next_stamp = list(range(14*3,14*4-1))
     pred_channel_for_next_stamp   = list(range(14*3))
@@ -271,6 +279,42 @@ class ReviseAFONet(BaseModel):
 
 
 class UVTPHSC2p(FeaturePickModel):
+    default_input_channel  = 73
+    default_output_channel = 13
     # make sure your dataset is 2D68N with add_ConstDirectly=True and add_LunaSolarDirectly=True
     pred_channel_for_next_stamp = list(range(14*3,14*4-1)) # pick up the potential index 
     
+class UVTPHSCp2uvth(FeaturePickModel):
+    default_input_channel  = 73 + 13
+    default_output_channel = 68 - 13
+    # make sure your dataset is 2D68N with add_ConstDirectly=True and add_LunaSolarDirectly=True
+    train_channel_from_next_stamp = list(range(14*3,14*4-1))
+    pred_channel_for_next_stamp   = list(range(14*3)) + list(range(14*4,68))
+
+class CombM_UVTPHSC2p2uvth(BaseModel):
+    default_input_channel1        = 73
+    default_output_channel1       = 13
+    default_input_channel2        = 73 + 13
+    default_output_channel2       = 68 - 13
+    pred_channel_for_next_stamp   = list(range(68))
+    def __init__(self,  args, backbone1, backbone2,ckpt1,ckpt2):
+        super().__init__()
+        self.UVTPHSC2p  =  UVTPHSC2p(args,backbone1)
+        print(f"load UVTPHSC2p model from {ckpt1}")
+        if ckpt1:self.UVTPHSC2p.load_state_dict(torch.load(ckpt1, map_location='cpu')['model'])
+
+        self.UVTPHSCp2uvth = UVTPHSCp2uvth(args,backbone2)
+        print(f"load UVTPHSCp2uvth model from {ckpt2}")
+        if ckpt2:self.UVTPHSCp2uvth.load_state_dict(torch.load(ckpt2, map_location='cpu')['model'])
+        
+    def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
+        for p in self.UVTPHSC2p.parameters():p.requires_grad=False
+        self.UVTPHSC2p.eval()
+
+    def forward(self, UVTPHSC):
+        #assert not next(self.UVTP2p.parameters()).requires_grad ## use torch.no_grad is same
+        p    = self.UVTPHSC2p(UVTPHSC)
+        uvth = self.UVTPHSCp2uvth(torch.cat([UVTPHSC,p],1))
+        uvtph= torch.cat([uvth[:,:42], p, uvth[:,42:]],1)
+        return uvtph
+
