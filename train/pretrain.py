@@ -223,7 +223,17 @@ def once_forward_with_timeconstant(model,i,start,end,dataset,time_step_1_mode):
 
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
-
+def feature_pick_check(model):
+    train_channel_from_this_stamp = None
+    if hasattr(model,"train_channel_from_this_stamp"): train_channel_from_this_stamp = model.train_channel_from_this_stamp
+    if hasattr(model,"module") and hasattr(model.module,"train_channel_from_this_stamp"): train_channel_from_this_stamp = model.module.train_channel_from_this_stamp
+    train_channel_from_next_stamp = None
+    if hasattr(model,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.train_channel_from_next_stamp
+    if hasattr(model,"module") and hasattr(model.module,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.module.train_channel_from_next_stamp
+    pred_channel_for_next_stamp = None
+    if hasattr(model,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.pred_channel_for_next_stamp
+    if hasattr(model,"module") and hasattr(model.module,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.module.pred_channel_for_next_stamp
+    return train_channel_from_this_stamp,train_channel_from_next_stamp,pred_channel_for_next_stamp
 def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     Field = Advection = None
 
@@ -248,15 +258,7 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     if model.training and model.input_noise_std and i==1:
         normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
 
-    train_channel_from_this_stamp = None
-    if hasattr(model,"train_channel_from_this_stamp"): train_channel_from_this_stamp = model.train_channel_from_this_stamp
-    if hasattr(model,"module") and hasattr(model.module,"train_channel_from_this_stamp"): train_channel_from_this_stamp = model.module.train_channel_from_this_stamp
-    train_channel_from_next_stamp = None
-    if hasattr(model,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.train_channel_from_next_stamp
-    if hasattr(model,"module") and hasattr(model.module,"train_channel_from_next_stamp"): train_channel_from_next_stamp = model.module.train_channel_from_next_stamp
-    pred_channel_for_next_stamp = None
-    if hasattr(model,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.pred_channel_for_next_stamp
-    if hasattr(model,"module") and hasattr(model.module,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.module.pred_channel_for_next_stamp
+    train_channel_from_this_stamp,train_channel_from_next_stamp,pred_channel_for_next_stamp = feature_pick_check(model)
 
     if train_channel_from_this_stamp:
         assert len(normlized_Field.shape)==4
@@ -289,13 +291,19 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     if isinstance(start[0],(list,tuple)):
         start = start[1:]+[[ltmv_pred, 0 , end[-1]]]
     elif pred_channel_for_next_stamp:
-        next_tensor = target.clone().type(ltmv_pred.dtype)
-        next_tensor[:,pred_channel_for_next_stamp] = ltmv_pred
+        if target is not None:
+            next_tensor = target.clone().type(ltmv_pred.dtype)
+            next_tensor[:,pred_channel_for_next_stamp] = ltmv_pred
+        else:
+            next_tensor = None
         start     = start[1:] + [next_tensor]
     elif dataset.dataset_flag=='2D70N' and not model.training: # this only let we omit constant pad at level 55 and 69
-        next_tensor = target.clone().type(ltmv_pred.dtype)
-        picked_property = list(range(0,14*4-1)) + list(range(14*4,14*5-1))
-        next_tensor[:,picked_property] = ltmv_pred[:,picked_property]
+        if target is not None:
+            next_tensor = target.clone().type(ltmv_pred.dtype)
+            picked_property = list(range(0,14*4-1)) + list(range(14*4,14*5-1))
+            next_tensor[:,picked_property] = ltmv_pred[:,picked_property]
+        else:
+            next_tensor = None
         start     = start[1:] + [next_tensor]
     else:
         start     = start[1:] + [ltmv_pred]
@@ -303,7 +311,7 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     #print(target.shape,torch.std_mean(target))
 
     
-    if pred_channel_for_next_stamp:
+    if pred_channel_for_next_stamp and target is not None:
         target = target[:,pred_channel_for_next_stamp]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
@@ -544,18 +552,38 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     # z3 
     # so we need a flag 
     ####################################################
+    train_channel_from_this_stamp,train_channel_from_next_stamp,pred_channel_for_next_stamp = feature_pick_check(model)
+
     for i in range(len(model.activate_stamps)): # generate L , L-1, L-2
         # the least coding here
         # now_level_batch = model(now_level_batch[:,:(L-i)].flatten(0,1)).reshape(B,(L-i),*tshp)  
         # all_level_batch.append(now_level_batch)
         activate_stamp      = model.activate_stamps[i]
         last_activate_stamp = all_level_record[-1]
-        
-        picked_channel      = [last_activate_stamp.index(t-1) for t in activate_stamp if t-1 in last_activate_stamp]
+        picked_stamp = []
+        for t in activate_stamp:
+            picked_stamp.append(last_activate_stamp.index(t-1)) # if t-1 not in last_activate_stamp, raise Error
+        start = [now_level_batch[:,picked_stamp].flatten(0,1)]
 
-        now_level_batch     = model(now_level_batch[:,picked_channel].flatten(0,1)).reshape(B,len(picked_channel),*tshp)  
+        if pred_channel_for_next_stamp or train_channel_from_next_stamp:
+            if pred_channel_for_next_stamp  : assert t<=L # save key when prediction need last stamp information
+            if train_channel_from_next_stamp: assert t< L           
+            target_stamp = []
+            for t in activate_stamp:
+                target_stamp.append(last_activate_stamp.index(t) if t   in last_activate_stamp  else last_activate_stamp.index(t-1))
+                # if the target stamp not appear in this batch, use current stamp fill, but we need prohibit this prediction 
+                # to do next forward prediction. Thus we limit in t < L 
+
+            # notice when activate pred_channel_for_next_stamp, the unpredicted part should be filled by the part from next stamp 
+            # but the loss should be calculate only on the predicted part.
+            end = now_level_batch[:,target_stamp].flatten(0,1)
+        else:
+            end = None
+        _, _, _, _, start    = once_forward_normal(model,i,start,end,dataset,False)
+        now_level_batch      = start[-1].reshape(B,len(picked_stamp),*tshp)  
+        #now_level_batch     = model(now_level_batch[:,picked_stamp].flatten(0,1)).reshape(B,len(picked_stamp),*tshp)  
         all_level_batch.append(now_level_batch)
-        all_level_record.append([last_activate_stamp[t]+1 for t in picked_channel])
+        all_level_record.append([last_activate_stamp[t]+1 for t in picked_stamp])
 
     ####################################################
     ################ calculate error ###################
@@ -746,7 +774,7 @@ def run_one_iter_normal(model, batch, criterion, status, gpu, dataset):
         if model.random_time_step_train and i >= random_run_step:
             break
     if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall:
-        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,[None],dataset,time_step_1_mode) 
+        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,None,dataset,time_step_1_mode) 
         ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
         hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,None,hidden_fourcast_list)
         if not model.consistancy_eval:loss+= extra_loss2
