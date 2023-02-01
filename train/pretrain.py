@@ -257,9 +257,7 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     pred_channel_for_next_stamp = None
     if hasattr(model,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.pred_channel_for_next_stamp
     if hasattr(model,"module") and hasattr(model.module,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.module.pred_channel_for_next_stamp
-    fourcast_for_2D70N = None
-    if hasattr(model,"fourcast_for_2D70N"): fourcast_for_2D70N = model.fourcast_for_2D70N
-    
+
     if train_channel_from_this_stamp:
         assert len(normlized_Field.shape)==4
         normlized_Field = normlized_Field[:,train_channel_from_this_stamp]
@@ -294,7 +292,7 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
         next_tensor = target.clone().type(ltmv_pred.dtype)
         next_tensor[:,pred_channel_for_next_stamp] = ltmv_pred
         start     = start[1:] + [next_tensor]
-    elif fourcast_for_2D70N:
+    elif dataset.dataset_flag=='2D70N' and not model.training: # this only let we omit constant pad at level 55 and 69
         next_tensor = target.clone().type(ltmv_pred.dtype)
         picked_property = list(range(0,14*4-1)) + list(range(14*4,14*5-1))
         next_tensor[:,picked_property] = ltmv_pred[:,picked_property]
@@ -1503,8 +1501,7 @@ def recovery_tensor(dataset,start,end,ltmv_pred,target):
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
                     save_prediction_first_step=None,save_prediction_final_step=None,
                     snap_index=None,do_error_propagration_monitor=False):
-    if dataset.dataset_flag=='2D70N':
-        model.fourcast_for_2D70N = True
+    
         
     accu_series=[]
     rmse_series=[]
