@@ -1943,7 +1943,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
                 if data.shape[-2] < 32:
                     pad = (32 - data.shape[-2])//2
                     data= torch.nn.functional.pad(data,(0,0,pad,pad),'constant',100)
-                assert data.shape[-2] == 32
+                assert data.shape[-2] >= 32 
                 #images = wandb.Image(mean_global_rmse_map[i][...,j], caption='rmse_map')
                 plt.imshow(data.numpy(),vmin=vmin,vmax=vmax,cmap='gray')
                 plt.title(f"value range: {vmin:.3f}-{vmax:.3f}")
@@ -2537,15 +2537,9 @@ def create_logsys(args,save_config=True):
 #########################################
 ############# main script ###############
 #########################################
-    # X0 X1 X2 
-    # |  |  |  
-    # x1 x2 x3 
-    # |    
-    # y2   
-    # |  
-    # z3 
+
 def parser_compute_graph(compute_graph_set):
-    if compute_graph_set is None:return None,None,None
+    if compute_graph_set is None:return None,None
     compute_graph_set_pool={
         'fwd3_D' :([[1],[2],[3]], [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"], [0,3,3,1.0, "quantity"]]),
         'fwd2_TA':([[1,2,3],[2],[3]], [[0,1,1, 1.0, "quantity"], 
@@ -2579,44 +2573,38 @@ def build_model(args):
     logsys = args.logsys
     logsys.info(f"model args: img_size= {args.img_size}")
     logsys.info(f"model args: patch_size= {args.patch_size}")
+    args.model_kargs['unique_up_sample_channel'] = 0
+    args.model_kargs['history_length'] = 1
     # ==============> Initial Model <=============
     if args.wrapper_model and 'Comb' in args.wrapper_model:
         assert args.model_type1
         assert args.model_type2
-        args.model_kargs['in_chans'] = 55 
-        args.model_kargs['out_chans'] = 13
-        args.model_kargs['unique_up_sample_channel'] = 0
-        args.model_kargs['history_length'] = 1
+        args.model_kargs['in_chans']  = eval(args.wrapper_model).default_input_channel1
+        args.model_kargs['out_chans'] = eval(args.wrapper_model).default_output_channel1
         # if args.model_type1 == 'AFNONet':
         #     pass
         # else:
         #     print("the ")
         #     #raise NotImplementedError
         backbone1 = eval(args.model_type1)(**args.model_kargs)
-        args.model_kargs['in_chans'] = 68
-        args.model_kargs['out_chans'] = 42
-        args.model_kargs['history_length'] = 1
+        args.model_kargs['in_chans']  = eval(args.wrapper_model).default_input_channel2
+        args.model_kargs['out_chans'] = eval(args.wrapper_model).default_output_channel2
+
         if args.model_type2 == 'AFNONet':
             pass
         elif args.model_type2 == 'smallAFNONet':
             args.model_kargs['depth'] = 6
-            args.model_kargs['in_chans'] = 68
-            args.model_kargs['out_chans'] = 42
-            args.model_kargs['history_length'] = 1
             args.model_type2='AFNONet'
         elif args.model_type2 == 'tinyAFNONet':
             args.model_kargs['embed_dim'] = 384
             args.model_kargs['depth'] = 6
-            args.model_kargs['in_chans'] = 68
-            args.model_kargs['out_chans'] = 42
-            args.model_kargs['history_length'] = 1
             args.model_type2='AFNONet'
         else:
             raise NotImplementedError
         
         backbone2 = eval(args.model_type2)(**args.model_kargs)
-        args.model_kargs['in_chans'] = 55
-        args.model_kargs['out_chans'] = 55
+        args.model_kargs['in_chans']       = args.input_channel
+        args.model_kargs['out_chans']      = args.output_channel
         args.model_kargs['history_length'] = 1
         model = eval(args.wrapper_model)(args,backbone1,backbone2,args.backbone1_ckpt_path,args.backbone2_ckpt_path)
     else:
