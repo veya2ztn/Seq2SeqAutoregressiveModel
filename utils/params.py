@@ -54,6 +54,7 @@ def get_args_parser():
     parser.add_argument('--do_train_shuffle', type=int, default=1)
     parser.add_argument('--consistancy_alpha', type=str, default=None)
     parser.add_argument('--vertical_constrain', type=float, default=None)
+    parser.add_argument('--compute_graph_set', type=str, default=None)
     
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',

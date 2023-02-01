@@ -501,7 +501,166 @@ def full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,tar
     #print(full_fourcast_error_list)
     return hidden_fourcast_list,full_fourcast_error_list,extra_loss
 
+def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
+    assert model.history_length == 1
+    assert model.pred_len == 1
+    assert len(batch)>1
+    assert len(batch) < len(model.activate_stamps) + 1
+    iter_info_pool={}
+    loss = 0
+    diff = 0
+    if model.history_length > len(batch):
+        print(f"you want to use history={model.history_length}")
+        print(f"but your input batch(timesteps) only has len(batch)={len(batch)}")
+        raise
+    now_level_batch = torch.stack(batch,1) #[(B,P,W,H),(B,P,W,H),...,(B,P,W,H)] -> (B,L,P,W,H)
+    # input is a tenosor (B,L,P,W,H)
+    # The generated intermediate is recorded as 
+    # X0 x1 y2 z3
+    # X1 x2 y3 z4
+    # X2 x3 y4
+    # X3 x4
+    B,L = now_level_batch.shape[:2]
+    tshp= now_level_batch.shape[2:]
+    all_level_batch = [now_level_batch]
+    all_level_record= [list(range(L))] #[0,1,2,3]]
+    ####################################################
+    # we will do once forward at begin to gain 
+    # X0 X1 X2 X3
+    # |  |  |  |
+    # x1 x2 x3 x4
+    # |  |  |
+    # y2 y3 y4
+    # |  |
+    # z3 z4
+    ### the problem is we may cut some path by feeding an extra option.
+    ### for example, we may achieve a computing graph as
+    # X0 X1 X2 X3
+    # |  |  |  
+    # x1 x2 x3 
+    # |   
+    # y2 
+    # |  
+    # z3 
+    # so we need a flag 
+    ####################################################
+    for i in range(len(model.activate_stamps)): # generate L , L-1, L-2
+        # the least coding here
+        # now_level_batch = model(now_level_batch[:,:(L-i)].flatten(0,1)).reshape(B,(L-i),*tshp)  
+        # all_level_batch.append(now_level_batch)
+        activate_stamp      = model.activate_stamps[i]
+        last_activate_stamp = all_level_record[-1]
+        
+        picked_channel      = [last_activate_stamp.index(t-1) for t in activate_stamp if t-1 in last_activate_stamp]
+
+        now_level_batch     = model(now_level_batch[:,picked_channel].flatten(0,1)).reshape(B,len(picked_channel),*tshp)  
+        all_level_batch.append(now_level_batch)
+        all_level_record.append([last_activate_stamp[t]+1 for t in picked_channel])
+
+    ####################################################
+    ################ calculate error ###################
+    loss = 0
+    iter_info_pool={}
+    loss_count = 0
+    for (level_1, level_2, stamp, coef,_type) in model.activate_error_coef:
+        tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
+        tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
+        if 'quantity' in _type:
+            if _type == 'quantity':
+                error   = coef*torch.mean((tensor1-tensor2)**2)
+            elif _type == 'quantity_log':
+                error   = coef*((tensor1-tensor2)**2+1).log().mean()
+            else:raise NotImplementedError
+        elif 'alpha' in _type:
+            last_tensor1 = all_level_batch[level_1-1][:,all_level_record[level_1-1].index(stamp-1)]
+            last_tensor2 = all_level_batch[level_2-1][:,all_level_record[level_2-1].index(stamp-1)]
+            if _type == 'alpha':
+                error   = coef*torch.mean(  ((tensor1-tensor2)**2) / ((last_tensor1-last_tensor2)**2+1e-4)  )
+            elif _type == 'alpha_log':
+                error   = coef*torch.mean(  ((tensor1-tensor2)**2+1).log() - ((last_tensor1-last_tensor2)**2+1).log() )
+            else:raise NotImplementedError
+        else:
+            raise NotImplementedError
+        iter_info_pool[f"{status}_error_{level_1}_{level_2}_{stamp}"] = error.item()
+        loss   += error
+        loss_count+=1
+    loss = loss/loss_count
+    level_1, level_2, stamp = 0,1,1
+    tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
+    tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
+    diff = torch.mean((tensor1 - tensor2)**2)
+    return loss, diff, iter_info_pool, None, None
+
+def once_forward_error_evaluation(model,now_level_batch):
+    target_level_batch = now_level_batch[:,1:]
+    error_record  = []
+    real_res_error_record = []
+    appx_res_error_record = []
+    real_appx_delta_record  = []
+    appx_res_angle_record = []
+    real_res_angle_record = []
+    real_res_error = appx_res_error = real_appx_delta = first_level_batch = None
+    ltmv_preds =  []
+    while now_level_batch.shape[1]>1:
+
+        B,L = now_level_batch.shape[:2]
+        tshp= now_level_batch.shape[2:]
+        next_level_batch         = model(now_level_batch[:,:-1].flatten(0,1)).reshape(B,L-1,*tshp)
+
+        next_level_error_tensor  = target_level_batch[:,-(L-1):] - next_level_batch 
+        next_level_error         = get_tensor_norm(next_level_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P)
+        
+        if first_level_batch is None:
+            first_level_batch        = next_level_batch
+            first_level_error_tensor = next_level_error_tensor
+        else:
+            real_res_error_tensor = first_level_batch[:,-(L-1):] - next_level_batch
+            real_res_error        = get_tensor_norm(real_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
+            base_error = first_level_error_tensor[:,-(L-1):]
+            real_res_angle        = torch.einsum('btpwh,btpwh->bt',real_res_error_tensor, base_error)/(torch.sum(real_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
+            #real_res_error_alpha  = real_res_error/error_record[-1][:,-(L-1):] #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
+            real_appx_delta       = get_tensor_norm(real_res_error_tensor - appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
+            real_res_error_record.append(real_res_error)
+            real_appx_delta_record.append(real_appx_delta)
+            real_res_angle_record.append(real_res_angle)
+        ltmv_preds.append(next_level_error_tensor[:,0:1])
+        error_record.append(next_level_error)
+        if L>2:
+            tangent_x             = (target_level_batch[:,-(L-2):] + next_level_batch[:,-(L-2):])/2
+            appx_res_error_tensor = calculate_next_level_error_batch(model, tangent_x.flatten(0,1), next_level_error_tensor[:,-(L-2):].flatten(0,1)).reshape(B,L-2,*tshp)
+            base_error = first_level_error_tensor[:,-(L-2):]
+            appx_res_angle        = torch.einsum('btpwh,btpwh->bt',appx_res_error_tensor, base_error)/(torch.sum(appx_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
+            appx_res_error        = get_tensor_norm(appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
+            appx_res_error_record.append(appx_res_error)
+            appx_res_angle_record.append(appx_res_angle)
+            #appx_res_error_alpha  = appx_res_error/error_record[-1][:,-(L-1):]  #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
+        now_level_batch = next_level_batch
+    error_record          = torch.cat(error_record,1).detach().cpu()
+    real_res_error_record = torch.cat(real_res_error_record,1).detach().cpu()
+    real_appx_delta_record= torch.cat(real_appx_delta_record,1).detach().cpu()
+    real_res_angle_record = torch.cat(real_res_angle_record,1).detach().cpu()
+    appx_res_error_record = torch.cat(appx_res_error_record,1).detach().cpu()
+    appx_res_angle_record = torch.cat(appx_res_angle_record,1).detach().cpu()
+
+    ltmv_preds = torch.cat(ltmv_preds,1)
+    ltmv_trues = target_level_batch
+    error_information={
+        "error_record"          :error_record,
+        "real_res_error_record" :real_res_error_record,
+        "real_appx_delta_record":real_appx_delta_record,
+        "real_res_angle_record" :real_res_angle_record,
+        "appx_res_error_record" :appx_res_error_record,
+        "appx_res_angle_record" :appx_res_angle_record,
+    }
+    return ltmv_preds, ltmv_trues, error_information
+
 def run_one_iter(model, batch, criterion, status, gpu, dataset):
+    if hasattr(model,'activate_stamps') and model.activate_stamps:
+        return run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset)
+    else:
+        return run_one_iter_normal(model, batch, criterion, status, gpu, dataset)
+
+def run_one_iter_normal(model, batch, criterion, status, gpu, dataset):
     iter_info_pool={}
     loss = 0
     diff = 0
@@ -522,6 +681,8 @@ def run_one_iter(model, batch, criterion, status, gpu, dataset):
     #                time_step=3 --> 1+2+2
     #                time_step=4 --> 1+2+3
     # use_consistancy_alpha to control activate amplitude
+    
+    
     for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
         end = batch[i:i+model.pred_len]
         end = end[0] if len(end) == 1 else end
@@ -1178,7 +1339,6 @@ def run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, op
     return loss_val
  
 
-
 def nan_diagnose_weight(model,loss, nan_count,logsys):
     skip = False
     if torch.isnan(loss):
@@ -1347,9 +1507,6 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
     #logsys.add_table(prefix+'_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     logsys.add_table('multi_epoch_fourcast_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     
-
-
-
 def get_error_propagation(last_pred, last_target, now_target, now_pred, virtual_function,approx_epsilon_lists, tangent_position='right'):
     #### below is for error esitimation that do not access intermediate level of epsilon
     #### for example, epsilon_{t+6}^{III}. Instead, we use M = J(0.5*X_{t+5}^O + 0.5*X_{t+5}^I ) to calculate error
@@ -1419,69 +1576,8 @@ def get_error_propagation(last_pred, last_target, now_target, now_pred, virtual_
             epsilon_Jacobian_a,
             the_angle_between_two    )
 
-def once_forward_error_evaluation(model,now_level_batch):
-    target_level_batch = now_level_batch[:,1:]
-    error_record  = []
-    real_res_error_record = []
-    appx_res_error_record = []
-    real_appx_delta_record  = []
-    appx_res_angle_record = []
-    real_res_angle_record = []
-    real_res_error = appx_res_error = real_appx_delta = first_level_batch = None
-    ltmv_preds =  []
-    while now_level_batch.shape[1]>1:
 
-        B,L = now_level_batch.shape[:2]
-        tshp= now_level_batch.shape[2:]
-        next_level_batch         = model(now_level_batch[:,:-1].flatten(0,1)).reshape(B,L-1,*tshp)
 
-        next_level_error_tensor  = target_level_batch[:,-(L-1):] - next_level_batch 
-        next_level_error         = get_tensor_norm(next_level_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P)
-        
-        if first_level_batch is None:
-            first_level_batch        = next_level_batch
-            first_level_error_tensor = next_level_error_tensor
-        else:
-            real_res_error_tensor = first_level_batch[:,-(L-1):] - next_level_batch
-            real_res_error        = get_tensor_norm(real_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
-            base_error = first_level_error_tensor[:,-(L-1):]
-            real_res_angle        = torch.einsum('btpwh,btpwh->bt',real_res_error_tensor, base_error)/(torch.sum(real_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
-            #real_res_error_alpha  = real_res_error/error_record[-1][:,-(L-1):] #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
-            real_appx_delta       = get_tensor_norm(real_res_error_tensor - appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
-            
-            real_res_error_record.append(real_res_error)
-            real_appx_delta_record.append(real_appx_delta)
-            real_res_angle_record.append(real_res_angle)
-        ltmv_preds.append(next_level_error_tensor[:,0:1])
-        error_record.append(next_level_error)
-        if L>2:
-            tangent_x             = (target_level_batch[:,-(L-2):] + next_level_batch[:,-(L-2):])/2
-            appx_res_error_tensor = calculate_next_level_error_batch(model, tangent_x.flatten(0,1), next_level_error_tensor[:,-(L-2):].flatten(0,1)).reshape(B,L-2,*tshp)
-            base_error = first_level_error_tensor[:,-(L-2):]
-            appx_res_angle        = torch.einsum('btpwh,btpwh->bt',appx_res_error_tensor, base_error)/(torch.sum(appx_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
-            appx_res_error        = get_tensor_norm(appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
-            appx_res_error_record.append(appx_res_error)
-            appx_res_angle_record.append(appx_res_angle)
-            #appx_res_error_alpha  = appx_res_error/error_record[-1][:,-(L-1):]  #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
-        now_level_batch = next_level_batch
-    error_record          = torch.cat(error_record,1).detach().cpu()
-    real_res_error_record = torch.cat(real_res_error_record,1).detach().cpu()
-    real_appx_delta_record= torch.cat(real_appx_delta_record,1).detach().cpu()
-    real_res_angle_record = torch.cat(real_res_angle_record,1).detach().cpu()
-    appx_res_error_record = torch.cat(appx_res_error_record,1).detach().cpu()
-    appx_res_angle_record = torch.cat(appx_res_angle_record,1).detach().cpu()
-
-    ltmv_preds = torch.cat(ltmv_preds,1)
-    ltmv_trues = target_level_batch
-    error_information={
-        "error_record"          :error_record,
-        "real_res_error_record" :real_res_error_record,
-        "real_appx_delta_record":real_appx_delta_record,
-        "real_res_angle_record" :real_res_angle_record,
-        "appx_res_error_record" :appx_res_error_record,
-        "appx_res_angle_record" :appx_res_angle_record,
-    }
-    return ltmv_preds, ltmv_trues, error_information
 
 def recovery_tensor(dataset,start,end,ltmv_pred,target):
         if 'Delta' in dataset.__class__.__name__:
@@ -2441,6 +2537,40 @@ def create_logsys(args,save_config=True):
 #########################################
 ############# main script ###############
 #########################################
+    # X0 X1 X2 
+    # |  |  |  
+    # x1 x2 x3 
+    # |    
+    # y2   
+    # |  
+    # z3 
+def parser_compute_graph(compute_graph_set):
+    if compute_graph_set is None:return None,None,None
+    compute_graph_set_pool={
+        'fwd3_D' :([[1],[2],[3]], [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"], [0,3,3,1.0, "quantity"]]),
+        'fwd2_TA':([[1,2,3],[2],[3]], [[0,1,1, 1.0, "quantity"], 
+                                       [0,2,2, 1.0, "quantity"],
+                                       [1,2,2, 1.0, "alpha"],
+                                       [1,3,3, 1.0, "alpha"]
+
+                                      ]),
+        'fwd2_D' :([[1],[2]],   [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"]]),
+        'fwd2_P' :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
+                                 [0,2,2, 1.0, "quantity"],
+                                 [1,2,2, 1.0, "quantity"]
+                                 ]),
+        'fwd2_PA' :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
+                                  [0,2,2, 1.0, "quantity"],
+                                  [1,2,2, 1.0, "alpha"]
+                                  ]),
+        
+        'fwd2_PAL' :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
+                                   [0,2,2, 1.0, "quantity"],
+                                   [1,2,2, 1.0, "alpha_log"]
+                                   ])
+    }
+
+    return compute_graph_set_pool[compute_graph_set]
 
 def build_model(args):
     #cudnn.enabled         = True
@@ -2526,6 +2656,7 @@ def build_model(args):
     model.vertical_constrain= args.vertical_constrain
     model.consistancy_activate_wall = args.consistancy_activate_wall
     model.mean_path_length = torch.zeros(1)
+    model.activate_stamps,model.activate_error_coef = parser_compute_graph(args.compute_graph_set)
     if 'UVT' in args.wrapper_model:
         print(f"notice we are in property_pick mode, be careful. Current dataset is {args.dataset_type}")
         #assert "55" in args.dataset_flag
