@@ -1422,37 +1422,37 @@ class NanDetect:
         return skip
 
 
-    # def nan_diagnose_grad(self,model,loss,scaler):
-    #     skip          = torch.zeros_like(loss)
-    #     downgrad_use_amp = torch.zeros_like(loss)
-    #     logsys    = self.logsys
-    #     nan_count = self.nan_count
-    #     # we will check whether weight has nan 
-    #     bad_weight_name = []
-    #     bad_check = False
-    #     for name, p in model.named_parameters():
-    #         if p.grad is None:continue
-    #         if torch.isnan(p.grad).any():
-    #             bad_check    = True
-    #             bad_weight_name.append(name)
-    #     if bad_check:
-    #         logsys.info(f"the value is nan in weight.grad:{bad_weight_name}")
-    #         nan_count+=1
-    #         if nan_count>10:
-    #             logsys.info("too many nan happened")
-    #             raise
-    #         logsys.info(f"detect nan, now at {nan_count}/10 warning level, pass....")   
-    #         skip += 1
+    def nan_diagnose_grad(self,model,loss,scaler):
+        skip          = torch.zeros_like(loss)
+        downgrad_use_amp = torch.zeros_like(loss)
+        logsys    = self.logsys
+        nan_count = self.nan_count
+        # we will check whether weight has nan 
+        bad_weight_name = []
+        bad_check = False
+        for name, p in model.named_parameters():
+            if p.grad is None:continue
+            if torch.isnan(p.grad).any():
+                bad_check    = True
+                bad_weight_name.append(name)
+        if bad_check:
+            logsys.info(f"the value is nan in weight.grad:{bad_weight_name}")
+            nan_count+=1
+            if nan_count>10:
+                logsys.info("too many nan happened")
+                raise
+            logsys.info(f"detect nan, now at {nan_count}/10 warning level, pass....")   
+            skip += 1
 
-    #     if hasattr(model,'module'):
-    #         dist.all_reduce(skip) # 0+0+0+0 = 0; 0 + 1 + 0 + 1 =1;
-    #         dist.all_reduce(downgrad_use_amp) # 0+0+0+0 = 0; 0 + 1 + 0 + 1 =1;
-    #     if downgrad_use_amp:
-    #         if model.use_amp: 
-    #             model.use_amp   = False
-    #             scaler._enabled = False
-    #             model.use_amp = bool(downgrad_use_amp.item()) and model.use_amp
-    #     return skip
+        if hasattr(model,'module'):
+            dist.all_reduce(skip) # 0+0+0+0 = 0; 0 + 1 + 0 + 1 =1;
+            dist.all_reduce(downgrad_use_amp) # 0+0+0+0 = 0; 0 + 1 + 0 + 1 =1;
+        if downgrad_use_amp:
+            if model.use_amp: 
+                model.use_amp   = False
+                scaler._enabled = False
+                model.use_amp = bool(downgrad_use_amp.item()) and model.use_amp
+        return skip
 
 
 
