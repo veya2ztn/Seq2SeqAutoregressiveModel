@@ -2574,7 +2574,11 @@ def parser_compute_graph(compute_graph_set):
                                        [0,2,2, 1.0, "quantity"],
                                        [1,2,2, 1.0, "alpha"],
                                        [1,3,3, 1.0, "alpha"]
-
+                                      ]),
+        'fwd2_TAL':([[1,2,3],[2],[3]], [[0,1,1, 1.0, "quantity"], 
+                                        [0,2,2, 1.0, "quantity"],
+                                        [1,2,2, 1.0, "alpha_log"],
+                                        [1,3,3, 1.0, "alpha_log"]
                                       ]),
         'fwd2_D' :([[1],[2]],   [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"]]),
         'fwd2_P' :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
@@ -2590,6 +2594,7 @@ def parser_compute_graph(compute_graph_set):
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "alpha_log"]
                                    ])
+        
     }
 
     return compute_graph_set_pool[compute_graph_set]
