@@ -297,7 +297,7 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
         else:
             next_tensor = None
         start     = start[1:] + [next_tensor]
-    elif dataset.dataset_flag=='2D70N' and not model.training: # this only let we omit constant pad at level 55 and 69
+    elif dataset.with_idx and dataset.dataset_flag=='2D70N' and not model.training: # this only let we omit constant pad at level 55 and 69 at test case
         if target is not None:
             next_tensor = target.clone().type(ltmv_pred.dtype)
             picked_property = list(range(0,14*4-1)) + list(range(14*4,14*5-1))
