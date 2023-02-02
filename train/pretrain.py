@@ -984,7 +984,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             #     loss.backward()
 
             #select_para= list(range(5)) + [-5,-4,-3,-2,-1] 
-            
+             
             #pnormlist = [[name,p.grad.norm()] for name, p in model.named_parameters() if p.grad is not None]
             #for i in select_para:
             #    name,norm = pnormlist[i]
