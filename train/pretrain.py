@@ -297,13 +297,13 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
         else:
             next_tensor = None
         start     = start[1:] + [next_tensor]
-    elif dataset.dataset_flag=='2D70N' and not model.training: # this only let we omit constant pad at level 55 and 69
+    elif dataset.with_idx and dataset.dataset_flag=='2D70N' and not model.training: # this only let we omit constant pad at level 55 and 69 at test case
         if target is not None:
             next_tensor = target.clone().type(ltmv_pred.dtype)
             picked_property = list(range(0,14*4-1)) + list(range(14*4,14*5-1))
             next_tensor[:,picked_property] = ltmv_pred[:,picked_property]
         else:
-            next_tensor = None
+            next_tensor = ltmv_pred
         start     = start[1:] + [next_tensor]
     else:
         start     = start[1:] + [ltmv_pred]
@@ -513,7 +513,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     assert model.history_length == 1
     assert model.pred_len == 1
     assert len(batch)>1
-    assert len(batch) < len(model.activate_stamps) + 1
+    assert len(batch) <= len(model.activate_stamps) + 1
     iter_info_pool={}
     loss = 0
     diff = 0
@@ -2580,7 +2580,9 @@ def parser_compute_graph(compute_graph_set):
                                         [1,2,2, 1.0, "alpha_log"],
                                         [1,3,3, 1.0, "alpha_log"]
                                       ]),
-        'fwd2_D' :([[1],[2]],   [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"]]),
+        'fwd1_D' :([[1]],   [[0,1,1,1.0, "quantity"]]),
+        'fwd1_TA':([[1,2],[2]],   [[0,1,1,1.0, "quantity"], [1,2,2,1.0, "alpha"]]),
+        'fwd2_D' :(  [[1],[2]],   [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"]]),
         'fwd2_P' :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                  [0,2,2, 1.0, "quantity"],
                                  [1,2,2, 1.0, "quantity"]
@@ -3056,7 +3058,7 @@ def distributed_initial(args):
     args.ngpus_per_node = ngpus_per_node
     if not hasattr(args,'train_set'):args.train_set='large'
     ip = os.environ.get("MASTER_ADDR", "127.0.0.1")
-    port = os.environ.get("MASTER_PORT", f"{64248+np.random.randint(10)}" )
+    port = os.environ.get("MASTER_PORT", f"{54248+np.random.randint(10000)}" )
     args.port = port
     hosts = int(os.environ.get("WORLD_SIZE", "1"))  # number of nodes
     rank = int(os.environ.get("RANK", "0"))  # node id
