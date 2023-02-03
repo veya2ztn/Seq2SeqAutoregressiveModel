@@ -92,7 +92,7 @@ half_model = False
 
 
 
-
+#torch._dynamo.config.verbose=True
 #########################################
 ########### metric computing ############
 #########################################
@@ -2697,7 +2697,9 @@ def build_model(args):
     if local_rank == 0:
         param_sum, buffer_sum, all_size = getModelSize(model)
         logsys.info(f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
-
+    if torch.__version__[0]=="2":
+        print(f"Now in torch 2.0, we use torch.compile")
+        model = torch.compile(model) 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
         # should always set the single device scope, otherwise,
@@ -3091,6 +3093,11 @@ def create_memory_templete(args):
             valid_dataset_tensor = valid_record_load = None
         print("========      done        ==========")
     return train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load
+def find_free_port():
+    import socket
+    s = socket.socket()
+    s.bind(('', 0))            # Bind to a free port provided by the host.
+    return s.getsockname()[1]  # Return the port number assigned.
 
 def distributed_initial(args):
     import os
@@ -3103,7 +3110,7 @@ def distributed_initial(args):
     args.ngpus_per_node = ngpus_per_node
     if not hasattr(args,'train_set'):args.train_set='large'
     ip = os.environ.get("MASTER_ADDR", "127.0.0.1")
-    port = os.environ.get("MASTER_PORT", f"{54248+np.random.randint(10000)}" )
+    port = find_free_port()#os.environ.get("MASTER_PORT", f"{find_free_port()}" )
     args.port = port
     hosts = int(os.environ.get("WORLD_SIZE", "1"))  # number of nodes
     rank = int(os.environ.get("RANK", "0"))  # node id

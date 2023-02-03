@@ -690,7 +690,7 @@ from scipy.sparse import identity
 import sparse
 import torch
 from functorch._src.eager_transforms import *
-from functorch._src.eager_transforms import _vjp_with_argnums,_construct_standard_basis_for,_slice_argnums,_safe_zero_index
+#from functorch._src.eager_transforms import _vjp_with_argnums,_construct_standard_basis_for,_slice_argnums,_safe_zero_index
 def create_sparse_identity(flat_output, flat_output_numels):
     assert isinstance(flat_output_numels,int)
     assert isinstance(flat_output,(tuple,list))
@@ -720,7 +720,7 @@ class Nodal2_measure:
         self.device     = device
         self.chunk_size = chunk_size
         self.basis_this_chunk_sparse = None
-    def __call__(self,func: Callable, argnums: Union[int, Tuple[int]] = 0):
+    def __call__(self,func, argnums):
         @wraps(func)
         def wrapper_fn(*args):
             chunk_size=self.chunk_size
@@ -769,7 +769,7 @@ class Nodal2_measure:
         return wrapper_fn
         
 
-def the_Nodal_L2_meassure(func: Callable, argnums: Union[int, Tuple[int]] = 0, *, has_aux=False, chunk_size=None,sum_axis=[-3,-2,-1]):
+def the_Nodal_L2_meassure(func, argnums, *, has_aux=False, chunk_size=None,sum_axis=[-3,-2,-1]):
     @wraps(func)
     def wrapper_fn(*args):
         has_aux = False
