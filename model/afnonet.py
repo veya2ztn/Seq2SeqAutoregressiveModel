@@ -467,6 +467,7 @@ class AFNONet(BaseModel):
 from vit_pytorch import ViT
 
 from vit_pytorch.cross_vit import CrossViT
+
 class ViTDirect(BaseModel):
     def __init__(self, img_size, patch_size=8, in_chans=20, out_chans=20, embed_dim=768, depth=12, mlp_ratio=4.,
                  drop_rate=0., drop_path_rate=0.,history_length=1,**kargs):

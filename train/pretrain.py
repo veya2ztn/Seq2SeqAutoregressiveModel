@@ -2699,6 +2699,7 @@ def build_model(args):
         logsys.info(f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
     if torch.__version__[0]=="2":
         print(f"Now in torch 2.0, we use torch.compile")
+        torch.set_float32_matmul_precision('high')
         model = torch.compile(model) 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor

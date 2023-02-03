@@ -66,6 +66,20 @@ try:
         def forward(self,x):
             return self.backbone(x)
 
+    class CK_SWDFlowformerH256(BaseModel):
+        def __init__(self,*args,**kargs):
+            super().__init__()
+            print("this is pre-set model, we disable all config")
+            self.backbone = SWD_former(patch_size= [1, 1],
+                                in_chans= kargs.get("in_chans",70),
+                                out_chans= kargs.get("out_chans",70),
+                                embed_dim= 768,
+                                window_size= (32,64),
+                                depths= [4, 4, 4],
+                                num_heads= [256, 256, 256],
+                                Weather_T=1,only_swin=True,use_flowatten=True)
+        def forward(self,x):
+            return self.backbone(x)
 except:
     class CK_SWDformer_3264(BaseModel):pass
 
