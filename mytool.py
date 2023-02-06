@@ -136,7 +136,7 @@ def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,wei
     args.fourcast  = True
     args.recorder_list = []
     #args.use_wandb = 'off'
-    args.use_offline_data = 2
+    args.use_offline_data = 2 if args.use_offline_data else 0
     args.SAVE_PATH = ckpt_path
     #args.batch_size=args.valid_batch_size= 4 
     if wandb_id is not None:args.wandb_id = wandb_id
