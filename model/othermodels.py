@@ -22,6 +22,34 @@ try:
                                 Weather_T=1,only_swin=True)
         def forward(self,x):
             return self.backbone(x)
+    class CK_SWDformer_64128(BaseModel):
+        def __init__(self,*args,**kargs):
+            super().__init__()
+            print("this is pre-set model, we disable all config")
+            self.backbone = SWD_former(patch_size= [1, 1],
+                                in_chans= kargs.get("in_chans",70),
+                                out_chans= kargs.get("out_chans",70),
+                                embed_dim= 768,
+                                window_size= (64,128),
+                                depths= [2, 2, 2],
+                                num_heads= [6, 6, 6],
+                                Weather_T=1,only_swin=True)
+        def forward(self,x):
+            return self.backbone(x)
+    class CK_SWDformer_64128Half(BaseModel):
+        def __init__(self,*args,**kargs):
+            super().__init__()
+            print("this is pre-set model, we disable all config")
+            self.backbone = SWD_former(patch_size= [2, 2],
+                                in_chans= kargs.get("in_chans",70),
+                                out_chans= kargs.get("out_chans",70),
+                                embed_dim= 768,
+                                window_size= (32,64),
+                                depths= [2, 2, 2],
+                                num_heads= [6, 6, 6],
+                                Weather_T=1,only_swin=True)
+        def forward(self,x):
+            return self.backbone(x)
     class CK_SWDformer_0505(BaseModel):
         def __init__(self,*args,**kargs):
             super().__init__()
