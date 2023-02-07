@@ -612,11 +612,11 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
         iter_info_pool[f"{status}_error_{level_1}_{level_2}_{stamp}"] = error.item()
         loss   += error
         loss_count+=1
-        if level_1 ==0 and level_2 == stamp:
+        if level_1 ==0 and level_2 == stamp:# to be same as normal train 
             diff += loss
-            diff_count+=1 # to be same as normal train 
+            #diff_count+=1
     loss = loss/loss_count
-    diff = diff/diff_count
+    diff = diff/loss_count
     return loss, diff, iter_info_pool, None, None
 
 def once_forward_error_evaluation(model,now_level_batch):
