@@ -28,15 +28,18 @@ import torch.distributed as dist
 #from ffrecord.torch import DataLoader
 #import hfai.nn as hfnn
 #from hfai.datasets import ERA5
+from JCmodels.fourcastnet import AFNONet as AFNONetJC
 from model.afnonet import AFNONet
 from model.FEDformer import FEDformer
 from model.FEDformer1D import FEDformer1D
-from JCmodels.fourcastnet import AFNONet as AFNONetJC
 from model.patch_model import *
 from model.time_embeding_model import *
 from model.physics_model import *
 from model.othermodels import *
 from model.FeaturePickModel import *
+from model.GraphCast import GraphCast
+
+
 from utils.params import get_args
 from utils.tools import getModelSize, load_model, save_model
 from utils.eval import single_step_evaluate
@@ -2537,7 +2540,8 @@ def parse_default_args(args):
         "unique_up_sample_channel":args.unique_up_sample_channel,
         "share_memory":args.share_memory,
         "dropout_rate":args.dropout_rate,
-        "conv_simple":args.conv_simple
+        "conv_simple":args.conv_simple,
+        "graphflag":args.graphflag
     }
     args.model_kargs = model_kargs
 
