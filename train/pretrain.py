@@ -589,7 +589,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     ################ calculate error ###################
     loss = 0
     iter_info_pool={}
-    loss_count = 0
+    loss_count = diff_count = 0
     for (level_1, level_2, stamp, coef,_type) in model.activate_error_coef:
         tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
         tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
@@ -612,11 +612,11 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
         iter_info_pool[f"{status}_error_{level_1}_{level_2}_{stamp}"] = error.item()
         loss   += error
         loss_count+=1
+        if level_1 ==0 and level_2 == stamp:
+            diff += loss
+            diff_count+=1 # to be same as normal train 
     loss = loss/loss_count
-    level_1, level_2, stamp = 0,1,1
-    tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
-    tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
-    diff = torch.mean((tensor1 - tensor2)**2)
+    diff = diff/diff_count
     return loss, diff, iter_info_pool, None, None
 
 def once_forward_error_evaluation(model,now_level_batch):
@@ -2612,27 +2612,45 @@ def create_logsys(args,save_config=True):
 #########################################
 
 def parser_compute_graph(compute_graph_set):
+    # X0 X1 X2 
+    # |  |  |  
+    # x1 x2 x3 
+    # |  |  
+    # y2 y3 
+    # |  
+    # z3 
     if compute_graph_set is None:return None,None
     compute_graph_set_pool={
-        'fwd3_D' :([[1],[2],[3]], [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"], [0,3,3,1.0, "quantity"]]),
-        'fwd2_TA':([[1,2,3],[2],[3]], [[0,1,1, 1.0, "quantity"], 
-                                       [0,2,2, 1.0, "quantity"],
-                                       [1,2,2, 1.0, "alpha"],
-                                       [1,3,3, 1.0, "alpha"]
+        'fwd3_D'   :([[1],[2],[3]], [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"], [0,3,3,1.0, "quantity"]]),
+        'fwd2_TA'  :([[1,2,3],[2],[3]], [[0,1,1, 1.0, "quantity"], 
+                                         [0,2,2, 1.0, "quantity"],
+                                         [1,2,2, 1.0, "alpha"],
+                                         [1,3,3, 1.0, "alpha"]
+                                        ]),
+        'fwd2_TAL' :([[1,2,3],[2],[3]], [[0,1,1, 1.0, "quantity"], 
+                                         [0,2,2, 1.0, "quantity"],
+                                         [1,2,2, 1.0, "alpha_log"],
+                                         [1,3,3, 1.0, "alpha_log"]
                                       ]),
-        'fwd2_TAL':([[1,2,3],[2],[3]], [[0,1,1, 1.0, "quantity"], 
-                                        [0,2,2, 1.0, "quantity"],
-                                        [1,2,2, 1.0, "alpha_log"],
-                                        [1,3,3, 1.0, "alpha_log"]
+        'fwd2_KAR' :([[1,2,3],[2],[3]], [[0,1,1, 3, "quantity"], 
+                                         [0,2,2, 3, "quantity"],
+                                         [1,2,2, 6, "quantity"],
+                                         [1,2,2, 6, "quantity"],
+                                         [1,3,3, 6, "quantity"],
+                                         [2,3,3, 6, "quantity"]
                                       ]),
-        'fwd1_D' :([[1]],   [[0,1,1,1.0, "quantity"]]),
-        'fwd1_TA':([[1,2],[2]],   [[0,1,1,1.0, "quantity"], [1,2,2,1.0, "alpha"]]),
-        'fwd2_D' :(  [[1],[2]],   [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"]]),
-        'fwd2_P' :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
-                                 [0,2,2, 1.0, "quantity"],
-                                 [1,2,2, 1.0, "quantity"]
-                                 ]),
-        'fwd2_PA' :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
+        'fwd1_D'   :([[1]],   [[0,1,1,1.0, "quantity"]]),
+        'fwd1_TA'  :([[1,2],[2]],   [[0,1,1,1.0, "quantity"], [1,2,2,1.0, "alpha"]]),
+        'fwd2_D'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"]]),
+        'fwd2_P'   :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
+                                   [0,2,2, 1.0, "quantity"],
+                                   [1,2,2, 1.0, "quantity"]
+                                   ]),
+        'fwd2_PR'   :([[1,2],[2]], [[0,1,1, 1.5, "quantity"], 
+                                    [0,2,2, 1.5, "quantity"],
+                                    [1,2,2, 3.0, "quantity"]
+                                    ]),
+        'fwd2_PA'  :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                   [0,2,2, 1.0, "quantity"],
                                   [1,2,2, 1.0, "alpha"]
                                   ]),
