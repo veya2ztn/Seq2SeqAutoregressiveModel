@@ -97,6 +97,7 @@ def get_args_parser():
     parser.add_argument('--gd_loss_target', type=float, default=None)
     
     parser.add_argument('--do_error_propagration_monitor', type=int, default=0)
+    parser.add_argument('--graphflag', type=str, default="mesh5")
     
     parser.add_argument('--model_type1',type=str,default=None)
     parser.add_argument('--model_type2',type=str,default=None)
