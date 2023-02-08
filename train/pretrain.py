@@ -236,6 +236,7 @@ def feature_pick_check(model):
     if hasattr(model,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.pred_channel_for_next_stamp
     if hasattr(model,"module") and hasattr(model.module,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.module.pred_channel_for_next_stamp
     return train_channel_from_this_stamp,train_channel_from_next_stamp,pred_channel_for_next_stamp
+
 def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     Field = Advection = None
 
@@ -391,9 +392,9 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
             target = target[...,Z//2,W//2,H//2]  
         else:
             raise NotImplementedError
-#         else:
-#             # (B,P,5,5) -> (B,P) mode
-#             target = target 
+        # else:
+        #     # (B,P,5,5) -> (B,P) mode
+        #     target = target 
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 def once_forward_patch_N2M(model,i,start,end,dataset,time_step_1_mode):
@@ -517,8 +518,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     assert len(batch)>1
     assert len(batch) <= len(model.activate_stamps) + 1
     iter_info_pool={}
-    loss = 0
-    diff = 0
+    
     if model.history_length > len(batch):
         print(f"you want to use history={model.history_length}")
         print(f"but your input batch(timesteps) only has len(batch)={len(batch)}")
@@ -575,7 +575,6 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
                 target_stamp.append(last_activate_stamp.index(t) if t   in last_activate_stamp  else last_activate_stamp.index(t-1))
                 # if the target stamp not appear in this batch, use current stamp fill, but we need prohibit this prediction 
                 # to do next forward prediction. Thus we limit in t < L 
-
             # notice when activate pred_channel_for_next_stamp, the unpredicted part should be filled by the part from next stamp 
             # but the loss should be calculate only on the predicted part.
             end = now_level_batch[:,target_stamp].flatten(0,1)
@@ -585,38 +584,38 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
         now_level_batch      = start[-1].reshape(B,len(picked_stamp),*tshp)  
         #now_level_batch     = model(now_level_batch[:,picked_stamp].flatten(0,1)).reshape(B,len(picked_stamp),*tshp)  
         all_level_batch.append(now_level_batch)
-        all_level_record.append([last_activate_stamp[t]+1 for t in picked_stamp])
+        #all_level_record.append([last_activate_stamp[t]+1 for t in picked_stamp])
+        all_level_record.append(activate_stamp)
 
     ####################################################
     ################ calculate error ###################
-    loss = 0
     iter_info_pool={}
-    loss_count = diff_count = 0
+    loss = 0
+    diff = 0
+    loss_count = diff_count = len(model.activate_error_coef)
     for (level_1, level_2, stamp, coef,_type) in model.activate_error_coef:
         tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
         tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
         if 'quantity' in _type:
             if _type == 'quantity':
-                error   = coef*torch.mean((tensor1-tensor2)**2)
+                error   = torch.mean((tensor1-tensor2)**2)
             elif _type == 'quantity_log':
-                error   = coef*((tensor1-tensor2)**2+1).log().mean()
+                error   = ((tensor1-tensor2)**2+1).log().mean()
             else:raise NotImplementedError
         elif 'alpha' in _type:
             last_tensor1 = all_level_batch[level_1-1][:,all_level_record[level_1-1].index(stamp-1)]
             last_tensor2 = all_level_batch[level_2-1][:,all_level_record[level_2-1].index(stamp-1)]
             if _type == 'alpha':
-                error   = coef*torch.mean(  ((tensor1-tensor2)**2) / ((last_tensor1-last_tensor2)**2+1e-4)  )
+                error   = torch.mean(  ((tensor1-tensor2)**2) / ((last_tensor1-last_tensor2)**2+1e-4)  )
             elif _type == 'alpha_log':
-                error   = coef*torch.mean(  ((tensor1-tensor2)**2+1).log() - ((last_tensor1-last_tensor2)**2+1).log() )
+                error   = torch.mean(  ((tensor1-tensor2)**2+1).log() - ((last_tensor1-last_tensor2)**2+1).log() )
             else:raise NotImplementedError
         else:
             raise NotImplementedError
         iter_info_pool[f"{status}_error_{level_1}_{level_2}_{stamp}"] = error.item()
-        loss   += error
-        loss_count+=1
+        loss   += coef*error
         if level_1 ==0 and level_2 == stamp:# to be same as normal train 
             diff += loss
-            #diff_count+=1
     loss = loss/loss_count
     diff = diff/loss_count
     return loss, diff, iter_info_pool, None, None
@@ -1510,6 +1509,7 @@ def calculate_next_level_error(model, x_t_1, error_list):
     assert len(x_t_1.shape) == 4
     grads = vmap(calculate_next_level_error_once, (None,None, 0),randomness='same')(model,x_t_1,error_list)#(N, B, Xdimension)
     return grads
+
 def calculate_next_level_error_batch(model, x_t_1, error_list):
     '''
     calculate m(x_t_1)(x_t_1 - \hat{x_t_1})
@@ -2635,13 +2635,12 @@ def parser_compute_graph(compute_graph_set):
                                          [1,2,2, 1.0, "alpha_log"],
                                          [1,3,3, 1.0, "alpha_log"]
                                       ]),
-        'fwd2_KAR' :([[1,2,3],[2],[3]], [[0,1,1, 3, "quantity"], 
-                                         [0,2,2, 3, "quantity"],
-                                         [1,2,2, 6, "quantity"],
-                                         [1,2,2, 6, "quantity"],
-                                         [1,3,3, 6, "quantity"],
-                                         [2,3,3, 6, "quantity"]
-                                      ]),
+        'fwd2_KAR' :([[1,2,3],[2,3],[3]], [[0,1,1, 2.5, "quantity"], 
+                           [0,2,2, 2.5, "quantity"],
+                           [1,2,2, 2.5, "quantity"],
+                           [1,3,3, 2.5, "quantity"],
+                           [2,3,3, 2.5, "quantity"]
+                    ]),
         'fwd1_D'   :([[1]],   [[0,1,1,1.0, "quantity"]]),
         'fwd1_TA'  :([[1,2],[2]],   [[0,1,1,1.0, "quantity"], [1,2,2,1.0, "alpha"]]),
         'fwd2_D'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"]]),
@@ -2653,9 +2652,13 @@ def parser_compute_graph(compute_graph_set):
                                     [0,2,2, 1.5, "quantity"],
                                     [1,2,2, 3.0, "quantity"]
                                     ]),
+        'fwd2_PRO'   :([[1,2],[2]], [[0,1,1, 1.5, "quantity"], 
+                                    [0,2,2, 1.5, "quantity"],
+                                    [1,2,2, 1.5, "quantity"]
+                                    ]),
         'fwd2_PA'  :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
-                                  [0,2,2, 1.0, "quantity"],
-                                  [1,2,2, 1.0, "alpha"]
+                                   [0,2,2, 1.0, "quantity"],
+                                   [1,2,2, 1.0, "alpha"]
                                   ]),
         
         'fwd2_PAL' :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
@@ -2663,7 +2666,7 @@ def parser_compute_graph(compute_graph_set):
                                    [1,2,2, 1.0, "alpha_log"]
                                    ])
         
-    }
+        }
 
     return compute_graph_set_pool[compute_graph_set]
 
@@ -2712,17 +2715,19 @@ def build_model(args):
         model = eval(args.model_type)(**args.model_kargs)
         if args.wrapper_model:
             model = eval(args.wrapper_model)(args,model)
+    
     logsys.info(f"use model ==> {model.__class__.__name__}")
     local_rank=args.local_rank
     rank = args.rank
     if local_rank == 0:
         param_sum, buffer_sum, all_size = getModelSize(model)
         logsys.info(f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
+    
     if torch.__version__[0]=="2" and args.torch_compile:
         print(f"Now in torch 2.0, we use torch.compile")
-        
         torch.set_float32_matmul_precision('high')
         model = torch.compile(model) 
+    
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
         # should always set the single device scope, otherwise,
