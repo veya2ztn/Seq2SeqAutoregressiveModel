@@ -2,6 +2,8 @@ import torch.nn as nn
 import numpy as np
 import torch
 import os
+import csv
+import copy
 class MLP(nn.Module):
     def __init__(self, input_channel, output_cannel, bias=False, 
                  nonlinear='tanh',depth=1):
@@ -31,8 +33,8 @@ class Grid2Mesh(nn.Module):
         super().__init__()
         self.G2M_edge_id2pair_tensor   = G2M_edge_id2pair_tensor
         self.G2M_edge_id_of_node_tensor= G2M_edge_id_of_node_tensor
-        #self.G2M_edge_coef_node_tensor = G2M_edge_coef_node_tensor
-        self.register_buffer('G2M_edge_coef_node_tensor', G2M_edge_coef_node_tensor)
+        self.G2M_edge_coef_node_tensor = G2M_edge_coef_node_tensor
+        #self.register_buffer('G2M_edge_coef_node_tensor', G2M_edge_coef_node_tensor)
 
         self.MLP_G2M_GM2E= MLP(embed_dim*3,embed_dim,nonlinear=nonlinear,depth=mlp_depth,bias=mlp_bias)
         self.MLP_G2M_E2M = MLP(embed_dim*2,embed_dim,nonlinear=nonlinear,depth=mlp_depth,bias=mlp_bias)
@@ -48,12 +50,14 @@ class Grid2Mesh(nn.Module):
         assert self.rect_index_limit == grid_rect_embedding.shape[1]
         assert self.node_index_limit == mesh_node_embedding.shape[1]
         assert self.edge_index_limit == grid_mesh_bond_embedding.shape[1] 
+        device = self.MLP_G2M_GM2E.linear.weight.device
+        
         delta_grid_mesh_bond_embedding = self.MLP_G2M_GM2E(torch.cat([grid_mesh_bond_embedding,
                                  grid_rect_embedding[:,self.G2M_edge_id2pair_tensor[:,0]],
                                  mesh_node_embedding[:,self.G2M_edge_id2pair_tensor[:,1]]],-1))
 
         delta_mesh_node_embedding      = self.MLP_G2M_E2M(torch.cat([mesh_node_embedding,
-                torch.mean(delta_grid_mesh_bond_embedding[:,self.G2M_edge_id_of_node_tensor]*self.G2M_edge_coef_node_tensor,
+                torch.mean(delta_grid_mesh_bond_embedding[:,self.G2M_edge_id_of_node_tensor]*self.G2M_edge_coef_node_tensor.to(device),
                                        -2)],-1))
         delta_grid_rect_embedding      = self.MLP_G2M_G2G(grid_rect_embedding)
         grid_mesh_bond_embedding      += delta_grid_mesh_bond_embedding
@@ -67,9 +71,8 @@ class Mesh2Grid(nn.Module):
         super().__init__()
         self.M2G_edge_id2pair_tensor      = M2G_edge_id2pair_tensor
         self.M2G_edge_id_of_grid_tensor   = M2G_edge_id_of_grid_tensor
-
-        #self.M2G_edge_coef_grid_tensor = M2G_edge_coef_grid_tensor
-        self.register_buffer('M2G_edge_coef_grid_tensor', M2G_edge_coef_grid_tensor)
+        self.M2G_edge_coef_grid_tensor = M2G_edge_coef_grid_tensor
+        #self.register_buffer('M2G_edge_coef_grid_tensor', M2G_edge_coef_grid_tensor)
 
         self.MLP_M2G_MG2E= MLP(embed_dim*3,embed_dim,nonlinear=nonlinear,depth=mlp_depth,bias=mlp_bias)
         self.MLP_M2G_E2G = MLP(embed_dim*2,embed_dim,nonlinear=nonlinear,depth=mlp_depth,bias=mlp_bias)
@@ -84,12 +87,13 @@ class Mesh2Grid(nn.Module):
         assert self.rect_index_limit == grid_allrect_embedding.shape[1]
         assert self.node_index_limit == mesh_node_embedding.shape[1]
         assert self.edge_index_limit == mesh_grid_bond_embedding.shape[1] 
+        device = self.MLP_M2G_MG2E.linear.weight.device
         
         delta_mesh_grid_bond_embedding = self.MLP_M2G_MG2E(torch.cat([mesh_grid_bond_embedding,
                                       mesh_node_embedding[:,self.M2G_edge_id2pair_tensor[:,1]],
                                    grid_allrect_embedding[:,self.M2G_edge_id2pair_tensor[:,0]]],-1))
         delta_grid_rect_embedding     = self.MLP_M2G_E2G(torch.cat([grid_allrect_embedding,
-                            torch.mean(delta_mesh_grid_bond_embedding[:,self.M2G_edge_id_of_grid_tensor]*self.M2G_edge_coef_grid_tensor,
+                            torch.mean(delta_mesh_grid_bond_embedding[:,self.M2G_edge_id_of_grid_tensor]*self.M2G_edge_coef_grid_tensor.to(device),
                                        -2)],-1))
         grid_allrect_embedding += delta_grid_rect_embedding
         return grid_allrect_embedding
@@ -101,8 +105,8 @@ class Mesh2Mesh(nn.Module):
         
         self.M2M_edgeid2pair = M2M_edgeid2pair
         self.key_nearbyedge_pair_per_level = key_nearbyedge_pair_per_level
-        #self.num_of_linked_nodes = num_of_linked_nodes
-        self.register_buffer('num_of_linked_nodes', num_of_linked_nodes)
+        self.num_of_linked_nodes = num_of_linked_nodes
+        #self.register_buffer('num_of_linked_nodes', num_of_linked_nodes)
 
 
         self.MLP_M2M_N2E= MLP(embed_dim*3,embed_dim,nonlinear=nonlinear,depth=mlp_depth,bias=mlp_bias)
@@ -115,6 +119,7 @@ class Mesh2Mesh(nn.Module):
         assert len(mesh_node_embedding.shape) == len(mesh_mesh_bond_embedding.shape) == 3
         assert self.node_index_limit == mesh_node_embedding.shape[1]
         assert self.edge_index_limit == mesh_mesh_bond_embedding.shape[1] 
+        device = self.MLP_M2M_N2E.linear.weight.device
         delta_mesh_mesh_bond_embedding = self.MLP_M2M_N2E(torch.cat([mesh_mesh_bond_embedding,
                                         mesh_node_embedding[:,self.M2M_edgeid2pair[:,0]],
                                         mesh_node_embedding[:,self.M2M_edgeid2pair[:,1]]],-1))
@@ -123,7 +128,7 @@ class Mesh2Mesh(nn.Module):
         mesh_node_aggregration = torch.zeros_like(mesh_node_embedding)
         for start_node, end_node_list in self.key_nearbyedge_pair_per_level:
             mesh_node_aggregration[:,start_node] += delta_mesh_mesh_bond_embedding[:,end_node_list].sum(-2)
-        mesh_node_aggregration = mesh_node_aggregration/self.num_of_linked_nodes
+        mesh_node_aggregration = mesh_node_aggregration/self.num_of_linked_nodes.to(device)
         
         delta_mesh_node_embedding = self.MLP_M2M_E2N(torch.cat([mesh_node_embedding,mesh_node_aggregration],-1))
         mesh_mesh_bond_embedding += delta_mesh_mesh_bond_embedding[:,:-1]
@@ -147,7 +152,8 @@ class GraphCast(nn.Module):
         flag = graphflag
         resolution_flag=f'{img_size[0]}x{img_size[1]}'
         ROOTPATH=f"GraphCastStructure/{flag}"
-        if not os.path.exists(ROOTPATH):self.generate_mesh2mesh_graph_static_file(flag)
+        if not os.path.exists(ROOTPATH):
+            self.generate_mesh2mesh_graph_static_file(flag)
         M2M_node2position                 = np.load(os.path.join(ROOTPATH   ,f"M2M_node2position.npy"   ))
         M2M_position2node                 = torch.load(os.path.join(ROOTPATH,f"M2M_position2node.pt"   )                 )
         M2M_node2lined_node               = torch.load(os.path.join(ROOTPATH,f"M2M_node2lined_node.pt"   )               )
@@ -158,7 +164,7 @@ class GraphCast(nn.Module):
         #M2M_nearby_node_per_node_per_level= torch.load(os.path.join(ROOTPATH,f"M2M_nearby_node_per_node_per_level.pt"   ))
 
         ROOTPATH=f"GraphCastStructure/{flag}/{resolution_flag}"
-        if not os.path.exists(ROOTPATH):self.generate_grid2mesh_graph_static_file(flag)
+        if not os.path.exists(ROOTPATH):self.generate_grid2mesh_graph_static_file(flag,img_size[0])
         G2M_grid2LaLotudePos = np.load(os.path.join(ROOTPATH,f"G2M_grid2LaLotudePos.npy"   )     )
         M2G_LaLotudePos2grid = np.load(os.path.join(ROOTPATH,f"M2G_LaLotudeGrid2rect_tensor.npy"))
 

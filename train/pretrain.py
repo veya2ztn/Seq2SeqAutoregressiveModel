@@ -62,7 +62,8 @@ import random
 import traceback
 from mltool.visualization import *
 import time
-
+import torch._dynamo
+torch._dynamo.config.verbose=True
 lr_for_mode={'pretrain':5e-4,'finetune':1e-4,'fourcast':1e-4}
 ep_for_mode={'pretrain':80,'finetune':50,'fourcast':50}
 bs_for_mode={'pretrain':4,'finetune':3,'fourcast':3}
@@ -2721,6 +2722,7 @@ def build_model(args):
         logsys.info(f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
     if torch.__version__[0]=="2" and args.torch_compile:
         print(f"Now in torch 2.0, we use torch.compile")
+        
         torch.set_float32_matmul_precision('high')
         model = torch.compile(model) 
     if args.distributed:
