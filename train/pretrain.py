@@ -62,8 +62,6 @@ import random
 import traceback
 from mltool.visualization import *
 import time
-import torch._dynamo
-torch._dynamo.config.verbose=True
 lr_for_mode={'pretrain':5e-4,'finetune':1e-4,'fourcast':1e-4}
 ep_for_mode={'pretrain':80,'finetune':50,'fourcast':50}
 bs_for_mode={'pretrain':4,'finetune':3,'fourcast':3}
