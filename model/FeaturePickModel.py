@@ -244,6 +244,10 @@ class CombM_UVTP2p2uvt_rand9010(CombM_UVTP2p2uvt_1By1):
            self.enter_into_phase1()
 
 class CombM_UVTP2p2uvtFix(BaseModel):
+    default_input_channel1        = 55
+    default_output_channel1       = 13
+    default_input_channel2        = 55 + 13
+    default_output_channel2       = 55 - 13
     pred_channel_for_next_stamp   = list(range(55))
     def __init__(self,  args, backbone1, backbone2,ckpt1,ckpt2):
         super().__init__()
