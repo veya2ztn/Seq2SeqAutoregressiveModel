@@ -2751,6 +2751,11 @@ def build_model(args):
     model.accumulation_steps = args.accumulation_steps
     model.consistancy_alpha = deal_with_tuple_string(args.consistancy_alpha,[],dtype=float)
     model.consistancy_eval = args.consistancy_eval
+    if model.consistancy_eval:
+        print(f'''
+            setting model.consistancy_eval={model.consistancy_eval}, please make sure your model dont have running parameter like 
+            BatchNorm, dropout>1 which will effect training.
+        ''')
     model.vertical_constrain= args.vertical_constrain
     model.consistancy_activate_wall = args.consistancy_activate_wall
     model.mean_path_length = torch.zeros(1)
