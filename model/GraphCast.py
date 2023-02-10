@@ -4,6 +4,7 @@ import torch
 import os
 import csv
 import copy
+
 class MLP(nn.Module):
     def __init__(self, input_channel, output_cannel, bias=False, 
                  nonlinear='tanh',depth=1):
@@ -94,7 +95,7 @@ class Mesh2Grid(nn.Module):
                                    grid_allrect_embedding[:,self.M2G_edge_id2pair_tensor[:,0]]],-1))
         delta_grid_rect_embedding     = self.MLP_M2G_E2G(torch.cat([grid_allrect_embedding,
                             torch.mean(delta_mesh_grid_bond_embedding[:,self.M2G_edge_id_of_grid_tensor]*self.M2G_edge_coef_grid_tensor.to(device),
-                                       -2)],-1))
+                                       -2)],-1))  # notice  <-- this operation should be sum, but we use mean which cause a extra divide
         grid_allrect_embedding += delta_grid_rect_embedding
         return grid_allrect_embedding
 
@@ -135,126 +136,7 @@ class Mesh2Mesh(nn.Module):
         mesh_node_embedding      += delta_mesh_node_embedding    
         return mesh_mesh_bond_embedding,mesh_node_embedding
     
-
-class GraphCast(nn.Module):
-    '''
-    Repreduce of GraphCast in Pytorch.
-    GraphCast has three part:
-    - Grid to Mesh
-    - Mesh to Mesh
-    - Mesh to Grid
-    -------------------------------------
-    the input is a tensor (B, P, W, H), but the internal tensor all with shape (B, L ,P)
-    where the L equal the node number or edge number.
-    '''
-    def __init__(self, img_size=(64,128),  in_chans=70, out_chans=70, depth=6, embed_dim=128, graphflag='mesh5', nonlinear='swish', **kargs):
-        super().__init__()
-        flag = graphflag
-        resolution_flag=f'{img_size[0]}x{img_size[1]}'
-        ROOTPATH=f"GraphCastStructure/{flag}"
-        if not os.path.exists(ROOTPATH):
-            self.generate_mesh2mesh_graph_static_file(flag)
-        M2M_node2position                 = np.load(os.path.join(ROOTPATH   ,f"M2M_node2position.npy"   ))
-        M2M_position2node                 = torch.load(os.path.join(ROOTPATH,f"M2M_position2node.pt"   )                 )
-        M2M_node2lined_node               = torch.load(os.path.join(ROOTPATH,f"M2M_node2lined_node.pt"   )               )
-        # M2M_edge2id                       = torch.load(os.path.join(ROOTPATH,f"M2M_edge2id.pt"   )                       )
-
-        M2M_edgeid2pair                   = np.load(os.path.join(ROOTPATH   ,f"M2M_edgeid2pair.npy"   ))
-        M2M_nearby_edge_per_node_per_level= torch.load(os.path.join(ROOTPATH,f"M2M_nearby_edge_per_node_per_level.pt"   ))
-        #M2M_nearby_node_per_node_per_level= torch.load(os.path.join(ROOTPATH,f"M2M_nearby_node_per_node_per_level.pt"   ))
-
-        ROOTPATH=f"GraphCastStructure/{flag}/{resolution_flag}"
-        if not os.path.exists(ROOTPATH):self.generate_grid2mesh_graph_static_file(flag,img_size[0])
-        G2M_grid2LaLotudePos = np.load(os.path.join(ROOTPATH,f"G2M_grid2LaLotudePos.npy"   )     )
-        M2G_LaLotudePos2grid = np.load(os.path.join(ROOTPATH,f"M2G_LaLotudeGrid2rect_tensor.npy"))
-
-        # G2M_rect_of_node_tensor    = np.load(os.path.join(ROOTPATH,f"G2M_rect_of_node_tensor.npy"   ) )
-        # G2M_rect_distant_tensor    = np.load(os.path.join(ROOTPATH,f"G2M_rect_distant_tensor.npy"   ) )
-        G2M_edge_id_of_node_tensor = np.load(os.path.join(ROOTPATH,f"G2M_edge_id_of_node_tensor.npy") )
-        G2M_edge_coef_node_tensor  = np.load(os.path.join(ROOTPATH,f"G2M_edge_coef_node_tensor.npy" ) )
-        G2M_edge_id2pair_tensor    = np.load(os.path.join(ROOTPATH,f"G2M_edge_id2pair_tensor.npy"   ) )
-        # G2M_edge_pos2_id           = torch.load(os.path.join(ROOTPATH,f"G2M_edge_pos2_id.pt"   ))
-        # M2G_node_of_rect_tensor    = np.load(os.path.join(ROOTPATH,f"M2G_node_of_rect_tensor.npy"   ))    
-        # M2G_node_distant_tensor    = np.load(os.path.join(ROOTPATH,f"M2G_node_of_rect_tensor.npy"   ))    
-        M2G_edge_id_of_grid_tensor= np.load(os.path.join(ROOTPATH,f"M2G_edge_id_of_grid_tensor.npy"   ))  
-        M2G_edge_coef_grid_tensor = np.load(os.path.join(ROOTPATH,f"M2G_edge_coef_grid_tensor.npy"   ) )  
-        M2G_edge_id2pair_tensor   = np.load(os.path.join(ROOTPATH,f"M2G_edge_id2pair_tensor.npy")      )  
-        
-        embedding_dim = embed_dim
-        self.num_unactivated_grid = num_unactivated_grid = len(M2G_edge_id_of_grid_tensor) - len(G2M_grid2LaLotudePos) - 2
-        self.num_unactivated_edge = num_unactivated_edge = len(M2G_edge_id2pair_tensor) - len(G2M_edge_id2pair_tensor)
-        print(f'''
-        This is ===> GraphCast Model <===
-        Information: 
-            total mesh node:{len(M2M_node2position):5d} total unique mesh edge:{len(M2M_edgeid2pair):5d} 
-            total grid node {np.prod(img_size)}+2 = {(len(M2G_edge_id_of_grid_tensor))} but activated grid {len(G2M_grid2LaLotudePos):5d} +  2
-            from activated grid to mesh, create 4*{len(M2M_node2position)} = {len(G2M_edge_id2pair_tensor)} edge
-            there are {num_unactivated_grid} unactivated grid node
-            when mapping node to grid, 
-            from node to activated grid, there are {len(G2M_edge_id2pair_tensor)} 
-            from node to unactivated grid, there are {num_unactivated_edge} edge
-            thus, totally have {len(M2G_edge_id2pair_tensor)} edge. 
-            #notice some grid only have 1-2 linked node but some grid may have 30 lined node
-        ''')
-        G2M_edge_id2pair_tensor   = torch.LongTensor(G2M_edge_id2pair_tensor)
-        G2M_edge_coef_node_tensor = torch.Tensor(G2M_edge_coef_node_tensor).softmax(-1).unsqueeze(-1)
-        
-
-        M2M_edgeid2pair                    = torch.LongTensor(M2M_edgeid2pair)
-        M2M_nearby_edge_per_node_per_level = [[torch.LongTensor(start_node),torch.LongTensor(linked_edge_list)] for start_node,linked_edge_list in M2M_nearby_edge_per_node_per_level]
-        M2M_num_of_linked_nodes            = torch.FloatTensor([len(M2M_node2lined_node[t]) for t in range(len(M2M_node2lined_node))]).unsqueeze(-1)
-        
-        M2G_edge_id2pair_tensor  = torch.LongTensor(M2G_edge_id2pair_tensor)
-        M2G_node_of_rect_tensor  = torch.LongTensor(M2G_edge_id_of_grid_tensor)
-        M2G_edge_coef_grid_tensor= torch.Tensor(M2G_edge_coef_grid_tensor).softmax(-1).unsqueeze(-1)
-
-
-        M2G_LaLotudePos2grid = torch.LongTensor(M2G_LaLotudePos2grid)
-        G2M_grid2LaLotudePos = torch.LongTensor(G2M_grid2LaLotudePos)
-        
-
-        
-
-        self.M2G_LaLotudePos2grid = M2G_LaLotudePos2grid
-        self.G2M_grid2LaLotudePos = G2M_grid2LaLotudePos
-        
-        self.layer_grid2mesh = Grid2Mesh(G2M_edge_id2pair_tensor,G2M_edge_id_of_node_tensor,G2M_edge_coef_node_tensor, 
-                                         embed_dim=embedding_dim,nonlinear=nonlinear)
-        
-        self.layer_mesh2mesh = nn.ModuleList()
-        for i in range(depth):
-            self.layer_mesh2mesh.append(Mesh2Mesh(M2M_edgeid2pair, M2M_nearby_edge_per_node_per_level, M2M_num_of_linked_nodes, 
-                                                  embed_dim=embedding_dim,nonlinear=nonlinear))
-        self.layer_mesh2grid = Mesh2Grid(M2G_edge_id2pair_tensor,M2G_node_of_rect_tensor,M2G_edge_coef_grid_tensor, 
-                                         embed_dim=embedding_dim,nonlinear=nonlinear)
-        
-        self.grid_rect_embedding_layer = nn.Linear(in_chans,embedding_dim)
-        self.northsouthembbed = nn.Parameter(torch.randn(2,embedding_dim))
-        
-        self.mesh_node_embedding       = nn.Parameter(torch.randn(len(M2M_node2position),embedding_dim))
-        self.mesh_mesh_bond_embedding  = nn.Parameter(torch.randn(len(M2M_edgeid2pair),embedding_dim))
-        self.grid_mesh_bond_embedding  = nn.Parameter(torch.randn(len(G2M_edge_id2pair_tensor),embedding_dim))
-
-        self.projection      = nn.Linear(embedding_dim,out_chans)
-
-    def forward(self, _input):
-        B, P , W, H =_input.shape
-        feature_along_latlot     = self.grid_rect_embedding_layer(_input.permute(0,2,3,1).flatten(1,2))
-        grid_rect_embedding      = feature_along_latlot[:,self.G2M_grid2LaLotudePos]
-        grid_rect_embedding      = torch.cat([self.northsouthembbed.repeat(B,1,1),grid_rect_embedding],1)
-        grid_mesh_bond_embedding = self.grid_mesh_bond_embedding.repeat(B,1,1)
-        mesh_node_embedding      = self.mesh_node_embedding.repeat(B,1,1)
-        mesh_mesh_bond_embedding = self.mesh_mesh_bond_embedding.repeat(B,1,1)
-        grid_mesh_bond_embedding,grid_rect_embedding,mesh_node_embedding = self.layer_grid2mesh(
-                                        grid_mesh_bond_embedding,grid_rect_embedding,mesh_node_embedding)
-        for mesh2mesh in self.layer_mesh2mesh:
-            mesh_mesh_bond_embedding, mesh_node_embedding  = mesh2mesh(mesh_mesh_bond_embedding, mesh_node_embedding)
-        grid_mesh_bond_embedding = torch.nn.functional.pad(grid_mesh_bond_embedding,(0,0,0,self.num_unactivated_edge))
-        grid_rect_embedding      = torch.nn.functional.pad(grid_rect_embedding,(0,0,0,self.num_unactivated_grid ))
-        grid_rect_embedding      = self.layer_mesh2grid(grid_mesh_bond_embedding,grid_rect_embedding,mesh_node_embedding)
-        grid_rect_embedding      = grid_rect_embedding[:,self.M2G_LaLotudePos2grid] #(B,64,128,embed_dim)
-        return self.projection(grid_rect_embedding).permute(0,3,1,2)
-
+class MeshCast(nn.Module):
     @staticmethod
     def generate_mesh2mesh_graph_static_file(flag):
         def readMx(path):
@@ -591,6 +473,8 @@ class GraphCast(nn.Module):
                 M2G_edge_id_of_rect[rect_id].append(M2G_edge_id)
                 M2G_edge_coef_rect[ rect_id].append(distant)
 
+        M2G_edge2id_max_rank = {}
+        M2G_id2edge_max_rank = []
         M2G_node_of_rect_tensor = np.zeros((len(M2G_node_distant),max_rank),dtype='int')
         M2G_node_distant_tensor = np.zeros((len(M2G_node_distant),max_rank),dtype='float')
         for rect_id in range(len(M2G_node_distant)):
@@ -602,15 +486,23 @@ class GraphCast(nn.Module):
             if len(nearby_node)<max_rank:
                 nearby_node = np.pad(nearby_node,(0,max_rank - len(nearby_node)),constant_values=-1)
                 nearby_dist = np.pad(nearby_dist,(0,max_rank - len(nearby_dist)),constant_values=-100)
+            for node_id in nearby_node:
+                if node_id <0:continue
+                saved_edge_relation = (rect_id,node_id)
+                if saved_edge_relation not in M2G_edge2id_max_rank:
+                    M2G_edge2id_max_rank[saved_edge_relation] = len(M2G_id2edge_max_rank)
+                    M2G_id2edge_max_rank.append(saved_edge_relation)
             M2G_node_of_rect_tensor[rect_id]= np.array(nearby_node)
             M2G_node_distant_tensor[rect_id]= np.array(nearby_dist)
 
+        np.save(os.path.join(ROOTPATH,f"M2G_id2edge_max_rank.npy"   ), M2G_id2edge_max_rank)    
         np.save(os.path.join(ROOTPATH,f"M2G_node_of_rect_tensor.npy"   ),M2G_node_of_rect_tensor)    
-        np.save(os.path.join(ROOTPATH,f"M2G_node_distant_tensor.npy"   ),M2G_node_distant_tensor)    
-
+        np.save(os.path.join(ROOTPATH,f"M2G_node_distant_tensor.npy"   ),M2G_node_distant_tensor)
+        
         M2G_edge_id2pair_tensor = np.zeros((len(M2G_edge_id2pair),2),dtype='int')   #<-- save 
         for i in range(len(M2G_edge_id2pair)):
             M2G_edge_id2pair_tensor[i] = M2G_edge_id2pair[i]
+        np.save(os.path.join(ROOTPATH,f"M2G_edge_id2pair_tensor.npy")      , M2G_edge_id2pair_tensor)
 
         # build neighbor egde of ordered node
         M2G_edge_id_of_grid_tensor= np.zeros((len(M2G_node_of_rect),max_rank),dtype='int')   #<-- save 
@@ -629,5 +521,576 @@ class GraphCast(nn.Module):
 
         np.save(os.path.join(ROOTPATH,f"M2G_edge_id_of_grid_tensor.npy"   ), M2G_edge_id_of_grid_tensor)    
         np.save(os.path.join(ROOTPATH,f"M2G_edge_coef_grid_tensor.npy"   ) , M2G_edge_coef_grid_tensor)    
-        np.save(os.path.join(ROOTPATH,f"M2G_edge_id2pair_tensor.npy")      , M2G_edge_id2pair_tensor)    
+           
         print("done~")
+
+class GraphCast(MeshCast):
+    '''
+    Repreduce of GraphCast in Pytorch.
+    GraphCast has three part:
+    - Grid to Mesh
+    - Mesh to Mesh
+    - Mesh to Grid
+    -------------------------------------
+    the input is a tensor (B, P, W, H), but the internal tensor all with shape (B, L ,P)
+    where the L equal the node number or edge number.
+    '''
+    def __init__(self, img_size=(64,128),  in_chans=70, out_chans=70, depth=6, embed_dim=128, graphflag='mesh5', nonlinear='swish', **kargs):
+        super().__init__()
+        flag = graphflag
+        resolution_flag=f'{img_size[0]}x{img_size[1]}'
+        ROOTPATH=f"GraphCastStructure/{flag}"
+        if not os.path.exists(ROOTPATH):
+            self.generate_mesh2mesh_graph_static_file(flag)
+        M2M_node2position                 = np.load(os.path.join(ROOTPATH   ,f"M2M_node2position.npy"   ))
+        M2M_position2node                 = torch.load(os.path.join(ROOTPATH,f"M2M_position2node.pt"   )                 )
+        M2M_node2lined_node               = torch.load(os.path.join(ROOTPATH,f"M2M_node2lined_node.pt"   )               )
+        # M2M_edge2id                       = torch.load(os.path.join(ROOTPATH,f"M2M_edge2id.pt"   )                       )
+
+        M2M_edgeid2pair                   = np.load(os.path.join(ROOTPATH   ,f"M2M_edgeid2pair.npy"   ))
+        M2M_nearby_edge_per_node_per_level= torch.load(os.path.join(ROOTPATH,f"M2M_nearby_edge_per_node_per_level.pt"   ))
+        #M2M_nearby_node_per_node_per_level= torch.load(os.path.join(ROOTPATH,f"M2M_nearby_node_per_node_per_level.pt"   ))
+
+        ROOTPATH=f"GraphCastStructure/{flag}/{resolution_flag}"
+        if not os.path.exists(ROOTPATH):self.generate_grid2mesh_graph_static_file(flag,img_size[0])
+        G2M_grid2LaLotudePos = np.load(os.path.join(ROOTPATH,f"G2M_grid2LaLotudePos.npy"   )     )
+        M2G_LaLotudePos2grid = np.load(os.path.join(ROOTPATH,f"M2G_LaLotudeGrid2rect_tensor.npy"))
+
+        # G2M_rect_of_node_tensor    = np.load(os.path.join(ROOTPATH,f"G2M_rect_of_node_tensor.npy"   ) )
+        # G2M_rect_distant_tensor    = np.load(os.path.join(ROOTPATH,f"G2M_rect_distant_tensor.npy"   ) )
+        G2M_edge_id_of_node_tensor = np.load(os.path.join(ROOTPATH,f"G2M_edge_id_of_node_tensor.npy") )
+        G2M_edge_coef_node_tensor  = np.load(os.path.join(ROOTPATH,f"G2M_edge_coef_node_tensor.npy" ) )
+        G2M_edge_id2pair_tensor    = np.load(os.path.join(ROOTPATH,f"G2M_edge_id2pair_tensor.npy"   ) )
+        # G2M_edge_pos2_id           = torch.load(os.path.join(ROOTPATH,f"G2M_edge_pos2_id.pt"   ))
+        # M2G_node_of_rect_tensor    = np.load(os.path.join(ROOTPATH,f"M2G_node_of_rect_tensor.npy"   ))    
+        # M2G_node_distant_tensor    = np.load(os.path.join(ROOTPATH,f"M2G_node_of_rect_tensor.npy"   ))    
+        M2G_edge_id_of_grid_tensor= np.load(os.path.join(ROOTPATH,f"M2G_edge_id_of_grid_tensor.npy"   ))  
+        M2G_edge_coef_grid_tensor = np.load(os.path.join(ROOTPATH,f"M2G_edge_coef_grid_tensor.npy"   ) )  
+        M2G_edge_id2pair_tensor   = np.load(os.path.join(ROOTPATH,f"M2G_edge_id2pair_tensor.npy")      )  
+        
+        embedding_dim = embed_dim
+        self.num_unactivated_grid = num_unactivated_grid = len(M2G_edge_id_of_grid_tensor) - len(G2M_grid2LaLotudePos) - 2
+        self.num_unactivated_edge = num_unactivated_edge = len(M2G_edge_id2pair_tensor) - len(G2M_edge_id2pair_tensor)
+        print(f'''
+        This is ===> GraphCast Model <===
+        Information: 
+            total mesh node:{len(M2M_node2position):5d} total unique mesh edge:{len(M2M_edgeid2pair):5d} 
+            total grid node {np.prod(img_size)}+2 = {(len(M2G_edge_id_of_grid_tensor))} but activated grid {len(G2M_grid2LaLotudePos):5d} +  2
+            from activated grid to mesh, create 4*{len(M2M_node2position)} = {len(G2M_edge_id2pair_tensor)} edge
+            there are {num_unactivated_grid} unactivated grid node
+            when mapping node to grid, 
+            from node to activated grid, there are {len(G2M_edge_id2pair_tensor)} 
+            from node to unactivated grid, there are {num_unactivated_edge} edge
+            thus, totally have {len(M2G_edge_id2pair_tensor)} edge. 
+            #notice some grid only have 1-2 linked node but some grid may have 30 lined node
+        ''')
+        G2M_edge_id2pair_tensor   = torch.LongTensor(G2M_edge_id2pair_tensor)
+        G2M_edge_coef_node_tensor = torch.Tensor(G2M_edge_coef_node_tensor).softmax(-1).unsqueeze(-1)
+        
+
+        M2M_edgeid2pair                    = torch.LongTensor(M2M_edgeid2pair)
+        M2M_nearby_edge_per_node_per_level = [[torch.LongTensor(start_node),torch.LongTensor(linked_edge_list)] for start_node,linked_edge_list in M2M_nearby_edge_per_node_per_level]
+        M2M_num_of_linked_nodes            = torch.FloatTensor([len(M2M_node2lined_node[t]) for t in range(len(M2M_node2lined_node))]).unsqueeze(-1)
+        
+        M2G_edge_id2pair_tensor  = torch.LongTensor(M2G_edge_id2pair_tensor)
+        M2G_node_of_rect_tensor  = torch.LongTensor(M2G_edge_id_of_grid_tensor)
+        M2G_edge_coef_grid_tensor= torch.Tensor(M2G_edge_coef_grid_tensor).softmax(-1).unsqueeze(-1)
+
+
+        M2G_LaLotudePos2grid = torch.LongTensor(M2G_LaLotudePos2grid)
+        G2M_grid2LaLotudePos = torch.LongTensor(G2M_grid2LaLotudePos)
+        
+
+        
+
+        self.M2G_LaLotudePos2grid = M2G_LaLotudePos2grid
+        self.G2M_grid2LaLotudePos = G2M_grid2LaLotudePos
+        
+        self.layer_grid2mesh = Grid2Mesh(G2M_edge_id2pair_tensor,G2M_edge_id_of_node_tensor,G2M_edge_coef_node_tensor, 
+                                         embed_dim=embedding_dim,nonlinear=nonlinear)
+        
+        self.layer_mesh2mesh = nn.ModuleList()
+        for i in range(depth):
+            self.layer_mesh2mesh.append(Mesh2Mesh(M2M_edgeid2pair, M2M_nearby_edge_per_node_per_level, M2M_num_of_linked_nodes, 
+                                                  embed_dim=embedding_dim,nonlinear=nonlinear))
+        self.layer_mesh2grid = Mesh2Grid(M2G_edge_id2pair_tensor,M2G_node_of_rect_tensor,M2G_edge_coef_grid_tensor, 
+                                         embed_dim=embedding_dim,nonlinear=nonlinear)
+        
+        self.grid_rect_embedding_layer = nn.Linear(in_chans,embedding_dim)
+        self.northsouthembbed = nn.Parameter(torch.randn(2,embedding_dim))
+        
+        self.mesh_node_embedding       = nn.Parameter(torch.randn(len(M2M_node2position),embedding_dim))
+        self.mesh_mesh_bond_embedding  = nn.Parameter(torch.randn(len(M2M_edgeid2pair),embedding_dim))
+        self.grid_mesh_bond_embedding  = nn.Parameter(torch.randn(len(G2M_edge_id2pair_tensor),embedding_dim))
+
+        self.projection      = nn.Linear(embedding_dim,out_chans)
+
+    def forward(self, _input):
+        B, P , W, H =_input.shape
+        feature_along_latlot     = self.grid_rect_embedding_layer(_input.permute(0,2,3,1).flatten(1,2))
+        grid_rect_embedding      = feature_along_latlot[:,self.G2M_grid2LaLotudePos]
+        grid_rect_embedding      = torch.cat([self.northsouthembbed.repeat(B,1,1),grid_rect_embedding],1)
+        grid_mesh_bond_embedding = self.grid_mesh_bond_embedding.repeat(B,1,1)
+        mesh_node_embedding      = self.mesh_node_embedding.repeat(B,1,1)
+        mesh_mesh_bond_embedding = self.mesh_mesh_bond_embedding.repeat(B,1,1)
+        grid_mesh_bond_embedding,grid_rect_embedding,mesh_node_embedding = self.layer_grid2mesh(
+                                        grid_mesh_bond_embedding,grid_rect_embedding,mesh_node_embedding)
+        for mesh2mesh in self.layer_mesh2mesh:
+            mesh_mesh_bond_embedding, mesh_node_embedding  = mesh2mesh(mesh_mesh_bond_embedding, mesh_node_embedding)
+        grid_mesh_bond_embedding = torch.nn.functional.pad(grid_mesh_bond_embedding,(0,0,0,self.num_unactivated_edge))
+        grid_rect_embedding      = torch.nn.functional.pad(grid_rect_embedding,(0,0,0,self.num_unactivated_grid ))
+        grid_rect_embedding      = self.layer_mesh2grid(grid_mesh_bond_embedding,grid_rect_embedding,mesh_node_embedding)
+        grid_rect_embedding      = grid_rect_embedding[:,self.M2G_LaLotudePos2grid] #(B,64,128,embed_dim)
+        return self.projection(grid_rect_embedding).permute(0,3,1,2)
+
+
+class Node2Edge2NodeBlockSingleLevel(nn.Module):
+    def __init__(self, src_tgt_order, edge_order, bond_coef, 
+                 embed_dim=128,do_source_update = False,
+                 **kargs):
+        super().__init__()
+        self.src_order = src_tgt_order[:,0]
+        self.tgt_order = src_tgt_order[:,1]
+        self.edge_order= edge_order
+        #self.bond_coef = bond_coef
+        #self.register_buffer('G2M_edge_coef_node_tensor', G2M_edge_coef_node_tensor)
+
+        self.activator = nn.Sequential(torch.nn.SiLU(),torch.nn.LayerNorm(embed_dim))
+        self.STE2E_S2E = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
+        self.STE2E_T2E = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
+        self.STE2E_E2E = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
+        self.ET2T_E2T  = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
+        self.ET2T_T2T  = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
+        self.bond_coef  = nn.Parameter(bond_coef,requires_grad=False)
+        self.S2S = None
+        if do_source_update:
+            self.S2S   = nn.Parameter(torch.randn(embed_dim, embed_dim))
+            
+        self.src_index_limit  = self.src_order.max() + 1
+        self.tgt_index_limit  = self.tgt_order.max() + 1
+        self.edge_index_limit = len(self.src_order)
+    
+    def forward(self, bond_embedding, src_embedding, tgt_embedding):
+        ### shape checking
+        ### all the necessary rect of grid is recorded in G2M_grid2LaLotudePos
+        #### we will plus north south point at the begining torch.cat([north_south_embedding,grid_rect_embedding],1)
+        assert len(bond_embedding.shape) == len(src_embedding.shape) == len(tgt_embedding.shape) == 3
+        assert self.src_index_limit  ==  src_embedding.shape[1]
+        assert self.tgt_index_limit  ==  tgt_embedding.shape[1]
+        assert self.edge_index_limit == bond_embedding.shape[1] 
+        device = self.STE2E_S2E.device
+        
+        ## compute delta bond embedding
+        delta_bond_embedding = src_embedding[:,self.src_order] @ self.STE2E_S2E #(B,L,D)
+        delta_bond_embedding = delta_bond_embedding + tgt_embedding[:,self.tgt_order] @ self.STE2E_T2E #(B,L,D)
+        delta_bond_embedding = delta_bond_embedding + bond_embedding @ self.STE2E_E2E  #(B,1,D)
+        delta_bond_embedding = self.activator(delta_bond_embedding) #(B,L,D)
+
+        ## compute delta tgt embedding
+        bond_reduce = (delta_bond_embedding[:,self.edge_order]*self.bond_coef.unsqueeze(-1)).sum(-2)
+        #bond_reduce = torch.einsum('blnd,ln->bld',
+        #                           delta_bond_embedding[:,self.edge_order],
+        #                           self.bond_coef) ### 2.6 ms vs 2.2 ms
+        delta_tgt_embedding = bond_reduce@self.ET2T_E2T
+        delta_tgt_embedding = delta_tgt_embedding + tgt_embedding@self.ET2T_T2T
+        delta_tgt_embedding = self.activator(delta_tgt_embedding)
+        
+        delta_src_embedding = self.activator(src_embedding@self.S2S) if self.S2S is not None else 0
+        
+        bond_embedding= bond_embedding + delta_bond_embedding
+        src_embedding = src_embedding  + delta_src_embedding
+        tgt_embedding = tgt_embedding  + delta_tgt_embedding
+        
+        return bond_embedding,src_embedding,tgt_embedding
+
+class Node2Edge2NodeBlockMultiLevel(nn.Module):
+    def __init__(self, src_tgt_order, edge_order, num_of_linked_nodes, 
+                 embed_dim=128,do_source_update = False,
+                 **kargs):
+        super().__init__()
+        self.src_order            = src_tgt_order[:,0]
+        self.tgt_order            = src_tgt_order[:,1]
+        self.edge_order           = edge_order
+        
+        
+        self.activator = nn.Sequential(torch.nn.SiLU(),torch.nn.LayerNorm(embed_dim))
+        self.STE2E_S2E = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
+        self.STE2E_T2E = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
+        self.STE2E_E2E = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
+        self.ET2T_E2T  = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
+        self.ET2T_T2T  = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
+        self.num_of_linked_nodes  = nn.Parameter(num_of_linked_nodes,requires_grad=False)
+        
+        self.S2S = None
+        if do_source_update:
+            self.S2S   = nn.Parameter(torch.randn(embed_dim, embed_dim))
+        
+
+    def forward(self, bond_embedding, src_embedding, tgt_embedding):
+        ### shape checking
+        ### all the necessary rect of grid is recorded in G2M_grid2LaLotudePos
+        #### we will plus north south point at the begining torch.cat([north_south_embedding,grid_rect_embedding],1)
+        assert len(bond_embedding.shape) == len(src_embedding.shape) == len(tgt_embedding.shape) == 3
+        device = self.STE2E_S2E.device
+        
+        
+        ## compute delta bond embedding
+        
+        delta_bond_embedding = src_embedding[:,self.src_order] @ self.STE2E_S2E #(B,L,D)
+        delta_bond_embedding = delta_bond_embedding + tgt_embedding[:,self.tgt_order] @ self.STE2E_T2E #(B,L,D)
+        delta_bond_embedding = delta_bond_embedding + bond_embedding @ self.STE2E_E2E  #(B,1,D)
+        delta_bond_embedding = self.activator(delta_bond_embedding) #(B,L,D)
+
+        
+        ## compute delta tgt embedding
+        delta_bond_embedding= torch.nn.functional.pad(delta_bond_embedding,(0,0,0,1))
+        # notice the nearby node of each level either 5 or 6, then we use -1 as the padding number.
+        # notice some node has multi-level nearby,
+        bond_reduce = torch.zeros_like(tgt_embedding)
+        for start_node, end_node_list in self.edge_order:
+            bond_reduce[:,start_node] += delta_bond_embedding[:,end_node_list].sum(-2)
+        bond_reduce = bond_reduce/self.num_of_linked_nodes
+
+        delta_tgt_embedding = bond_reduce@self.ET2T_E2T
+        delta_tgt_embedding = delta_tgt_embedding + tgt_embedding@self.ET2T_T2T
+        delta_tgt_embedding = self.activator(delta_tgt_embedding)
+        
+        ## compute delta src embedding
+        delta_src_embedding   = self.activator(src_embedding@self.S2S) if self.S2S is not None else 0
+        
+        bond_embedding = bond_embedding + delta_bond_embedding[:,:-1]
+        src_embedding  = src_embedding  + delta_src_embedding
+        tgt_embedding  = tgt_embedding  + delta_tgt_embedding
+        
+        return bond_embedding,src_embedding,tgt_embedding
+    
+class GraphCastFast(MeshCast):
+    '''
+    ---> 1.5 speed up
+    Repreduce of GraphCast in Pytorch.
+    GraphCast has three part:
+    - Grid to Mesh
+    - Mesh to Mesh
+    - Mesh to Grid
+    -------------------------------------
+    the input is a tensor (B, P, W, H), but the internal tensor all with shape (B, L ,P)
+    where the L equal the node number or edge number.
+    '''
+    def __init__(self, img_size=(64,128),  in_chans=70, out_chans=70, depth=6, embed_dim=128, graphflag='mesh5', nonlinear='swish', **kargs):
+        super().__init__()
+        flag = graphflag
+        resolution_flag=f'{img_size[0]}x{img_size[1]}'
+        ROOTPATH=f"GraphCastStructure/{flag}"
+        if not os.path.exists(ROOTPATH):
+            self.generate_mesh2mesh_graph_static_file(flag)
+        M2M_node2position                 = np.load(os.path.join(ROOTPATH   ,f"M2M_node2position.npy"   ))
+        M2M_position2node                 = torch.load(os.path.join(ROOTPATH,f"M2M_position2node.pt"   )                 )
+        M2M_node2lined_node               = torch.load(os.path.join(ROOTPATH,f"M2M_node2lined_node.pt"   )               )
+        # M2M_edge2id                       = torch.load(os.path.join(ROOTPATH,f"M2M_edge2id.pt"   )                       )
+
+        M2M_edgeid2pair                   = np.load(os.path.join(ROOTPATH   ,f"M2M_edgeid2pair.npy"   ))
+        M2M_nearby_edge_per_node_per_level= torch.load(os.path.join(ROOTPATH,f"M2M_nearby_edge_per_node_per_level.pt"   ))
+        #M2M_nearby_node_per_node_per_level= torch.load(os.path.join(ROOTPATH,f"M2M_nearby_node_per_node_per_level.pt"   ))
+
+        ROOTPATH=f"GraphCastStructure/{flag}/{resolution_flag}"
+        if not os.path.exists(ROOTPATH):self.generate_grid2mesh_graph_static_file(flag,img_size[0])
+        G2M_grid2LaLotudePos = np.load(os.path.join(ROOTPATH,f"G2M_grid2LaLotudePos.npy"   )     )
+        M2G_LaLotudePos2grid = np.load(os.path.join(ROOTPATH,f"M2G_LaLotudeGrid2rect_tensor.npy"))
+
+        # G2M_rect_of_node_tensor    = np.load(os.path.join(ROOTPATH,f"G2M_rect_of_node_tensor.npy"   ) )
+        # G2M_rect_distant_tensor    = np.load(os.path.join(ROOTPATH,f"G2M_rect_distant_tensor.npy"   ) )
+        G2M_edge_id_of_node_tensor = np.load(os.path.join(ROOTPATH,f"G2M_edge_id_of_node_tensor.npy") )
+        G2M_edge_coef_node_tensor  = np.load(os.path.join(ROOTPATH,f"G2M_edge_coef_node_tensor.npy" ) )
+        G2M_edge_id2pair_tensor    = np.load(os.path.join(ROOTPATH,f"G2M_edge_id2pair_tensor.npy"   ) )
+        # G2M_edge_pos2_id           = torch.load(os.path.join(ROOTPATH,f"G2M_edge_pos2_id.pt"   ))
+        # M2G_node_of_rect_tensor    = np.load(os.path.join(ROOTPATH,f"M2G_node_of_rect_tensor.npy"   ))    
+        # M2G_node_distant_tensor    = np.load(os.path.join(ROOTPATH,f"M2G_node_of_rect_tensor.npy"   ))    
+        M2G_edge_id_of_grid_tensor= np.load(os.path.join(ROOTPATH,f"M2G_edge_id_of_grid_tensor.npy"   ))  
+        M2G_edge_coef_grid_tensor = np.load(os.path.join(ROOTPATH,f"M2G_edge_coef_grid_tensor.npy"   ) )  
+        M2G_edge_id2pair_tensor   = np.load(os.path.join(ROOTPATH,f"M2G_edge_id2pair_tensor.npy")      )  
+        
+        embedding_dim = embed_dim
+        self.num_unactivated_grid = num_unactivated_grid = len(M2G_edge_id_of_grid_tensor) - len(G2M_grid2LaLotudePos) - 2
+        self.num_unactivated_edge = num_unactivated_edge = len(M2G_edge_id2pair_tensor) - len(G2M_edge_id2pair_tensor)
+        print(f'''
+        This is ===> GraphCast Model (Fast) <===
+        Information: 
+            total mesh node:{len(M2M_node2position):5d} total unique mesh edge:{len(M2M_edgeid2pair):5d} 
+            total grid node {np.prod(img_size)}+2 = {(len(M2G_edge_id_of_grid_tensor))} but activated grid {len(G2M_grid2LaLotudePos):5d} +  2
+            from activated grid to mesh, create 4*{len(M2M_node2position)} = {len(G2M_edge_id2pair_tensor)} edge
+            there are {num_unactivated_grid} unactivated grid node
+            when mapping node to grid, 
+            from node to activated grid, there are {len(G2M_edge_id2pair_tensor)} 
+            from node to unactivated grid, there are {num_unactivated_edge} edge
+            thus, totally have {len(M2G_edge_id2pair_tensor)} edge. 
+            #notice some grid only have 1-2 linked node but some grid may have 30 lined node
+        ''')
+        G2M_edge_id2pair_tensor   = torch.LongTensor(G2M_edge_id2pair_tensor)
+        G2M_edge_coef_node_tensor = torch.Tensor(G2M_edge_coef_node_tensor).softmax(-1)
+        
+
+        M2M_edgeid2pair                    = torch.LongTensor(M2M_edgeid2pair)
+        M2M_nearby_edge_per_node_per_level = [[torch.LongTensor(start_node),torch.LongTensor(linked_edge_list)] for start_node,linked_edge_list in M2M_nearby_edge_per_node_per_level]
+        M2M_num_of_linked_nodes            = torch.FloatTensor([len(M2M_node2lined_node[t]) for t in range(len(M2M_node2lined_node))]).unsqueeze(-1)
+        
+        M2G_edge_id2pair_tensor  = torch.LongTensor(M2G_edge_id2pair_tensor) # (L,2)
+        #notice the M2G_edge_id2pair_tensor record (rect_id , node_id) but in this implement
+        # the order should be (src,tgt) which is node_id,rect_id
+        # lets convert it .
+        M2G_edge_id2pair_tensor  = torch.stack([M2G_edge_id2pair_tensor[:,1],M2G_edge_id2pair_tensor[:,0]],-1)
+        M2G_edge_of_rect_tensor  = torch.LongTensor(M2G_edge_id_of_grid_tensor)
+        M2G_edge_coef_grid_tensor= torch.Tensor(M2G_edge_coef_grid_tensor).softmax(-1)
+
+
+        M2G_LaLotudePos2grid = torch.LongTensor(M2G_LaLotudePos2grid)
+        G2M_grid2LaLotudePos = torch.LongTensor(G2M_grid2LaLotudePos)
+        
+
+        
+
+        self.M2G_LaLotudePos2grid = M2G_LaLotudePos2grid
+        self.G2M_grid2LaLotudePos = G2M_grid2LaLotudePos
+        
+        self.layer_grid2mesh = Node2Edge2NodeBlockSingleLevel(G2M_edge_id2pair_tensor,G2M_edge_id_of_node_tensor,G2M_edge_coef_node_tensor, 
+                                         embed_dim=embedding_dim,do_source_update=True)
+        
+        self.layer_mesh2mesh = nn.ModuleList()
+        for i in range(depth):
+            self.layer_mesh2mesh.append(Node2Edge2NodeBlockMultiLevel(M2M_edgeid2pair, M2M_nearby_edge_per_node_per_level, M2M_num_of_linked_nodes, 
+                                                  embed_dim=embedding_dim))
+        
+        self.layer_mesh2grid = Node2Edge2NodeBlockSingleLevel(M2G_edge_id2pair_tensor,M2G_edge_of_rect_tensor,M2G_edge_coef_grid_tensor, 
+                                         embed_dim=embedding_dim)
+        
+        self.grid_rect_embedding_layer = nn.Linear(in_chans,embedding_dim)
+        self.northsouthembbed = nn.Parameter(torch.randn(2,embedding_dim))
+        
+        self.mesh_node_embedding       = nn.Parameter(torch.randn(1,len(M2M_node2position)      ,embedding_dim))
+        self.mesh_mesh_bond_embedding  = nn.Parameter(torch.randn(1,len(M2M_edgeid2pair)        ,embedding_dim))
+        self.grid_mesh_bond_embedding  = nn.Parameter(torch.randn(1,len(G2M_edge_id2pair_tensor),embedding_dim))
+
+        self.projection      = nn.Linear(embedding_dim,out_chans)
+
+    def forward(self, _input):
+        B, P , W, H =_input.shape
+        feature_along_latlot     = self.grid_rect_embedding_layer(_input.permute(0,2,3,1).flatten(1,2))
+        grid_rect_embedding      = feature_along_latlot[:,self.G2M_grid2LaLotudePos]
+        grid_rect_embedding      = torch.cat([self.northsouthembbed.repeat(B,1,1),grid_rect_embedding],1)
+        grid_mesh_bond_embedding = self.grid_mesh_bond_embedding
+        mesh_node_embedding      = self.mesh_node_embedding
+        mesh_mesh_bond_embedding = self.mesh_mesh_bond_embedding
+        
+        grid_mesh_bond_embedding,grid_rect_embedding,mesh_node_embedding = self.layer_grid2mesh(
+                                        grid_mesh_bond_embedding,grid_rect_embedding,mesh_node_embedding)
+        for mesh2mesh in self.layer_mesh2mesh:
+            mesh_mesh_bond_embedding, mesh_node_embedding,_  = mesh2mesh(mesh_mesh_bond_embedding, mesh_node_embedding, mesh_node_embedding)
+        grid_mesh_bond_embedding = torch.nn.functional.pad(grid_mesh_bond_embedding,(0,0,0,self.num_unactivated_edge))
+        grid_rect_embedding      = torch.nn.functional.pad(grid_rect_embedding,(0,0,0,self.num_unactivated_grid ))
+        grid_mesh_bond_embedding,mesh_node_embedding,grid_rect_embedding      = self.layer_mesh2grid(grid_mesh_bond_embedding,mesh_node_embedding,grid_rect_embedding)
+        grid_rect_embedding      = grid_rect_embedding[:,self.M2G_LaLotudePos2grid] #(B,64,128,embed_dim)
+        return self.projection(grid_rect_embedding).permute(0,3,1,2)
+
+try:
+    import dgl
+    import dgl.function as fn
+    from einops import rearrange
+    class Node2Edge2NodeBlockDGL(nn.Module):
+        def __init__(self, src_flag, edgetype, tgt_flag, embed_dim=128,do_source_update=False):
+            super().__init__()
+            self.activator    = nn.Sequential(torch.nn.SiLU(),torch.nn.LayerNorm(embed_dim))
+            self.STE2E_S2E = nn.Parameter(torch.randn(embed_dim, embed_dim))
+            self.STE2E_T2E = nn.Parameter(torch.randn(embed_dim, embed_dim))
+            self.STE2E_E2E = nn.Parameter(torch.randn(embed_dim, embed_dim))
+            self.ET2T_E2T  = nn.Parameter(torch.randn(embed_dim, embed_dim))
+            self.ET2T_T2T  = nn.Parameter(torch.randn(embed_dim, embed_dim))
+            self.S2S = None
+            if do_source_update:
+                self.S2S   = nn.Parameter(torch.randn(embed_dim, embed_dim))
+            self.src_flag = src_flag
+            self.tgt_flag = tgt_flag
+            self.edgetype = edgetype
+            
+        def forward(self,g):
+            src_flag = self.src_flag
+            tgt_flag = self.tgt_flag
+            edgetype = self.edgetype
+            edgeflag = (src_flag, edgetype, tgt_flag)
+            g.nodes[src_flag].data['src']     = g.nodes[src_flag].data['feat'] @ self.STE2E_S2E
+            g.nodes[tgt_flag].data['dst']     = g.nodes[tgt_flag].data['feat'] @ self.STE2E_T2E
+            g.edges[edgeflag].data['add_feat']= g.edges[edgeflag].data['feat'] @ self.STE2E_E2E
+            
+            g.apply_edges(fn.u_add_v('src', 'dst', 'node_to_edge'),etype=edgeflag)
+            g.edges[edgeflag].data['add_feat'] = self.activator(g.edges[edgeflag].data['node_to_edge'] +
+                                                                g.edges[edgeflag].data['add_feat'])
+            if 'coef' in g.edges[edgeflag].data:
+                g.edges[edgeflag].data['add_feat']*= g.edges[edgeflag].data['coef']
+                g.update_all(fn.copy_e('add_feat','add_feat'),fn.sum('add_feat', 'add_feat'),
+                            etype=edgeflag)
+            else:
+                g.update_all(fn.copy_e('add_feat','add_feat'),fn.mean('add_feat', 'add_feat'),
+                            etype=edgeflag)
+            g.nodes[tgt_flag].data['feat'] = g.nodes[tgt_flag].data['feat'] + g.nodes[tgt_flag].data['add_feat']
+            g.edges[edgeflag].data['feat'] = g.edges[edgeflag].data['feat'] + g.edges[edgeflag].data['add_feat']
+            if self.S2S is not None:
+                g.nodes[src_flag].data['feat'] = g.nodes[src_flag].data['feat']+ self.activator(g.nodes[src_flag].data['feat']@ self.S2S)
+            return g
+
+    class GraphCastDGL(MeshCast):    
+except:
+    pass
+
+
+    '''
+    ====>  fastest in atom operation test, but slower than GraphCastFast in practice.
+    ====>  still faster than normal GraphCast
+    Repreduce of GraphCast in Pytorch.
+    GraphCast has three part:
+    - Grid to Mesh
+    - Mesh to Mesh
+    - Mesh to Grid
+    -------------------------------------
+    the input is a tensor (B, P, W, H), but the internal tensor all with shape (B, L ,P)
+    where the L equal the node number or edge number.
+    '''
+    def __init__(self, img_size=(32,64),  in_chans=70, out_chans=70, depth=6, embed_dim=128, graphflag='mesh5', nonlinear='swish', **kargs):
+        super().__init__()
+        flag = graphflag
+        resolution_flag=f'{img_size[0]}x{img_size[1]}'
+        ROOTPATH=f"GraphCastStructure/{flag}"
+        
+        M2M_edgeid2pair         = torch.LongTensor(np.load(os.path.join(ROOTPATH,f"M2M_edgeid2pair.npy"   )))
+        ROOTPATH=f"GraphCastStructure/{flag}/{resolution_flag}"
+        G2M_edge_id2pair_tensor = (np.load(os.path.join(ROOTPATH,f"G2M_edge_id2pair_tensor.npy")))
+        M2G_edge_id2pair_tensor = (np.load(os.path.join(ROOTPATH,f"M2G_id2edge_max_rank.npy")))
+        
+        self.G2M_grid2LaLotudePos = np.load(os.path.join(ROOTPATH,f"G2M_grid2LaLotudePos.npy"   )     )
+        self.M2G_LaLotudePos2grid = np.load(os.path.join(ROOTPATH,f"M2G_LaLotudeGrid2rect_tensor.npy"))
+
+
+        graph_data = {
+                   ('mesh', 'M2M', 'mesh')  : (np.concatenate([M2M_edgeid2pair[:,0], M2M_edgeid2pair[:,1]]),
+                                               np.concatenate([M2M_edgeid2pair[:,1], M2M_edgeid2pair[:,0]])),
+                   ('mesh', 'M2G', 'grid')  : (M2G_edge_id2pair_tensor[:,1],M2G_edge_id2pair_tensor[:,0]),
+                   ('grid', 'G2M', 'mesh')  : (G2M_edge_id2pair_tensor[:,0],G2M_edge_id2pair_tensor[:,1])
+                }
+        g = dgl.heterograph(graph_data)
+
+        total_mesh_node = g.num_nodes('mesh')
+        total_mesh_edge = g.num_edges('M2M')
+        total_grid_node = g.num_nodes('grid') - 2
+        total_G2M_edges = g.num_edges('G2M')
+        total_M2G_edges = g.num_edges('M2G')
+        self.activated_gridn  = activated_gridn  = G2M_edge_id2pair_tensor[:,0].max()+1
+        self.unactivated_grid = unactivated_grid = g.num_nodes('grid') - activated_gridn
+        
+        shared_pair_u = M2G_edge_id2pair_tensor[:,0][M2G_edge_id2pair_tensor[:,0]<=G2M_edge_id2pair_tensor[:,0].max()]
+        shared_pair_v = M2G_edge_id2pair_tensor[:,1][M2G_edge_id2pair_tensor[:,0]<=G2M_edge_id2pair_tensor[:,0].max()]
+        ## now we need find the order of all the ('grid', 'G2M', 'mesh') edge 
+        ## in ('mesh', 'M2G', 'grid') subgraph
+        self.reorder_edge_id_of_M2G_from_G2M = g.edge_ids(shared_pair_u,shared_pair_v, etype=('grid', 'G2M', 'mesh')) 
+        M2G_edge_from_node_to_activate_grid = len(self.reorder_edge_id_of_M2G_from_G2M)
+        self.num_unactivated_edge = num_unactivated_edge = total_M2G_edges - M2G_edge_from_node_to_activate_grid
+        print(f'''
+        This is ===> GraphCast Model(DGL) <===
+        Information: 
+            total mesh node:{total_mesh_node:5d} total unique mesh edge:{total_mesh_edge//2:5d}*2={total_mesh_edge:5d} 
+            total grid node {total_grid_node}+2 = {total_grid_node+2} but activated grid {activated_gridn} 
+            from activated grid to mesh, create 4*{total_mesh_node} - 6 = {total_G2M_edges} edges. (north and south pole repeat 4 times) 
+            there are {unactivated_grid} unactivated grid node
+            when mapping node to grid, 
+            from node to activated grid, there are {M2G_edge_from_node_to_activate_grid} edges
+            from node to unactivated grid, there are {num_unactivated_edge} edges
+            thus, totally have {total_M2G_edges} edge. 
+            #notice some grid only have 1-2 linked node but some grid may have 30 lined node
+        ''')
+        
+        G2M_rect_of_node_tensor= np.load(os.path.join(ROOTPATH,f"G2M_rect_of_node_tensor.npy"))  
+        G2M_rect_distant_tensor= np.load(os.path.join(ROOTPATH,f"G2M_rect_distant_tensor.npy") )
+        G2M_rect_node_tensor= torch.LongTensor(G2M_rect_of_node_tensor)  
+        G2M_rect_coef_tensor= torch.softmax(torch.FloatTensor(G2M_rect_distant_tensor),axis=-1)
+
+        #### create_edge_coef_in_grid2mesh ######
+        edge_flag = ('grid', 'G2M', 'mesh')
+        NRC_tensor = torch.Tensor([(node_id, rect_id, coef) for node_id, (rect_list,coef_list) in enumerate(zip(
+            G2M_rect_node_tensor,G2M_rect_coef_tensor)) for rect_id,coef in zip(rect_list,coef_list)])
+        edge_idlist = g.edge_ids(NRC_tensor[:,1].long(),NRC_tensor[:,0].long(), etype=edge_flag)    
+        edge_ids={}
+        for _id,coef in zip(edge_idlist,NRC_tensor[:,2]):
+            _id = _id.item()
+            if _id not in edge_ids:edge_ids[_id]=coef
+            edge_ids[_id] += coef
+        edge_coef = torch.stack([edge_ids[i] for i in range(len(edge_ids))])
+        self.G2M_edge_coef = torch.nn.Parameter(edge_coef.unsqueeze(-1).unsqueeze(-1) ,requires_grad=False) 
+        #g.edges[edge_flag].data['coef'] = 
+
+        #### create_edge_coef_in_mesh2grid ######
+        edge_flag = ('mesh', 'M2G', 'grid')
+        M2G_node_of_rect_tensor = np.load(os.path.join(ROOTPATH,f"M2G_node_of_rect_tensor.npy"   ))  
+        M2G_node_distant_tensor = np.load(os.path.join(ROOTPATH,f"M2G_node_of_rect_tensor.npy"   ))  
+        M2G_node_of_rect_tensor = torch.LongTensor(M2G_node_of_rect_tensor)  
+        M2G_node_distant_tensor = torch.softmax(torch.FloatTensor(M2G_node_distant_tensor),axis=-1)
+        
+        NRC_tensor = torch.Tensor([(node_id, rect_id, coef) for rect_id, (node_list,coef_list) in enumerate(zip(
+            M2G_node_of_rect_tensor,M2G_node_distant_tensor)) for node_id,coef in zip(node_list,coef_list) if node_id>=0]  )
+        edge_idlist = g.edge_ids(NRC_tensor[:,0].long(),NRC_tensor[:,1].long(), etype=edge_flag)  
+
+        edge_ids={}
+        for _id,coef in zip(edge_idlist,NRC_tensor[:,2]):
+            _id = _id.item()
+            if _id not in edge_ids:edge_ids[_id]=coef
+            edge_ids[_id] += coef
+        edge_coef = torch.stack([edge_ids[i] for i in range(len(edge_ids))])
+        self.M2G_edge_coef = torch.nn.Parameter(edge_coef.unsqueeze(-1).unsqueeze(-1) ,requires_grad=False) # to automatively go into cuda
+        #g.edges[edge_flag].data['coef'] = torch.nn.Parameter(edge_coef ,requires_grad=False) # to automatively go into cuda
+
+        
+        edge_flag = ('mesh', 'M2M', 'mesh')
+        #self.M2M_edge_coef = torch.nn.Parameter(torch.FloatTensor([1/4]),requires_grad=False)
+        #g.edges[edge_flag].data['coef'] = 1/4 
+        
+        self.grid2mesh = Node2Edge2NodeBlockDGL('grid','G2M','mesh',embed_dim=embed_dim,do_source_update=True)
+        self.mesh2mesh = nn.ModuleList()
+        for i in range(depth):
+            self.mesh2mesh.append(Node2Edge2NodeBlockDGL('mesh','M2M','mesh',embed_dim=embed_dim))        
+        self.mesh2grid = Node2Edge2NodeBlockDGL('mesh','M2G','grid',embed_dim=embed_dim)
+        
+        
+        self.grid_rect_embedding_layer = nn.Linear(in_chans,embed_dim)
+        
+        self.projection                = nn.Linear(embed_dim,out_chans)
+        
+        self.northsouthembbed      = nn.Parameter(torch.randn(2,embed_dim))
+        self.mesh_node_embedding    = nn.Parameter(torch.randn(g.num_nodes('mesh')               ,1, embed_dim))
+        self.mesh_mesh_bond_embedding  = nn.Parameter(torch.randn(g.num_edges('M2M')                ,1, embed_dim))
+        self.grid_mesh_bond_embedding  = nn.Parameter(torch.randn(g.num_edges('G2M'),1, embed_dim))
+        self.mesh_grid_bond_embedding  = None
+        self.g = g
+    
+    def forward(self, _input):
+        B, P , W, H =_input.shape
+        self.g = self.g.to(next(self.parameters()).device)
+        # (B,P,W,H) -> (B,W*H,P)
+        feature_along_latlot     = self.grid_rect_embedding_layer(rearrange(_input,"B P W H -> (W H) B P"))
+        grid_rect_embedding      = feature_along_latlot[self.G2M_grid2LaLotudePos] # (L,B,D)
+        grid_rect_embedding      = torch.cat([rearrange(self.northsouthembbed.repeat(B,1,1),"B L D -> L B D"),
+                                              grid_rect_embedding]) ## --> (L+2, B, D)
+        
+        g = self.g
+        g.nodes['grid'].data['feat']= torch.nn.functional.pad(grid_rect_embedding,(0,0,0,0,0,self.unactivated_grid))
+        g.nodes['mesh'].data['feat']= self.mesh_node_embedding
+        g.edges['G2M'].data['feat'] = self.grid_mesh_bond_embedding
+        g.edges['M2M'].data['feat'] = self.mesh_mesh_bond_embedding      
+        g.edges['G2M'].data['coef'] = self.G2M_edge_coef
+        g.edges['M2G'].data['coef'] = self.M2G_edge_coef
+        #checknan(g,'initial');
+        g = self.grid2mesh(g)
+        #checknan(g,'grid2mesh');
+        for layer_idx, mesh2mesh in enumerate(self.mesh2mesh):
+            g = mesh2mesh(g);#checknan(g,f"mesh2mesh_{layer_idx}")
+        if 'feat' not in g.edges['M2G']:
+            g.edges['M2G'].data['feat'] = torch.nn.functional.pad(g.edges['G2M'].data['feat'][self.reorder_edge_id_of_M2G_from_G2M],(0,0,0,0,0,self.num_unactivated_edge))
+        else:
+            g.edges['M2G'].data['feat'][:len(self.reorder_edge_id_of_M2G_from_G2M)] = g.edges['G2M'].data['feat'][self.reorder_edge_id_of_M2G_from_G2M]
+        g      = self.mesh2grid(g);#checknan(g,'mesh2grid');
+        out = g.nodes['grid'].data['feat'][self.M2G_LaLotudePos2grid] #(64,128,B,embed_dim)
+        return self.projection(out).permute(2,3,0,1)
