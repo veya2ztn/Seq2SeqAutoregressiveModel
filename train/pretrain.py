@@ -37,7 +37,7 @@ from model.time_embeding_model import *
 from model.physics_model import *
 from model.othermodels import *
 from model.FeaturePickModel import *
-from model.GraphCast import GraphCast,GraphCastFast,GraphCastDGL
+from model.GraphCast import * 
 
 
 from utils.params import get_args
@@ -2722,7 +2722,10 @@ def build_model(args):
     if local_rank == 0:
         param_sum, buffer_sum, all_size = getModelSize(model)
         logsys.info(f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
-    
+    if args.pretrain_weight and args.torch_compile:
+        only_model = ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train)
+        assert only_model
+        load_model(model,path=args.pretrain_weight,only_model= only_model ,loc = 'cpu',strict=bool(args.load_model_strict))
     if torch.__version__[0]=="2" and args.torch_compile:
         print(f"Now in torch 2.0, we use torch.compile")
         torch.set_float32_matmul_precision('high')
@@ -2928,7 +2931,11 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
 
     args.pretrain_weight = args.pretrain_weight.strip()
     logsys.info(f"loading weight from {args.pretrain_weight}")
-    start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
+    if args.torch_compile and args.pretrain_weight:
+        start_epoch, start_step, min_loss = 0, 0, 0
+        print(f"remind in torch compile mode, any pretrain model should be load before torch.compile and DistributedDataParallel")
+    else:
+        start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
                         only_model= ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu),strict=bool(args.load_model_strict))
     start_epoch = start_epoch if args.continue_train else 0
 
