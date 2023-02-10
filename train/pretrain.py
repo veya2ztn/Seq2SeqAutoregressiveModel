@@ -37,7 +37,7 @@ from model.time_embeding_model import *
 from model.physics_model import *
 from model.othermodels import *
 from model.FeaturePickModel import *
-from model.GraphCast import GraphCast
+from model.GraphCast import GraphCast,GraphCastFast,GraphCastDGL
 
 
 from utils.params import get_args
