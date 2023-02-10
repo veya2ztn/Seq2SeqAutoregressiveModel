@@ -881,6 +881,8 @@ class WeathBench706(WeathBench71):
 
     def __init__(self,**kargs):
         super().__init__(**kargs)
+        print("you are trying to use 71 dataset with 6 time step, I recommend to use 7066 dataset for the whole project benchmark")
+        raise
         self.single_data_path_list = self.single_data_path_list[::6]
 
 class WeathBench716(WeathBench71):
