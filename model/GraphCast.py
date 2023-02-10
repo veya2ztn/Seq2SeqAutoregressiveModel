@@ -936,22 +936,18 @@ try:
             return g
 
     class GraphCastDGL(MeshCast):    
-except:
-    pass
-
-
-    '''
-    ====>  fastest in atom operation test, but slower than GraphCastFast in practice.
-    ====>  still faster than normal GraphCast
-    Repreduce of GraphCast in Pytorch.
-    GraphCast has three part:
-    - Grid to Mesh
-    - Mesh to Mesh
-    - Mesh to Grid
-    -------------------------------------
-    the input is a tensor (B, P, W, H), but the internal tensor all with shape (B, L ,P)
-    where the L equal the node number or edge number.
-    '''
+        '''
+        ====>  fastest in atom operation test, but slower than GraphCastFast in practice.
+        ====>  still faster than normal GraphCast
+        Repreduce of GraphCast in Pytorch.
+        GraphCast has three part:
+        - Grid to Mesh
+        - Mesh to Mesh
+        - Mesh to Grid
+        -------------------------------------
+        the input is a tensor (B, P, W, H), but the internal tensor all with shape (B, L ,P)
+        where the L equal the node number or edge number.
+        '''
     def __init__(self, img_size=(32,64),  in_chans=70, out_chans=70, depth=6, embed_dim=128, graphflag='mesh5', nonlinear='swish', **kargs):
         super().__init__()
         flag = graphflag
@@ -1094,3 +1090,6 @@ except:
         g      = self.mesh2grid(g);#checknan(g,'mesh2grid');
         out = g.nodes['grid'].data['feat'][self.M2G_LaLotudePos2grid] #(64,128,B,embed_dim)
         return self.projection(out).permute(2,3,0,1)
+
+except:
+    pass
