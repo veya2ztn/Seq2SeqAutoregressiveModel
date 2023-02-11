@@ -75,7 +75,7 @@ def get_args_parser():
     parser.add_argument('--canonical_fft', default=1, type=int)
     parser.add_argument('--unique_up_sample_channel', default=0, type=int)
     parser.add_argument('--n_heads', default=8, type=int)
-
+    parser.add_argument('--agg_way', default='mean', type=str)
     parser.add_argument('--consistancy_activate_wall', default=100, type=float)
     parser.add_argument('--consistancy_eval', default=0, type=int)
     
