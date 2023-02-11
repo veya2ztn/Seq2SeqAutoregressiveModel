@@ -2477,7 +2477,6 @@ def parse_default_args(args):
     if hasattr(args,'use_time_stamp') and args.use_time_stamp:dataset_kargs['use_time_stamp']= args.use_time_stamp
     if hasattr(args,'use_position_idx'):dataset_kargs['use_position_idx']= args.use_position_idx
     
-    
     args.unique_up_sample_channel = args.unique_up_sample_channel
     
 
@@ -2540,7 +2539,9 @@ def parse_default_args(args):
         "share_memory":args.share_memory,
         "dropout_rate":args.dropout_rate,
         "conv_simple":args.conv_simple,
-        "graphflag":args.graphflag
+        "graphflag":args.graphflag,
+    
+        "agg_way":args.agg_way
     }
     args.model_kargs = model_kargs
 
@@ -2652,9 +2653,9 @@ def parser_compute_graph(compute_graph_set):
                                     [0,2,2, 1.5, "quantity"],
                                     [1,2,2, 3.0, "quantity"]
                                     ]),
-        'fwd2_PRO'   :([[1,2],[2]], [[0,1,1, 1.5, "quantity"], 
-                                    [0,2,2, 1.5, "quantity"],
-                                    [1,2,2, 1.5, "quantity"]
+        'fwd2_PRO'   :([[1,2],[2]], [[0,1,1, 3, "quantity"], 
+                         [0,2,2, 3, "quantity"],
+                         [1,2,2, 1.5, "quantity"]
                                     ]),
         'fwd2_PA'  :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],

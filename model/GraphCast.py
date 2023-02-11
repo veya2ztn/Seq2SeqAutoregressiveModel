@@ -643,32 +643,74 @@ class GraphCast(MeshCast):
         grid_rect_embedding      = grid_rect_embedding[:,self.M2G_LaLotudePos2grid] #(B,64,128,embed_dim)
         return self.projection(grid_rect_embedding).permute(0,3,1,2)
 
+import math
+def fastinit1(embed_dim1,embed_dim2):
+    # for tensor (a,b) `fan_in` deal with b `fan_out` deal with a
+    # a linear weight is (out_dim, in_dim) and use `fan_in`
+    # but here we direct do matrix matmul, thus fan_out
+    return torch.nn.init.kaiming_uniform_(torch.randn(embed_dim1, embed_dim2), mode='fan_out', a=math.sqrt(5)) 
 
-class Node2Edge2NodeBlockSingleLevel(nn.Module):
-    def __init__(self, src_tgt_order, edge_order, bond_coef, 
-                 embed_dim=128,do_source_update = False,
-                 **kargs):
+class Node2Edge2NodeBlock(nn.Module):
+    def __init__(self,embed_dim=128, do_source_update = False,**kargs):
         super().__init__()
+        initial_weight = fastinit1(3*embed_dim, embed_dim)
+        STE2E_S2E,STE2E_T2E,STE2E_E2E = torch.split(initial_weight,embed_dim)
+        self.STE2E_S2E = nn.Parameter(STE2E_S2E)
+        self.STE2E_T2E = nn.Parameter(STE2E_T2E)
+        self.STE2E_E2E = nn.Parameter(STE2E_E2E)
+        self.activator1 = nn.Sequential(torch.nn.SiLU(),torch.nn.LayerNorm(embed_dim))
+        
+        initial_weight = fastinit1(2*embed_dim, embed_dim)
+        ET2T_E2T,ET2T_T2T = torch.split(initial_weight,embed_dim)
+        self.ET2T_E2T  = nn.Parameter(ET2T_E2T)
+        self.ET2T_T2T  = nn.Parameter(ET2T_T2T)
+        self.activator2 = nn.Sequential(torch.nn.SiLU(),torch.nn.LayerNorm(embed_dim))
+        
+        self.S2S = None
+        if do_source_update:
+            self.S2S     = nn.Parameter(fastinit1(embed_dim, embed_dim))
+            self.activator3 = nn.Sequential(torch.nn.SiLU(),torch.nn.LayerNorm(embed_dim))
+
+class Node2Edge2NodeBlockSingleLevel(Node2Edge2NodeBlock):
+    def __init__(self, src_tgt_order, edge_order, bond_coef, 
+                 embed_dim=128,do_source_update = False, agg_way='mean',
+                 **kargs):
+        super().__init__(embed_dim=embed_dim,do_source_update = do_source_update)
         self.src_order = src_tgt_order[:,0]
         self.tgt_order = src_tgt_order[:,1]
         self.edge_order= edge_order
         #self.bond_coef = bond_coef
         #self.register_buffer('G2M_edge_coef_node_tensor', G2M_edge_coef_node_tensor)
-
-        self.activator = nn.Sequential(torch.nn.SiLU(),torch.nn.LayerNorm(embed_dim))
-        self.STE2E_S2E = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
-        self.STE2E_T2E = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
-        self.STE2E_E2E = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
-        self.ET2T_E2T  = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
-        self.ET2T_T2T  = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
-        self.bond_coef  = nn.Parameter(bond_coef,requires_grad=False)
-        self.S2S = None
-        if do_source_update:
-            self.S2S   = nn.Parameter(torch.randn(embed_dim, embed_dim))
-            
+        self.agg_way  = agg_way
+        self.bond_coef  = bond_coef
+        # do not use nn.Parameter(bond_coef,requires_grad=False), since we may freeze or unfreeze model
+        # or use regist('bond_coef',bond_coef) but will bug in multiGPU mode
+        
         self.src_index_limit  = self.src_order.max() + 1
         self.tgt_index_limit  = self.tgt_order.max() + 1
         self.edge_index_limit = len(self.src_order)
+    
+    def node2bond(self,bond_embedding, src_embedding, tgt_embedding,activator):
+        ## compute delta bond embedding
+        delta_bond_embedding = (src_embedding @ self.STE2E_S2E)[:,self.src_order] #(B,L,D)
+        delta_bond_embedding = delta_bond_embedding + (tgt_embedding @ self.STE2E_T2E)[:,self.tgt_order] #(B,L,D)
+        delta_bond_embedding = delta_bond_embedding + bond_embedding @ self.STE2E_E2E  #(B,1,D)
+        delta_bond_embedding = activator(delta_bond_embedding) #(B,L,D)
+        return delta_bond_embedding
+    
+    def bond2node(self,bond_embedding, src_embedding, tgt_embedding,activator):
+        device = self.STE2E_S2E.device
+        self.bond_coef       = self.bond_coef.to(device)
+        bond_reduce = bond_embedding@self.ET2T_E2T
+        if self.agg_way == 'mean':
+            bond_reduce = (bond_reduce[:,self.edge_order]*self.bond_coef.unsqueeze(-1)).mean(-2)
+        elif self.agg_way == 'sum':
+            bond_reduce = (bond_reduce[:,self.edge_order]*self.bond_coef.unsqueeze(-1)).sum(-2)
+        else:
+            raise NotImplementedError
+        delta_tgt_embedding = bond_reduce + tgt_embedding@self.ET2T_T2T
+        delta_tgt_embedding = activator(delta_tgt_embedding)
+        return delta_tgt_embedding
     
     def forward(self, bond_embedding, src_embedding, tgt_embedding):
         ### shape checking
@@ -679,91 +721,43 @@ class Node2Edge2NodeBlockSingleLevel(nn.Module):
         assert self.tgt_index_limit  ==  tgt_embedding.shape[1]
         assert self.edge_index_limit == bond_embedding.shape[1] 
         device = self.STE2E_S2E.device
-        
-        ## compute delta bond embedding
-        delta_bond_embedding = src_embedding[:,self.src_order] @ self.STE2E_S2E #(B,L,D)
-        delta_bond_embedding = delta_bond_embedding + tgt_embedding[:,self.tgt_order] @ self.STE2E_T2E #(B,L,D)
-        delta_bond_embedding = delta_bond_embedding + bond_embedding @ self.STE2E_E2E  #(B,1,D)
-        delta_bond_embedding = self.activator(delta_bond_embedding) #(B,L,D)
-
-        ## compute delta tgt embedding
-        bond_reduce = (delta_bond_embedding[:,self.edge_order]*self.bond_coef.unsqueeze(-1)).sum(-2)
-        #bond_reduce = torch.einsum('blnd,ln->bld',
-        #                           delta_bond_embedding[:,self.edge_order],
-        #                           self.bond_coef) ### 2.6 ms vs 2.2 ms
-        delta_tgt_embedding = bond_reduce@self.ET2T_E2T
-        delta_tgt_embedding = delta_tgt_embedding + tgt_embedding@self.ET2T_T2T
-        delta_tgt_embedding = self.activator(delta_tgt_embedding)
-        
-        delta_src_embedding = self.activator(src_embedding@self.S2S) if self.S2S is not None else 0
-        
-        bond_embedding= bond_embedding + delta_bond_embedding
-        src_embedding = src_embedding  + delta_src_embedding
-        tgt_embedding = tgt_embedding  + delta_tgt_embedding
+        self.bond_coef = self.bond_coef.to(device)
+        delta_bond_embedding = self.node2bond(bond_embedding, src_embedding, tgt_embedding, self.activator1)
+        delta_tgt_embedding  = self.bond2node(delta_bond_embedding, src_embedding, tgt_embedding, self.activator2)
+        delta_src_embedding  = self.activator3(src_embedding@self.S2S) if self.S2S is not None else 0
+        bond_embedding= bond_embedding  + delta_bond_embedding
+        src_embedding = src_embedding   + delta_src_embedding
+        tgt_embedding = tgt_embedding   + delta_tgt_embedding
         
         return bond_embedding,src_embedding,tgt_embedding
 
-class Node2Edge2NodeBlockMultiLevel(nn.Module):
-    def __init__(self, src_tgt_order, edge_order, num_of_linked_nodes, 
-                 embed_dim=128,do_source_update = False,
-                 **kargs):
-        super().__init__()
-        self.src_order            = src_tgt_order[:,0]
-        self.tgt_order            = src_tgt_order[:,1]
-        self.edge_order           = edge_order
-        
-        
-        self.activator = nn.Sequential(torch.nn.SiLU(),torch.nn.LayerNorm(embed_dim))
-        self.STE2E_S2E = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
-        self.STE2E_T2E = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
-        self.STE2E_E2E = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
-        self.ET2T_E2T  = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
-        self.ET2T_T2T  = nn.Parameter(torch.randn(embed_dim, embed_dim),requires_grad=True)
-        self.num_of_linked_nodes  = nn.Parameter(num_of_linked_nodes,requires_grad=False)
-        
-        self.S2S = None
-        if do_source_update:
-            self.S2S   = nn.Parameter(torch.randn(embed_dim, embed_dim))
-        
-
-    def forward(self, bond_embedding, src_embedding, tgt_embedding):
-        ### shape checking
-        ### all the necessary rect of grid is recorded in G2M_grid2LaLotudePos
-        #### we will plus north south point at the begining torch.cat([north_south_embedding,grid_rect_embedding],1)
-        assert len(bond_embedding.shape) == len(src_embedding.shape) == len(tgt_embedding.shape) == 3
+class Node2Edge2NodeBlockMultiLevel(Node2Edge2NodeBlockSingleLevel):
+    def bond2node(self,bond_embedding, src_embedding, tgt_embedding,activator):
         device = self.STE2E_S2E.device
-        
-        
-        ## compute delta bond embedding
-        
-        delta_bond_embedding = src_embedding[:,self.src_order] @ self.STE2E_S2E #(B,L,D)
-        delta_bond_embedding = delta_bond_embedding + tgt_embedding[:,self.tgt_order] @ self.STE2E_T2E #(B,L,D)
-        delta_bond_embedding = delta_bond_embedding + bond_embedding @ self.STE2E_E2E  #(B,1,D)
-        delta_bond_embedding = self.activator(delta_bond_embedding) #(B,L,D)
-
-        
-        ## compute delta tgt embedding
-        delta_bond_embedding= torch.nn.functional.pad(delta_bond_embedding,(0,0,0,1))
+        self.bond_coef       = self.bond_coef.to(device)
+        delta_bond_embedding = bond_embedding@self.ET2T_E2T
+        delta_bond_embedding = torch.nn.functional.pad(delta_bond_embedding,(0,0,0,1))
         # notice the nearby node of each level either 5 or 6, then we use -1 as the padding number.
         # notice some node has multi-level nearby,
         bond_reduce = torch.zeros_like(tgt_embedding)
         for start_node, end_node_list in self.edge_order:
             bond_reduce[:,start_node] += delta_bond_embedding[:,end_node_list].sum(-2)
-        bond_reduce = bond_reduce/self.num_of_linked_nodes
-
-        delta_tgt_embedding = bond_reduce@self.ET2T_E2T
-        delta_tgt_embedding = delta_tgt_embedding + tgt_embedding@self.ET2T_T2T
-        delta_tgt_embedding = self.activator(delta_tgt_embedding)
-        
-        ## compute delta src embedding
-        delta_src_embedding   = self.activator(src_embedding@self.S2S) if self.S2S is not None else 0
-        
-        bond_embedding = bond_embedding + delta_bond_embedding[:,:-1]
-        src_embedding  = src_embedding  + delta_src_embedding
-        tgt_embedding  = tgt_embedding  + delta_tgt_embedding
-        
-        return bond_embedding,src_embedding,tgt_embedding
+        bond_reduce = bond_reduce/self.bond_coef
+        delta_tgt_embedding = bond_reduce + tgt_embedding@self.ET2T_T2T
+        delta_tgt_embedding = activator(delta_tgt_embedding)
+        return delta_tgt_embedding
     
+    def forward(self, bond_embedding, src_embedding, tgt_embedding):
+        ### shape checking
+        ### all the necessary rect of grid is recorded in G2M_grid2LaLotudePos
+        #### we will plus north south point at the begining torch.cat([north_south_embedding,grid_rect_embedding],1)
+        assert len(bond_embedding.shape) == len(src_embedding.shape) == len(tgt_embedding.shape) == 3
+        delta_bond_embedding = self.node2bond(bond_embedding, src_embedding, tgt_embedding, self.activator1)
+        delta_tgt_embedding = self.bond2node(delta_bond_embedding, src_embedding, tgt_embedding, self.activator2)
+        bond_embedding = bond_embedding + delta_bond_embedding
+        tgt_embedding  = tgt_embedding  + delta_tgt_embedding
+        return bond_embedding,None,tgt_embedding
+
 class GraphCastFast(MeshCast):
     '''
     ---> 1.5 speed up
@@ -776,7 +770,7 @@ class GraphCastFast(MeshCast):
     the input is a tensor (B, P, W, H), but the internal tensor all with shape (B, L ,P)
     where the L equal the node number or edge number.
     '''
-    def __init__(self, img_size=(64,128),  in_chans=70, out_chans=70, depth=6, embed_dim=128, graphflag='mesh5', nonlinear='swish', **kargs):
+    def __init__(self, img_size=(64,128),  in_chans=70, out_chans=70, depth=6, embed_dim=128, graphflag='mesh5', agg_way='mean', nonlinear='swish', **kargs):
         super().__init__()
         flag = graphflag
         resolution_flag=f'{img_size[0]}x{img_size[1]}'
@@ -836,8 +830,9 @@ class GraphCastFast(MeshCast):
         M2G_edge_id2pair_tensor  = torch.LongTensor(M2G_edge_id2pair_tensor) # (L,2)
         #notice the M2G_edge_id2pair_tensor record (rect_id , node_id) but in this implement
         # the order should be (src,tgt) which is node_id,rect_id
-        # lets convert it .
+        # lets convert it . 
         M2G_edge_id2pair_tensor  = torch.stack([M2G_edge_id2pair_tensor[:,1],M2G_edge_id2pair_tensor[:,0]],-1)
+        
         M2G_edge_of_rect_tensor  = torch.LongTensor(M2G_edge_id_of_grid_tensor)
         M2G_edge_coef_grid_tensor= torch.Tensor(M2G_edge_coef_grid_tensor).softmax(-1)
 
@@ -852,7 +847,7 @@ class GraphCastFast(MeshCast):
         self.G2M_grid2LaLotudePos = G2M_grid2LaLotudePos
         
         self.layer_grid2mesh = Node2Edge2NodeBlockSingleLevel(G2M_edge_id2pair_tensor,G2M_edge_id_of_node_tensor,G2M_edge_coef_node_tensor, 
-                                         embed_dim=embedding_dim,do_source_update=True)
+                                    embed_dim=embedding_dim,do_source_update=True,agg_way=agg_way)
         
         self.layer_mesh2mesh = nn.ModuleList()
         for i in range(depth):
@@ -860,7 +855,7 @@ class GraphCastFast(MeshCast):
                                                   embed_dim=embedding_dim))
         
         self.layer_mesh2grid = Node2Edge2NodeBlockSingleLevel(M2G_edge_id2pair_tensor,M2G_edge_of_rect_tensor,M2G_edge_coef_grid_tensor, 
-                                         embed_dim=embedding_dim)
+                                         embed_dim=embedding_dim,agg_way=agg_way)
         
         self.grid_rect_embedding_layer = nn.Linear(in_chans,embedding_dim)
         self.northsouthembbed = nn.Parameter(torch.randn(2,embedding_dim))
@@ -883,71 +878,68 @@ class GraphCastFast(MeshCast):
         grid_mesh_bond_embedding,grid_rect_embedding,mesh_node_embedding = self.layer_grid2mesh(
                                         grid_mesh_bond_embedding,grid_rect_embedding,mesh_node_embedding)
         for mesh2mesh in self.layer_mesh2mesh:
-            mesh_mesh_bond_embedding, mesh_node_embedding,_  = mesh2mesh(mesh_mesh_bond_embedding, mesh_node_embedding, mesh_node_embedding)
+            mesh_mesh_bond_embedding, _, mesh_node_embedding  = mesh2mesh(mesh_mesh_bond_embedding, mesh_node_embedding, mesh_node_embedding)
         grid_mesh_bond_embedding = torch.nn.functional.pad(grid_mesh_bond_embedding,(0,0,0,self.num_unactivated_edge))
         grid_rect_embedding      = torch.nn.functional.pad(grid_rect_embedding,(0,0,0,self.num_unactivated_grid ))
         grid_mesh_bond_embedding,mesh_node_embedding,grid_rect_embedding      = self.layer_mesh2grid(grid_mesh_bond_embedding,mesh_node_embedding,grid_rect_embedding)
         grid_rect_embedding      = grid_rect_embedding[:,self.M2G_LaLotudePos2grid] #(B,64,128,embed_dim)
         return self.projection(grid_rect_embedding).permute(0,3,1,2)
 
-try:
-    import dgl
-    import dgl.function as fn
-    from einops import rearrange
-    class Node2Edge2NodeBlockDGL(nn.Module):
-        def __init__(self, src_flag, edgetype, tgt_flag, embed_dim=128,do_source_update=False):
-            super().__init__()
-            self.activator    = nn.Sequential(torch.nn.SiLU(),torch.nn.LayerNorm(embed_dim))
-            self.STE2E_S2E = nn.Parameter(torch.randn(embed_dim, embed_dim))
-            self.STE2E_T2E = nn.Parameter(torch.randn(embed_dim, embed_dim))
-            self.STE2E_E2E = nn.Parameter(torch.randn(embed_dim, embed_dim))
-            self.ET2T_E2T  = nn.Parameter(torch.randn(embed_dim, embed_dim))
-            self.ET2T_T2T  = nn.Parameter(torch.randn(embed_dim, embed_dim))
-            self.S2S = None
-            if do_source_update:
-                self.S2S   = nn.Parameter(torch.randn(embed_dim, embed_dim))
-            self.src_flag = src_flag
-            self.tgt_flag = tgt_flag
-            self.edgetype = edgetype
-            
-        def forward(self,g):
-            src_flag = self.src_flag
-            tgt_flag = self.tgt_flag
-            edgetype = self.edgetype
-            edgeflag = (src_flag, edgetype, tgt_flag)
-            g.nodes[src_flag].data['src']     = g.nodes[src_flag].data['feat'] @ self.STE2E_S2E
-            g.nodes[tgt_flag].data['dst']     = g.nodes[tgt_flag].data['feat'] @ self.STE2E_T2E
-            g.edges[edgeflag].data['add_feat']= g.edges[edgeflag].data['feat'] @ self.STE2E_E2E
-            
-            g.apply_edges(fn.u_add_v('src', 'dst', 'node_to_edge'),etype=edgeflag)
-            g.edges[edgeflag].data['add_feat'] = self.activator(g.edges[edgeflag].data['node_to_edge'] +
-                                                                g.edges[edgeflag].data['add_feat'])
-            if 'coef' in g.edges[edgeflag].data:
-                g.edges[edgeflag].data['add_feat']*= g.edges[edgeflag].data['coef']
-                g.update_all(fn.copy_e('add_feat','add_feat'),fn.sum('add_feat', 'add_feat'),
-                            etype=edgeflag)
-            else:
-                g.update_all(fn.copy_e('add_feat','add_feat'),fn.mean('add_feat', 'add_feat'),
-                            etype=edgeflag)
-            g.nodes[tgt_flag].data['feat'] = g.nodes[tgt_flag].data['feat'] + g.nodes[tgt_flag].data['add_feat']
-            g.edges[edgeflag].data['feat'] = g.edges[edgeflag].data['feat'] + g.edges[edgeflag].data['add_feat']
-            if self.S2S is not None:
-                g.nodes[src_flag].data['feat'] = g.nodes[src_flag].data['feat']+ self.activator(g.nodes[src_flag].data['feat']@ self.S2S)
-            return g
 
-    class GraphCastDGL(MeshCast):    
-        '''
-        ====>  fastest in atom operation test, but slower than GraphCastFast in practice.
-        ====>  still faster than normal GraphCast
-        Repreduce of GraphCast in Pytorch.
-        GraphCast has three part:
-        - Grid to Mesh
-        - Mesh to Mesh
-        - Mesh to Grid
-        -------------------------------------
-        the input is a tensor (B, P, W, H), but the internal tensor all with shape (B, L ,P)
-        where the L equal the node number or edge number.
-        '''
+import dgl
+import dgl.function as fn
+from einops import rearrange
+class Node2Edge2NodeBlockDGL(Node2Edge2NodeBlock):
+    def __init__(self, src_flag, edgetype, tgt_flag, embed_dim=128,do_source_update=False):
+        super().__init__(embed_dim=embed_dim,do_source_update = do_source_update)
+        self.src_flag = src_flag
+        self.tgt_flag = tgt_flag
+        self.edgetype = edgetype
+    
+
+
+    def forward(self,g):
+        src_flag = self.src_flag 
+        tgt_flag = self.tgt_flag 
+        edgetype = self.edgetype 
+        edgeflag = (src_flag,edgetype,tgt_flag)
+        g.nodes[src_flag].data['src']     = g.nodes[src_flag].data['feat'] @ self.STE2E_S2E
+        g.nodes[tgt_flag].data['dst']     = g.nodes[tgt_flag].data['feat'] @ self.STE2E_T2E
+
+        g.apply_edges(fn.u_add_v('src', 'dst', 'node_to_edge'),etype=edgeflag)
+        g.edges[edgeflag].data['add_feat'] = self.activator1(g.edges[edgeflag].data['node_to_edge'] + g.edges[edgeflag].data['feat'] @ self.STE2E_E2E)
+        g.edges[edgeflag].data['feat'] = g.edges[edgeflag].data['feat'] + g.edges[edgeflag].data['add_feat']
+        
+        if 'coef' in g.edges[edgeflag].data:
+            g.edges[edgeflag].data['add_feat']*= g.edges[edgeflag].data['coef']
+        g.edges[edgeflag].data['add_feat'] = g.edges[edgeflag].data['add_feat'] @ self.ET2T_E2T
+        
+        if 'coef' in g.edges[edgeflag].data:
+            g.update_all(fn.copy_e('add_feat','add_feat'),fn.sum('add_feat', 'add_feat'),
+                        etype=edgeflag)
+        else:
+            g.update_all(fn.copy_e('add_feat','add_feat'),fn.mean('add_feat', 'add_feat'),
+                        etype=edgeflag)
+        g.nodes[tgt_flag].data['add_feat'] = self.activator2(g.nodes[tgt_flag].data['add_feat'] + g.nodes[tgt_flag].data['feat'] @ self.ET2T_T2T)
+        g.nodes[tgt_flag].data['feat'] = g.nodes[tgt_flag].data['feat'] + g.nodes[tgt_flag].data['add_feat']
+        
+        if self.S2S is not None:
+            g.nodes[src_flag].data['feat'] = g.nodes[src_flag].data['feat']+ self.activator3(g.nodes[src_flag].data['feat']@ self.S2S)
+        return g
+
+class GraphCastDGL(MeshCast):    
+    '''
+    ====>  fastest in atom operation test, but slower than GraphCastFast in practice.
+    ====>  still faster than normal GraphCast
+    Repreduce of GraphCast in Pytorch.
+    GraphCast has three part:
+    - Grid to Mesh
+    - Mesh to Mesh
+    - Mesh to Grid
+    -------------------------------------
+    the input is a tensor (B, P, W, H), but the internal tensor all with shape (B, L ,P)
+    where the L equal the node number or edge number.
+    '''
     def __init__(self, img_size=(32,64),  in_chans=70, out_chans=70, depth=6, embed_dim=128, graphflag='mesh5', nonlinear='swish', **kargs):
         super().__init__()
         flag = graphflag
@@ -964,10 +956,10 @@ try:
 
 
         graph_data = {
-                   ('mesh', 'M2M', 'mesh')  : (np.concatenate([M2M_edgeid2pair[:,0], M2M_edgeid2pair[:,1]]),
-                                               np.concatenate([M2M_edgeid2pair[:,1], M2M_edgeid2pair[:,0]])),
-                   ('mesh', 'M2G', 'grid')  : (M2G_edge_id2pair_tensor[:,1],M2G_edge_id2pair_tensor[:,0]),
-                   ('grid', 'G2M', 'mesh')  : (G2M_edge_id2pair_tensor[:,0],G2M_edge_id2pair_tensor[:,1])
+                    ('mesh', 'M2M', 'mesh')  : (np.concatenate([M2M_edgeid2pair[:,0], M2M_edgeid2pair[:,1]]),
+                                                np.concatenate([M2M_edgeid2pair[:,1], M2M_edgeid2pair[:,0]])),
+                    ('mesh', 'M2G', 'grid')  : (M2G_edge_id2pair_tensor[:,1],M2G_edge_id2pair_tensor[:,0]),
+                    ('grid', 'G2M', 'mesh')  : (G2M_edge_id2pair_tensor[:,0],G2M_edge_id2pair_tensor[:,1])
                 }
         g = dgl.heterograph(graph_data)
 
@@ -1016,7 +1008,7 @@ try:
             if _id not in edge_ids:edge_ids[_id]=coef
             edge_ids[_id] += coef
         edge_coef = torch.stack([edge_ids[i] for i in range(len(edge_ids))])
-        self.G2M_edge_coef = torch.nn.Parameter(edge_coef.unsqueeze(-1).unsqueeze(-1) ,requires_grad=False) 
+        self.G2M_edge_coef = edge_coef.unsqueeze(-1).unsqueeze(-1)
         #g.edges[edge_flag].data['coef'] = 
 
         #### create_edge_coef_in_mesh2grid ######
@@ -1036,13 +1028,12 @@ try:
             if _id not in edge_ids:edge_ids[_id]=coef
             edge_ids[_id] += coef
         edge_coef = torch.stack([edge_ids[i] for i in range(len(edge_ids))])
-        self.M2G_edge_coef = torch.nn.Parameter(edge_coef.unsqueeze(-1).unsqueeze(-1) ,requires_grad=False) # to automatively go into cuda
+        self.M2G_edge_coef = edge_coef.unsqueeze(-1).unsqueeze(-1)
         #g.edges[edge_flag].data['coef'] = torch.nn.Parameter(edge_coef ,requires_grad=False) # to automatively go into cuda
 
         
         edge_flag = ('mesh', 'M2M', 'mesh')
-        #self.M2M_edge_coef = torch.nn.Parameter(torch.FloatTensor([1/4]),requires_grad=False)
-        #g.edges[edge_flag].data['coef'] = 1/4 
+
         
         self.grid2mesh = Node2Edge2NodeBlockDGL('grid','G2M','mesh',embed_dim=embed_dim,do_source_update=True)
         self.mesh2mesh = nn.ModuleList()
@@ -1056,40 +1047,36 @@ try:
         self.projection                = nn.Linear(embed_dim,out_chans)
         
         self.northsouthembbed      = nn.Parameter(torch.randn(2,embed_dim))
-        self.mesh_node_embedding    = nn.Parameter(torch.randn(g.num_nodes('mesh')               ,1, embed_dim))
+        self.mesh_node_embedding     = nn.Parameter(torch.randn(g.num_nodes('mesh')               ,1, embed_dim))
         self.mesh_mesh_bond_embedding  = nn.Parameter(torch.randn(g.num_edges('M2M')                ,1, embed_dim))
         self.grid_mesh_bond_embedding  = nn.Parameter(torch.randn(g.num_edges('G2M'),1, embed_dim))
         self.mesh_grid_bond_embedding  = None
         self.g = g
-    
+        
     def forward(self, _input):
         B, P , W, H =_input.shape
-        self.g = self.g.to(next(self.parameters()).device)
+        device = next(self.parameters()).device
+        self.g = self.g.to(device)
         # (B,P,W,H) -> (B,W*H,P)
         feature_along_latlot     = self.grid_rect_embedding_layer(rearrange(_input,"B P W H -> (W H) B P"))
         grid_rect_embedding      = feature_along_latlot[self.G2M_grid2LaLotudePos] # (L,B,D)
         grid_rect_embedding      = torch.cat([rearrange(self.northsouthembbed.repeat(B,1,1),"B L D -> L B D"),
-                                              grid_rect_embedding]) ## --> (L+2, B, D)
+                                                grid_rect_embedding]) ## --> (L+2, B, D)
         
         g = self.g
         g.nodes['grid'].data['feat']= torch.nn.functional.pad(grid_rect_embedding,(0,0,0,0,0,self.unactivated_grid))
         g.nodes['mesh'].data['feat']= self.mesh_node_embedding
         g.edges['G2M'].data['feat'] = self.grid_mesh_bond_embedding
         g.edges['M2M'].data['feat'] = self.mesh_mesh_bond_embedding      
-        g.edges['G2M'].data['coef'] = self.G2M_edge_coef
-        g.edges['M2G'].data['coef'] = self.M2G_edge_coef
+        g.edges['G2M'].data['coef'] = self.G2M_edge_coef.to(device)
+        g.edges['M2G'].data['coef'] = self.M2G_edge_coef.to(device)
         #checknan(g,'initial');
         g = self.grid2mesh(g)
         #checknan(g,'grid2mesh');
         for layer_idx, mesh2mesh in enumerate(self.mesh2mesh):
             g = mesh2mesh(g);#checknan(g,f"mesh2mesh_{layer_idx}")
-        if 'feat' not in g.edges['M2G']:
-            g.edges['M2G'].data['feat'] = torch.nn.functional.pad(g.edges['G2M'].data['feat'][self.reorder_edge_id_of_M2G_from_G2M],(0,0,0,0,0,self.num_unactivated_edge))
-        else:
-            g.edges['M2G'].data['feat'][:len(self.reorder_edge_id_of_M2G_from_G2M)] = g.edges['G2M'].data['feat'][self.reorder_edge_id_of_M2G_from_G2M]
-        g      = self.mesh2grid(g);#checknan(g,'mesh2grid');
+        g.edges['M2G'].data['feat'] = torch.nn.functional.pad(g.edges['G2M'].data['feat'][self.reorder_edge_id_of_M2G_from_G2M],(0,0,0,0,0,self.num_unactivated_edge))
+        g  = self.mesh2grid(g);#checknan(g,'mesh2grid');
         out = g.nodes['grid'].data['feat'][self.M2G_LaLotudePos2grid] #(64,128,B,embed_dim)
         return self.projection(out).permute(2,3,0,1)
 
-except:
-    pass
