@@ -38,6 +38,7 @@ def get_args_parser():
     parser.add_argument('--rotation_regular_mode', type=str, default=None)
     parser.add_argument('--rotation_regularize', type=int, default=0)
     parser.add_argument('--GDMod_intervel',type=int,default=10)
+    parser.add_argument('--skip_constant_2D70N',type=int,default=0)
 
     parser.add_argument('--path_length_regularize',type=int,default=0)
     parser.add_argument('--gmod_coef',type=str,default=None)
