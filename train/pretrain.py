@@ -2723,7 +2723,7 @@ def build_model(args):
     if local_rank == 0:
         param_sum, buffer_sum, all_size = getModelSize(model)
         logsys.info(f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
-    if args.pretrain_weight and args.torch_compile:
+    if args.pretrain_weight and args.torch_compile :
         only_model = ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train)
         assert only_model
         load_model(model,path=args.pretrain_weight,only_model= only_model ,loc = 'cpu',strict=bool(args.load_model_strict))
@@ -2731,7 +2731,6 @@ def build_model(args):
         print(f"Now in torch 2.0, we use torch.compile")
         torch.set_float32_matmul_precision('high')
         model = torch.compile(model) 
-    
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
         # should always set the single device scope, otherwise,
