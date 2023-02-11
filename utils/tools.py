@@ -29,8 +29,11 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
         ckpt = torch.load(path, map_location='cpu')
 
         if only_model:
-            
-            model.load_state_dict(ckpt['model'],strict=strict)
+            model_state_dict = ckpt['model']
+            first_key  = list(model_state_dict.keys())[0]
+            if "_orig_mod." in first_key:
+                model_state_dict = dict([(key.replace("_orig_mod.",""),val) for key,val in model_state_dict.items()])
+            model.load_state_dict(model_state_dict,strict=strict)
             print("loading model weight success...........")
         else:
             model.load_state_dict(ckpt['model'])
