@@ -313,9 +313,9 @@ class AFNONet(BaseModel):
         self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim,conv_simple=conv_simple)
         num_patches      = self.patch_embed.num_patches
         patch_size       = self.patch_embed.patch_size
-        self.patch_size = patch_size
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
-        self.pos_drop = nn.Dropout(p=drop_rate)
+        self.patch_size  = patch_size
+        self.pos_embed   = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+        self.pos_drop    = nn.Dropout(p=drop_rate)
         self.unique_up_sample_channel =unique_up_sample_channel= out_chans if unique_up_sample_channel == 0 else unique_up_sample_channel
 
         self.final_shape = self.patch_embed.out_size
