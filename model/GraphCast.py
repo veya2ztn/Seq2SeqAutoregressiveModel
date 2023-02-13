@@ -716,6 +716,8 @@ class Node2Edge2NodeBlockSingleLevel(Node2Edge2NodeBlock):
             bond_reduce = (bond_reduce[:,self.edge_order]*self.bond_coef.unsqueeze(-1)).sum(-2)
         else:
             raise NotImplementedError
+        # for some one try to realize via pyG, the only difference needed is use 
+        # torch_scatter.scatter(delta_bond_embedding, layer.tgt_order, dim=1, reduce='sum') <<< this is slower than our implement. in inference at leat.
         delta_tgt_embedding = bond_reduce@self.ET2T_E2T + tgt_embedding@self.ET2T_T2T
         delta_tgt_embedding = activator(delta_tgt_embedding)
         return delta_tgt_embedding
