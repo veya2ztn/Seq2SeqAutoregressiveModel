@@ -1004,7 +1004,11 @@ class WeathBench64x128(WeathBench71):
         self.add_LunaSolarDirectly =  kargs.get('add_LunaSolarDirectly',False) 
         self.LaLotude,self.LaLotudeVector = self.get_mesh_lon_lat(64,128)
         self.add_ConstDirectly =  kargs.get('add_ConstDirectly',False) 
-        
+        if self.add_ConstDirectly == 2:
+            # we will normlize const, only the last one need 
+            mean = self.constants[-1].mean()
+            std  = self.constants[-1].std()
+            self.constants[-1] = (self.constants[-1] - mean)/(std+1e-10)
     @staticmethod
     def create_offline_dataset_templete(split='test', root=None, use_offline_data=False, **kargs):
         # not allow, it will take too much memory
@@ -1043,6 +1047,7 @@ class WeathBench64x128(WeathBench71):
             data = np.concatenate([data,sun_mask,moon_mask])
         if self.add_ConstDirectly:
             data = np.concatenate([data,self.constants])
+        
         return data
 
 
