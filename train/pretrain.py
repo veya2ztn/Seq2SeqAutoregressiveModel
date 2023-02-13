@@ -617,7 +617,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
         iter_info_pool[f"{status}_error_{level_1}_{level_2}_{stamp}"] = error.item()
         loss   += coef*error
         if level_1 ==0 and level_2 == stamp:# to be same as normal train 
-            diff += loss
+            diff += coef*error
     loss = loss/loss_count
     diff = diff/loss_count
     return loss, diff, iter_info_pool, None, None
