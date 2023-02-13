@@ -419,24 +419,27 @@ class ERA5CephInMemoryDataset(ERA5CephDataset):
 
 
 class SpeedTestDataset(BaseDataset):
-    def __init__(self, h, w , split="train", mode='pretrain', check_data=True,**kargs):
+    def __init__(self,split="train", mode='pretrain', check_data=True,time_step=2,**kargs):
         self.mode = mode
-        self.input_h = h
-        self.input_w = w
-        if self.mode   == 'pretrain':self.time_step = 2
-        elif self.mode == 'finetune':self.time_step = 3
-        elif self.mode == 'free5':self.time_step = 5
-        pass
-
+        self.input_h = self.h
+        self.input_w = self.w
+        self.time_step = time_step
+        self.use_offline_data = False
+        self.with_idx = 0
+        self.data = torch.Tensor(np.random.randn(
+            10, 70, self.input_h, self.input_w))
     def __len__(self):
-        return 10000
+        return 1000
 
     def __getitem__(self, ind):
-        batch = [np.random.randn(self.input_h, self.input_w,20) for i in range(self.time_step)]
+        batch = [self.data[i % len(self.data)] for i in range(self.time_step)]
         self.error_path = []
         return batch
 
-
+class SpeedTestDataset32x64(SpeedTestDataset):
+    h= 32;w =64
+class SpeedTestDataset64x128(SpeedTestDataset):
+    h= 64;w =128
 class ERA5Tiny12_47_96(ERA5BaseDataset):
     default_root = 'datasets/ERA5/h5_set'
     time_intervel =1
