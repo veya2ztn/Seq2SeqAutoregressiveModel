@@ -38,6 +38,7 @@ def get_args_parser():
     parser.add_argument('--rotation_regular_mode', type=str, default=None)
     parser.add_argument('--rotation_regularize', type=int, default=0)
     parser.add_argument('--GDMod_intervel',type=int,default=10)
+    parser.add_argument('--skip_constant_2D70N',type=int,default=0)
 
     parser.add_argument('--path_length_regularize',type=int,default=0)
     parser.add_argument('--gmod_coef',type=str,default=None)
@@ -75,7 +76,7 @@ def get_args_parser():
     parser.add_argument('--canonical_fft', default=1, type=int)
     parser.add_argument('--unique_up_sample_channel', default=0, type=int)
     parser.add_argument('--n_heads', default=8, type=int)
-
+    parser.add_argument('--agg_way', default='mean', type=str)
     parser.add_argument('--consistancy_activate_wall', default=100, type=float)
     parser.add_argument('--consistancy_eval', default=0, type=int)
     
@@ -129,7 +130,7 @@ def get_args_parser():
     'WeathBench71','ERA5Tiny12_47_96_Normal','ERA5CephDataset','WeathBench68pixelnorm','WeathBench69SolarLunaMask',
     'WeathBench7066deseasonal','WeathBench7066PatchDataset','ERA5CephSmallPatchDataset',
     'WeathBench7066Self','ERA5CephSmallDataset','ERA5Tiny12_47_96','WeathBench7066',
-    'WeathBench7066DeltaDataset','WeathBench55withoutH','WeathBench64x128'])
+    'WeathBench7066DeltaDataset','WeathBench55withoutH','WeathBench64x128','SpeedTestDataset32x64','SpeedTestDataset64x128'])
     parser.add_argument('--dataset_flag', default="", type=str)
     parser.add_argument('--time_reverse_flag', default='only_forward', type=str)
     parser.add_argument('--time_intervel', type=int, default=1)

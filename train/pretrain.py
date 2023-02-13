@@ -37,7 +37,7 @@ from model.time_embeding_model import *
 from model.physics_model import *
 from model.othermodels import *
 from model.FeaturePickModel import *
-from model.GraphCast import GraphCast
+from model.GraphCast import * 
 
 
 from utils.params import get_args
@@ -62,8 +62,6 @@ import random
 import traceback
 from mltool.visualization import *
 import time
-import torch._dynamo
-torch._dynamo.config.verbose=True
 lr_for_mode={'pretrain':5e-4,'finetune':1e-4,'fourcast':1e-4}
 ep_for_mode={'pretrain':80,'finetune':50,'fourcast':50}
 bs_for_mode={'pretrain':4,'finetune':3,'fourcast':3}
@@ -74,6 +72,7 @@ train_set={
     'large': ((720, 1440), 8, 20, 20, ERA5CephDataset,{}),
     'small': ( (32,   64), 8, 20, 20, ERA5CephSmallDataset,{}),
     'test_large': ((720, 1440), 8, 20, 20, lambda **kargs:SpeedTestDataset(720,1440,**kargs),{}),
+    
     'test_small': ( (32,   64), 8, 20, 20, lambda **kargs:SpeedTestDataset( 32,  64,**kargs),{}),
     'physics_small': ( (32,   64), 2, 12, 12, ERA5CephSmallDataset,{'dataset_flag':'physics'}),
     'physics': ((720, 1440), 8, 12, 12, ERA5CephDataset,{'dataset_flag':'physics'}),
@@ -83,9 +82,10 @@ train_set={
     '4796Field' : ((3,51,96), (1,3,3), 4, 4, ERA5Tiny12_47_96,{'dataset_flag':'only_Field','use_scalar_advection':False}),
     '4796FieldNormlized' : ((3,51,96), (1,3,3), 4, 4, ERA5Tiny12_47_96,{'dataset_flag':'normalized_data','use_scalar_advection':False}),
     '2D70N':((32,64), (2,2), 70, 70, WeathBench71,{'dataset_flag':'2D70N'}),
+    
     '2D7066N':((32,64), (2,2), 70, 70, WeathBench7066,{'dataset_flag':'2D70N'}),
     '2D70NH5':((32,64), (2,2), 70, 70, WeathBench71_H5,{'dataset_flag':'2D70N'}),
-    '2D706N':((32,64), (2,2), 70, 70, WeathBench706,{'dataset_flag':'2D70N'}),
+    '2D706N':((32,64), (2,2), 70, 70, WeathBench706,{'dataset_flag':'2D70N'}), 
     '2D716N':((32,64), (2,2), 71, 71, WeathBench716,{'dataset_flag':'2D71N'}),
     '3D70N':((14,32,64), (2,2,2), 5, 5, WeathBench71,{'dataset_flag':'3D70N'}),
 }
@@ -238,6 +238,7 @@ def feature_pick_check(model):
     if hasattr(model,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.pred_channel_for_next_stamp
     if hasattr(model,"module") and hasattr(model.module,"pred_channel_for_next_stamp"): pred_channel_for_next_stamp = model.module.pred_channel_for_next_stamp
     return train_channel_from_this_stamp,train_channel_from_next_stamp,pred_channel_for_next_stamp
+
 def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     Field = Advection = None
 
@@ -301,7 +302,7 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
         else:
             next_tensor = None
         start     = start[1:] + [next_tensor]
-    elif dataset.with_idx and dataset.dataset_flag=='2D70N' and not model.training: # this only let we omit constant pad at level 55 and 69 at test case
+    elif (dataset.with_idx and dataset.dataset_flag=='2D70N' and not model.training) or model.skip_constant_2D70N: # this only let we omit constant pad at level 55 and 69 at test case
         if target is not None:
             next_tensor = target.clone().type(ltmv_pred.dtype)
             picked_property = list(range(0,14*4-1)) + list(range(14*4,14*5-1))
@@ -393,9 +394,9 @@ def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
             target = target[...,Z//2,W//2,H//2]  
         else:
             raise NotImplementedError
-#         else:
-#             # (B,P,5,5) -> (B,P) mode
-#             target = target 
+        # else:
+        #     # (B,P,5,5) -> (B,P) mode
+        #     target = target 
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 def once_forward_patch_N2M(model,i,start,end,dataset,time_step_1_mode):
@@ -519,8 +520,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     assert len(batch)>1
     assert len(batch) <= len(model.activate_stamps) + 1
     iter_info_pool={}
-    loss = 0
-    diff = 0
+    
     if model.history_length > len(batch):
         print(f"you want to use history={model.history_length}")
         print(f"but your input batch(timesteps) only has len(batch)={len(batch)}")
@@ -577,7 +577,6 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
                 target_stamp.append(last_activate_stamp.index(t) if t   in last_activate_stamp  else last_activate_stamp.index(t-1))
                 # if the target stamp not appear in this batch, use current stamp fill, but we need prohibit this prediction 
                 # to do next forward prediction. Thus we limit in t < L 
-
             # notice when activate pred_channel_for_next_stamp, the unpredicted part should be filled by the part from next stamp 
             # but the loss should be calculate only on the predicted part.
             end = now_level_batch[:,target_stamp].flatten(0,1)
@@ -587,38 +586,38 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
         now_level_batch      = start[-1].reshape(B,len(picked_stamp),*tshp)  
         #now_level_batch     = model(now_level_batch[:,picked_stamp].flatten(0,1)).reshape(B,len(picked_stamp),*tshp)  
         all_level_batch.append(now_level_batch)
-        all_level_record.append([last_activate_stamp[t]+1 for t in picked_stamp])
+        #all_level_record.append([last_activate_stamp[t]+1 for t in picked_stamp])
+        all_level_record.append(activate_stamp)
 
     ####################################################
     ################ calculate error ###################
-    loss = 0
     iter_info_pool={}
-    loss_count = diff_count = 0
+    loss = 0
+    diff = 0
+    loss_count = diff_count = len(model.activate_error_coef)
     for (level_1, level_2, stamp, coef,_type) in model.activate_error_coef:
         tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
         tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
         if 'quantity' in _type:
             if _type == 'quantity':
-                error   = coef*torch.mean((tensor1-tensor2)**2)
+                error   = torch.mean((tensor1-tensor2)**2)
             elif _type == 'quantity_log':
-                error   = coef*((tensor1-tensor2)**2+1).log().mean()
+                error   = ((tensor1-tensor2)**2+1).log().mean()
             else:raise NotImplementedError
         elif 'alpha' in _type:
             last_tensor1 = all_level_batch[level_1-1][:,all_level_record[level_1-1].index(stamp-1)]
             last_tensor2 = all_level_batch[level_2-1][:,all_level_record[level_2-1].index(stamp-1)]
             if _type == 'alpha':
-                error   = coef*torch.mean(  ((tensor1-tensor2)**2) / ((last_tensor1-last_tensor2)**2+1e-4)  )
+                error   = torch.mean(  ((tensor1-tensor2)**2) / ((last_tensor1-last_tensor2)**2+1e-4)  )
             elif _type == 'alpha_log':
-                error   = coef*torch.mean(  ((tensor1-tensor2)**2+1).log() - ((last_tensor1-last_tensor2)**2+1).log() )
+                error   = torch.mean(  ((tensor1-tensor2)**2+1).log() - ((last_tensor1-last_tensor2)**2+1).log() )
             else:raise NotImplementedError
         else:
             raise NotImplementedError
         iter_info_pool[f"{status}_error_{level_1}_{level_2}_{stamp}"] = error.item()
-        loss   += error
-        loss_count+=1
+        loss   += coef*error
         if level_1 ==0 and level_2 == stamp:# to be same as normal train 
-            diff += loss
-            #diff_count+=1
+            diff += coef*error
     loss = loss/loss_count
     diff = diff/loss_count
     return loss, diff, iter_info_pool, None, None
@@ -1512,6 +1511,7 @@ def calculate_next_level_error(model, x_t_1, error_list):
     assert len(x_t_1.shape) == 4
     grads = vmap(calculate_next_level_error_once, (None,None, 0),randomness='same')(model,x_t_1,error_list)#(N, B, Xdimension)
     return grads
+
 def calculate_next_level_error_batch(model, x_t_1, error_list):
     '''
     calculate m(x_t_1)(x_t_1 - \hat{x_t_1})
@@ -2479,7 +2479,6 @@ def parse_default_args(args):
     if hasattr(args,'use_time_stamp') and args.use_time_stamp:dataset_kargs['use_time_stamp']= args.use_time_stamp
     if hasattr(args,'use_position_idx'):dataset_kargs['use_position_idx']= args.use_position_idx
     
-    
     args.unique_up_sample_channel = args.unique_up_sample_channel
     
 
@@ -2542,7 +2541,9 @@ def parse_default_args(args):
         "share_memory":args.share_memory,
         "dropout_rate":args.dropout_rate,
         "conv_simple":args.conv_simple,
-        "graphflag":args.graphflag
+        "graphflag":args.graphflag,
+    
+        "agg_way":args.agg_way
     }
     args.model_kargs = model_kargs
 
@@ -2637,13 +2638,12 @@ def parser_compute_graph(compute_graph_set):
                                          [1,2,2, 1.0, "alpha_log"],
                                          [1,3,3, 1.0, "alpha_log"]
                                       ]),
-        'fwd2_KAR' :([[1,2,3],[2],[3]], [[0,1,1, 3, "quantity"], 
-                                         [0,2,2, 3, "quantity"],
-                                         [1,2,2, 6, "quantity"],
-                                         [1,2,2, 6, "quantity"],
-                                         [1,3,3, 6, "quantity"],
-                                         [2,3,3, 6, "quantity"]
-                                      ]),
+        'fwd2_KAR' :([[1,2,3],[2,3],[3]], [[0,1,1, 2.5, "quantity"], 
+                           [0,2,2, 2.5, "quantity"],
+                           [1,2,2, 2.5, "quantity"],
+                           [1,3,3, 2.5, "quantity"],
+                           [2,3,3, 2.5, "quantity"]
+                    ]),
         'fwd1_D'   :([[1]],   [[0,1,1,1.0, "quantity"]]),
         'fwd1_TA'  :([[1,2],[2]],   [[0,1,1,1.0, "quantity"], [1,2,2,1.0, "alpha"]]),
         'fwd2_D'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"]]),
@@ -2655,9 +2655,13 @@ def parser_compute_graph(compute_graph_set):
                                     [0,2,2, 1.5, "quantity"],
                                     [1,2,2, 3.0, "quantity"]
                                     ]),
+        'fwd2_PRO'   :([[1,2],[2]], [[0,1,1, 3, "quantity"], 
+                         [0,2,2, 3, "quantity"],
+                         [1,2,2, 1.5, "quantity"]
+                                    ]),
         'fwd2_PA'  :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
-                                  [0,2,2, 1.0, "quantity"],
-                                  [1,2,2, 1.0, "alpha"]
+                                   [0,2,2, 1.0, "quantity"],
+                                   [1,2,2, 1.0, "alpha"]
                                   ]),
         
         'fwd2_PAL' :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
@@ -2665,7 +2669,7 @@ def parser_compute_graph(compute_graph_set):
                                    [1,2,2, 1.0, "alpha_log"]
                                    ])
         
-    }
+        }
 
     return compute_graph_set_pool[compute_graph_set]
 
@@ -2714,15 +2718,19 @@ def build_model(args):
         model = eval(args.model_type)(**args.model_kargs)
         if args.wrapper_model:
             model = eval(args.wrapper_model)(args,model)
+    
     logsys.info(f"use model ==> {model.__class__.__name__}")
     local_rank=args.local_rank
     rank = args.rank
     if local_rank == 0:
         param_sum, buffer_sum, all_size = getModelSize(model)
         logsys.info(f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
+    if args.pretrain_weight and args.torch_compile :
+        only_model = ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train)
+        assert only_model
+        load_model(model,path=args.pretrain_weight,only_model= only_model ,loc = 'cpu',strict=bool(args.load_model_strict))
     if torch.__version__[0]=="2" and args.torch_compile:
         print(f"Now in torch 2.0, we use torch.compile")
-        
         torch.set_float32_matmul_precision('high')
         model = torch.compile(model) 
     if args.distributed:
@@ -2748,10 +2756,16 @@ def build_model(args):
     model.accumulation_steps = args.accumulation_steps
     model.consistancy_alpha = deal_with_tuple_string(args.consistancy_alpha,[],dtype=float)
     model.consistancy_eval = args.consistancy_eval
+    if model.consistancy_eval:
+        print(f'''
+            setting model.consistancy_eval={model.consistancy_eval}, please make sure your model dont have running parameter like 
+            BatchNorm, dropout>1 which will effect training.
+        ''')
     model.vertical_constrain= args.vertical_constrain
     model.consistancy_activate_wall = args.consistancy_activate_wall
     model.mean_path_length = torch.zeros(1)
     model.activate_stamps,model.activate_error_coef = parser_compute_graph(args.compute_graph_set)
+    model.skip_constant_2D70N = args.skip_constant_2D70N
     if 'UVT' in args.wrapper_model:
         print(f"notice we are in property_pick mode, be careful. Current dataset is {args.dataset_type}")
         #assert "55" in args.dataset_flag
@@ -2920,7 +2934,11 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
 
     args.pretrain_weight = args.pretrain_weight.strip()
     logsys.info(f"loading weight from {args.pretrain_weight}")
-    start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
+    if args.torch_compile and args.pretrain_weight:
+        start_epoch, start_step, min_loss = 0, 0, 0
+        print(f"remind in torch compile mode, any pretrain model should be load before torch.compile and DistributedDataParallel")
+    else:
+        start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
                         only_model= ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu),strict=bool(args.load_model_strict))
     start_epoch = start_epoch if args.continue_train else 0
 
