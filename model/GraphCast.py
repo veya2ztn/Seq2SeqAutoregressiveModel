@@ -1045,13 +1045,15 @@ try:
                                     for i in range(len(edge_ids))])
             self.M2G_edge_coef = edge_coef.unsqueeze(-1).unsqueeze(-1)
             # g.edges[edge_flag].data['coef'] = torch.nn.Parameter(edge_coef ,requires_grad=False) # to automatively go into cuda
-
+            self.device = None
             return g
 
         def forward(self, _input):
             B, P, W, H = _input.shape
             device = next(self.parameters()).device
-            self.g = self.g.to(device)
+            if self.device is None:
+                self.device = device
+                self.g = self.g.to(device)
             # (B,P,W,H) -> (B,W*H,P)
             feature_along_latlot = self.grid_rect_embedding_layer(
                 rearrange(_input, "B P W H -> (W H) B P"))
@@ -1178,3 +1180,4 @@ try:
 
 except:
     pass
+
