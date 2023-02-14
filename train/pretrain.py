@@ -1150,6 +1150,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             train_cost = []
             rest_cost = []
             inter_b.lwrite(outstring, end="\r")
+        
 
 
     if hasattr(model,'module') and status == 'valid':
@@ -2769,6 +2770,8 @@ def build_model(args):
     if 'UVT' in args.wrapper_model:
         print(f"notice we are in property_pick mode, be careful. Current dataset is {args.dataset_type}")
         #assert "55" in args.dataset_flag
+    if not hasattr(model,'pred_channel_for_next_stamp') and args.input_channel!=args.output_channel and args.output_channel == 68:
+        model.pred_channel_for_next_stamp = list(range(0,14*4-1)) + list(range(14*4, 69))
     return model
 
 def update_experiment_info(experiment_hub_path,epoch,args):
