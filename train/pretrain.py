@@ -503,6 +503,9 @@ def full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,tar
         alpha = model.consistancy_alpha[len(full_fourcast_error_list)]
         if alpha>0 and t is not None:
             hidden_fourcast = model(t )
+            if model.consistancy_cut_grad:
+                hidden_fourcast=hidden_fourcast.detach()
+
             hidden_error  = criterion(ltmv_pred,hidden_fourcast) # can also be criterion(target,hidden_fourcast)
             hidden_fourcast_list_next.append(hidden_fourcast)
             full_fourcast_error_list.append(hidden_error.item())
@@ -2756,6 +2759,7 @@ def build_model(args):
     model.pred_len = args.pred_len
     model.accumulation_steps = args.accumulation_steps
     model.consistancy_alpha = deal_with_tuple_string(args.consistancy_alpha,[],dtype=float)
+    model.consistancy_cut_grad = args.consistancy_cut_grad
     model.consistancy_eval = args.consistancy_eval
     if model.consistancy_eval:
         print(f'''
