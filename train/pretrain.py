@@ -757,7 +757,7 @@ def run_one_iter_normal(model, batch, criterion, status, gpu, dataset):
         diff += abs_loss
         pred_step+=1
         
-        if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall: 
+        if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall and ((not args.model.consistancy_eval) or (not model.training)): 
             hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list)
             if hasattr(model,"vertical_constrain") and model.vertical_constrain and len(hidden_fourcast_list)>=2:
                 all_hidden_fourcast_list = [ltmv_pred]+hidden_fourcast_list
@@ -767,7 +767,7 @@ def run_one_iter_normal(model, batch, criterion, status, gpu, dataset):
                     verticalQ = torch.mean((hidden_error_tensor*first_level_error_tensor)**2) # <epsilon_2^I|epsilon_2^II-epsilon_2^I>
                     iter_info_pool[f'{status}_vertical_error_{i}_{il}_gpu{gpu}'] =  verticalQ.item()
                     extra_loss2+= model.vertical_constrain*verticalQ # we only
-            if not model.consistancy_eval:loss+= extra_loss2
+            loss+= extra_loss2
             
                 
         iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
@@ -776,7 +776,7 @@ def run_one_iter_normal(model, batch, criterion, status, gpu, dataset):
             iter_info_pool[f'{status}_rmse_gpu{gpu}_timestep{i}']     =  compute_rmse(normlized_field_predict,normlized_field_real).mean().item()
         if model.random_time_step_train and i >= random_run_step:
             break
-    if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall:
+    if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall and ((not args.model.consistancy_eval) or (not model.training)): 
         ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,None,dataset,time_step_1_mode) 
         ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
         hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,None,hidden_fourcast_list)
