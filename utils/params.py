@@ -118,6 +118,7 @@ def get_args_parser():
     parser.add_argument('--checkpoint-activations', action='store_true')
     parser.add_argument('--autoresume', action='store_true')
     parser.add_argument('--find_unused_parameters', type=int, default=0)
+    parser.add_argument('--consistancy_cut_grad', type=int, default=0)
     
     parser.add_argument('--wrapper_model', default='', type=str, help='Name of model to train',
         #   choices=["",'DeltaModel','EulerEquationModel','ConVectionModel',
