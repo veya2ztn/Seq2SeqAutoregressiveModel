@@ -757,6 +757,7 @@ class WeathBench(BaseDataset):
         LaLotude = np.stack([latitude[y],longitude[x]])/180*np.pi
         LaLotudeVector = np.stack([np.cos(LaLotude[1])*np.cos(LaLotude[0]),np.cos(LaLotude[1])*np.sin(LaLotude[0]),np.sin(LaLotude[1])],2)
         return LaLotude,LaLotudeVector
+
 class WeathBench71(WeathBench):
     default_root='datasets/weatherbench'
     _component_list= ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
@@ -864,7 +865,21 @@ class WeathBench71(WeathBench):
         else:
             return data
 
+class WeathBench32x64(WeathBench):
+    default_root = 'datasets/weatherbench32x64'
+    
+class WeathBench32x64d6(WeathBench71):
+    def __len__(self):
+        aaa =  len(self.single_data_path_list) - self.time_step*self.time_intervel + 1
+        return aaa//self.time_intervel
 
+    def __getitem__(self,idx):  
+        time_step_list= [(idx+i)*self.time_intervel for i in range(self.time_step)]
+        batch = [self.get_item(i,False) for i in time_step_list]
+        self.error_path = []
+        return batch if not self.with_idx else (idx,batch)
+
+        
 class WeathBench71_H5(WeathBench71):
 
     def load_otensor(self,idx):
