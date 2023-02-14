@@ -368,3 +368,10 @@ class CombM_UVTPH2p2uvth(BaseModel):
         uvth = self.UVTPHp2uvth(torch.cat([UVTPHSC, p], 1))
         uvtph = torch.cat([uvth[:, :42], p, uvth[:, 42:]], 1)
         return uvtph
+
+class CombM_UVTPH2p2uvth_ForP(CombM_UVTPH2p2uvth):
+    def set_epoch(self, epoch=None, epoch_total=None, eval_mode=False):
+        for p in self.UVTPHp2uvth.parameters():
+            p.requires_grad = False
+        self.UVTPHp2uvth.eval()
+    
