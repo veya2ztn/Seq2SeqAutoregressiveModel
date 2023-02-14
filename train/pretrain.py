@@ -767,7 +767,7 @@ def run_one_iter_normal(model, batch, criterion, status, gpu, dataset):
                     verticalQ = torch.mean((hidden_error_tensor*first_level_error_tensor)**2) # <epsilon_2^I|epsilon_2^II-epsilon_2^I>
                     iter_info_pool[f'{status}_vertical_error_{i}_{il}_gpu{gpu}'] =  verticalQ.item()
                     extra_loss2+= model.vertical_constrain*verticalQ # we only
-            loss+= extra_loss2
+            if not model.consistancy_eval:loss+= extra_loss2
             
                 
         iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
