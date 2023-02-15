@@ -374,4 +374,14 @@ class CombM_UVTPH2p2uvth_ForP(CombM_UVTPH2p2uvth):
         for p in self.UVTPHp2uvth.parameters():
             p.requires_grad = False
         self.UVTPHp2uvth.eval()
-    
+
+class CombM_UVTPH2p2uvth2p_shift(CombM_UVTPH2p2uvth):
+    flag_this_is_shift_model = 1
+    def forward(self, UVTPH):
+        # assert not next(self.UVTP2p.parameters()).requires_grad ## use torch.no_grad is same
+        p     = self.UVTPH2p(UVTPH)
+        uvth  = self.UVTPHp2uvth(torch.cat([UVTPH, p], 1))
+        uvtph = torch.cat([uvth[:, :42], p, UVTPH[:,42:43], uvth[:, 42:], UVTPH[:,-1:]], 1)
+        p     = self.UVTPH2p(uvtph)
+        uvtph = torch.cat([uvtph,p], 1) 
+        return uvtph
