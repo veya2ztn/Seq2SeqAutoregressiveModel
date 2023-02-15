@@ -320,6 +320,51 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
         target = target[:,pred_channel_for_next_stamp]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
+def once_forward_shift(model,i,start,end,dataset,time_step_1_mode):
+    Field = Advection = None
+    assert len(start) == 2
+    #assert model.shift_feature_index 
+    
+    model.shift_feature_index = list(range(14*3, 14*4-1))
+    normlized_Field = start[0]
+    target = start[1]
+    target[:,model.shift_feature_index ] = end[:,model.shift_feature_index]
+
+    
+    if model.training and model.input_noise_std and i==1:
+        normlized_Field += torch.randn_like(normlized_Field)*model.input_noise_std
+
+    train_channel_from_this_stamp,train_channel_from_next_stamp,pred_channel_for_next_stamp = feature_pick_check(model)
+
+    if train_channel_from_this_stamp:
+        assert len(normlized_Field.shape)==4
+        normlized_Field = normlized_Field[:,train_channel_from_this_stamp]
+
+    if train_channel_from_next_stamp:
+        assert len(normlized_Field.shape)==4
+        normlized_Field = torch.cat([normlized_Field,target[:,train_channel_from_next_stamp]],1)
+
+    
+    #print(normlized_Field.shape,torch.std_mean(normlized_Field))
+    out   = model(normlized_Field)
+
+    extra_loss = 0
+    extra_info_from_model_list = []
+    if isinstance(out,(list,tuple)):
+        extra_loss                 = out[1]
+        extra_info_from_model_list = out[2:]
+        out = out[0]
+
+    ltmv_pred = out
+
+    assert ltmv_pred.shape[1] == 70 + 13
+    next_target = start[-1].detach().type(ltmv_pred.dtype)
+    next_target[:,range(14*3,14*4-1)] = ltmv_pred[:,-13:]
+    ltmv_pred = ltmv_pred[:,:-13] 
+    start     =  [ltmv_pred, next_target]
+    return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
+
+
 def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
     time_stamp = None
     pos = None
@@ -490,6 +535,8 @@ def once_forward(model,i,start,end,dataset,time_step_1_mode):
         return once_forward_deltaMode(model,i,start,end,dataset,time_step_1_mode)
     elif dataset.__class__.__name__ == "WeathBench7066Self":
         return once_forward_self_relation(model,i,start,end,dataset,time_step_1_mode)
+    elif hasattr(model,'flag_this_is_shift_model') or (hasattr(model,'module') and hasattr(model,'flag_this_is_shift_model')):
+        return  once_forward_shift(model,i,start,end,dataset,time_step_1_mode)
     else:   
        return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
 
