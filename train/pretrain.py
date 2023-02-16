@@ -38,7 +38,7 @@ from model.physics_model import *
 from model.othermodels import *
 from model.FeaturePickModel import *
 from model.GraphCast import * 
-
+from model.TimesNet import TimesNet4D
 
 from utils.params import get_args
 from utils.tools import getModelSize, load_model, save_model
@@ -2360,7 +2360,7 @@ def seed_worker(worker_id):# Multiprocessing randomnes for multiGPU train #https
 def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     dataset_type   = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
     
-    train_dataset  = dataset_type(split="train" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,
+    train_dataset  = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,
                                   record_load_tensor=train_record_load,**args.dataset_kargs)
     val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,
                                   record_load_tensor=valid_record_load,**args.dataset_kargs)
@@ -2732,9 +2732,9 @@ def build_model(args):
     logsys.info(f"model args: img_size= {args.img_size}")
     logsys.info(f"model args: patch_size= {args.patch_size}")
     args.model_kargs['unique_up_sample_channel'] = 0
-    args.model_kargs['history_length'] = 1
     # ==============> Initial Model <=============
     if args.wrapper_model and 'Comb' in args.wrapper_model:
+        args.model_kargs['history_length'] = 1
         assert args.model_type1
         assert args.model_type2
         args.model_kargs['in_chans']  = eval(args.wrapper_model).default_input_channel1
