@@ -702,7 +702,7 @@ def once_forward_error_evaluation(model,now_level_batch):
             real_res_error_record.append(real_res_error)
             real_appx_delta_record.append(real_appx_delta)
             real_res_angle_record.append(real_res_angle)
-        ltmv_preds.append(next_level_error_tensor[:,0:1])
+        ltmv_preds.append(next_level_batch[:, 0:1])
         error_record.append(next_level_error)
         if L>2:
             tangent_x             = (target_level_batch[:,-(L-2):] + next_level_batch[:,-(L-2):])/2
