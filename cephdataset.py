@@ -865,7 +865,8 @@ class WeathBench71(WeathBench):
         else:
             return data
 
-class WeathBench32x64(WeathBench):
+
+class WeathBench32x64(WeathBench71):
     default_root = 'datasets/weatherbench32x64'
     
 class WeathBench32x64d6(WeathBench71):
