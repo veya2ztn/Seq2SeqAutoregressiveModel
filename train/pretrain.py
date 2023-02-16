@@ -668,8 +668,6 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
         loss   += coef*error
         if level_1 ==0 and level_2 == stamp:# to be same as normal train 
             diff += coef*error
-    loss = loss/loss_count
-    diff = diff/loss_count
     return loss, diff, iter_info_pool, None, None
 
 def once_forward_error_evaluation(model,now_level_batch):
@@ -2360,7 +2358,7 @@ def seed_worker(worker_id):# Multiprocessing randomnes for multiGPU train #https
 def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     dataset_type   = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
     
-    train_dataset  = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,
+    train_dataset  = dataset_type(split="train" if not args.debug else 'test',dataset_tensor=train_dataset_tensor,
                                   record_load_tensor=train_record_load,**args.dataset_kargs)
     val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,
                                   record_load_tensor=valid_record_load,**args.dataset_kargs)
@@ -2678,22 +2676,24 @@ def parser_compute_graph(compute_graph_set):
     # z3 
     if compute_graph_set is None:return None,None
     compute_graph_set_pool={
-        'fwd3_D'   :([[1],[2],[3]], [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"], [0,3,3,1.0, "quantity"]]),
-        'fwd2_TA'  :([[1,2,3],[2],[3]], [[0,1,1, 1.0, "quantity"], 
-                                         [0,2,2, 1.0, "quantity"],
-                                         [1,2,2, 1.0, "alpha"],
-                                         [1,3,3, 1.0, "alpha"]
+        'fwd3_D'   :([[1],[2],[3]], [[0,1,1,0.33, "quantity"], 
+                                     [0,2,2,0.33, "quantity"], 
+                                     [0,3,3,0.33, "quantity"]]),
+        'fwd2_TA'  :([[1,2,3],[2],[3]], [[0,1,1, 0.25, "quantity"], 
+                                         [0,2,2, 0.25, "quantity"],
+                                         [1,2,2, 0.25, "alpha"],
+                                         [1,3,3, 0.25, "alpha"]
                                         ]),
-        'fwd2_TAL' :([[1,2,3],[2],[3]], [[0,1,1, 1.0, "quantity"], 
-                                         [0,2,2, 1.0, "quantity"],
-                                         [1,2,2, 1.0, "alpha_log"],
-                                         [1,3,3, 1.0, "alpha_log"]
+        'fwd2_TAL' :([[1,2,3],[2],[3]], [[0,1,1, 0.25, "quantity"], 
+                                         [0,2,2, 0.25, "quantity"],
+                                         [1,2,2, 0.25, "alpha_log"],
+                                         [1,3,3, 0.25, "alpha_log"]
                                       ]),
-        'fwd2_KAR' :([[1,2,3],[2,3],[3]], [[0,1,1, 2.5, "quantity"], 
-                           [0,2,2, 2.5, "quantity"],
-                           [1,2,2, 2.5, "quantity"],
-                           [1,3,3, 2.5, "quantity"],
-                           [2,3,3, 2.5, "quantity"]
+        'fwd2_KAR' :([[1,2,3],[2,3],[3]], [[0,1,1, 0.5, "quantity"], 
+                                           [0,2,2, 0.5, "quantity"],
+                                           [1,2,2, 0.5, "quantity"],
+                                           [1,3,3, 0.5, "quantity"],
+                                           [2,3,3, 0.5, "quantity"]
                     ]),
         'fwd1_D'   :([[1]],   [[0,1,1,1.0, "quantity"]]),
         'fwd1_TA'  :([[1,2],[2]],   [[0,1,1,1.0, "quantity"], [1,2,2,1.0, "alpha"]]),
@@ -2702,14 +2702,26 @@ def parser_compute_graph(compute_graph_set):
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "quantity"]
                                    ]),
-        'fwd2_PR'   :([[1,2],[2]], [[0,1,1, 1.5, "quantity"], 
-                                    [0,2,2, 1.5, "quantity"],
-                                    [1,2,2, 3.0, "quantity"]
+        'fwd2_PR'   :([[1,2],[2]], [[0,1,1, 0.5, "quantity"], 
+                                    [0,2,2, 0.5, "quantity"],
+                                    [1,2,2, 1.0, "quantity"]
                                     ]),
-        'fwd2_PRO'   :([[1,2],[2]], [[0,1,1, 3, "quantity"], 
-                         [0,2,2, 3, "quantity"],
-                         [1,2,2, 1.5, "quantity"]
+        'fwd2_PRO'   :([[1,2],[2]], [[0,1,1, 1, "quantity"], 
+                                     [0,2,2, 1, "quantity"],
+                                     [1,2,2, 0.5, "quantity"]
                                     ]),
+        'fwd4_ABC'   :([[1,2,3,4],
+                        [2],
+                        [3],
+                        [4]], 
+                       [[0,1,1, 1, "quantity"], 
+                        [0,1,2, 1, "quantity"],
+                        [0,1,3, 1, "quantity"],
+                        [1,2,2, 1, "quantity"],
+                        [1,3,3, 1, "quantity"],
+                        [1,4,4, 1, "quantity"],
+                                    ]),
+
         'fwd2_PA'  :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "alpha"]
