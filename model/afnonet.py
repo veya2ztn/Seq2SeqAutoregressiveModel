@@ -9,6 +9,7 @@ from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import torch.fft
 from torch.utils.checkpoint import checkpoint_sequential
 from .convNd import convNd
+from .base import BaseModel
 import numpy as np
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -71,24 +72,6 @@ class Timer:
                 self.show_stat_per_key(child,1)
 timer = Timer(False)
 
-from  torch.cuda.amp import custom_fwd,custom_bwd
-
-class BaseModel(nn.Module):
-
-    def set_epoch(self,epoch,epoch_total,**kargs):
-        pass
-    def set_step(self,step,epoch,**kargs):
-        pass
-    def get_w_resolution_pad(self,shape):
-        w_now   = shape[-2]
-        w_should= self.img_size[-2]
-        if w_now == w_should:return None
-        if w_now > w_should:
-            raise NotImplementedError
-        if w_now < w_should and not ((w_should - w_now)%2):
-            # we only allow symmetry pad
-            return (w_should - w_now)//2
-    
 class AdaptiveFourierNeuralOperator(nn.Module):
     def __init__(self, dim, img_size, fno_blocks=4,fno_bias=True, fno_softshrink=False):
         super().__init__()
