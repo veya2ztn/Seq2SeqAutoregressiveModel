@@ -4,7 +4,19 @@ import torch
 import os
 import csv
 import copy
-from .base import LoRALinear
+
+class LoRALinear(nn.Module):
+        def __init__(self, in_channel,out_channel):
+            super().__init__()
+            self.main = torch.nn.Linear(in_channel,out_channel,bias=False)
+            self.lora = None
+            # we will assign lora via outside function
+        def forward(self,x):
+            if self.lora is None:
+                return self.main(x)
+            else:
+                assert not self.main.weight.requires_grad
+                return self.main(x) + self.lora(x)
 
 class MLP(nn.Module):
     def __init__(self, input_channel, output_cannel, bias=False, 
