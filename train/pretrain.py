@@ -2780,6 +2780,8 @@ def build_model(args):
     else:
         model = eval(args.model_type)(**args.model_kargs)
         if args.wrapper_model:
+            if args.subweight:
+                load_model(model,path=args.subweight,only_model=True, loc = 'cpu',strict=bool(args.load_model_strict))
             model = eval(args.wrapper_model)(args,model)
     
     logsys.info(f"use model ==> {model.__class__.__name__}")
@@ -3000,6 +3002,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
 
     args.pretrain_weight = args.pretrain_weight.strip()
     logsys.info(f"loading weight from {args.pretrain_weight}")
+    # we put pretrain loading here due to we need load optimizer
     if args.torch_compile and args.pretrain_weight:
         start_epoch, start_step, min_loss = 0, 0, 0
         print(f"remind in torch compile mode, any pretrain model should be load before torch.compile and DistributedDataParallel")
