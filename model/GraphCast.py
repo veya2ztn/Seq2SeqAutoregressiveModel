@@ -4,7 +4,20 @@ import torch
 import os
 import csv
 import copy
-from .base import LoRALinear
+
+
+class LoRALinear(nn.Module):
+        def __init__(self, in_channel,out_channel):
+            super().__init__()
+            self.main = torch.nn.Linear(in_channel,out_channel,bias=False)
+            self.lora = None
+            # we will assign lora via outside function
+        def forward(self,x):
+            if self.lora is None:
+                return self.main(x)
+            else:
+                assert not self.main.weight.requires_grad
+                return self.main(x) + self.lora(x)
 
 class MLP(nn.Module):
     def __init__(self, input_channel, output_cannel, bias=False, 
@@ -1168,7 +1181,7 @@ try:
             self.northsouthembbed     = nn.Parameter(torch.randn(2,embed_dim))
             self.mesh_node_embedding   = nn.Parameter(torch.randn(g.num_nodes('mesh'),1, embed_dim))
             self.grid_mesh_bond_embedding  = nn.Parameter(torch.randn(g.num_edges('G2M'),1, embed_dim))
-            self.mesh_grid_bond_template   = torch.randn(g.num_edges('M2G'),1, embed_dim)
+            #self.mesh_grid_bond_template   = torch.randn(g.num_edges('M2G'),1, embed_dim)
             self.g = g
             self.embed_dim = embed_dim
 
@@ -1260,12 +1273,12 @@ try:
             for i in range(depth):self.mesh2mesh.append(LoRANode2Edge2NodeBlockDGLSymmetry('mesh','M2M','mesh',embed_dim=embed_dim))        
             self.mesh2grid = LoRANode2Edge2NodeBlockDGL('mesh','M2G','grid',embed_dim=embed_dim)
             
-            self.grid_rect_embedding_layer = LoRALinear(in_chans,embed_dim)
-            self.projection         = LoRALinear(embed_dim,out_chans)
+            self.grid_rect_embedding_layer = nn.Linear(in_chans,embed_dim)
+            self.projection         = nn.Linear(embed_dim,out_chans)
             self.northsouthembbed      = nn.Parameter(torch.randn(2,embed_dim))
             self.mesh_node_embedding    = nn.Parameter(torch.randn(g.num_nodes('mesh'),1, embed_dim))
             self.grid_mesh_bond_embedding  = nn.Parameter(torch.randn(g.num_edges('G2M'),1, embed_dim))
-            self.mesh_grid_bond_template   = torch.randn(g.num_edges('M2G'),1, embed_dim)
+            #self.mesh_grid_bond_template   = torch.randn(g.num_edges('M2G'),1, embed_dim)
             self.g = g
             self.embed_dim = embed_dim
 
@@ -1274,6 +1287,36 @@ try:
             mesh_mesh_bond_embedding = torch.randn(g.num_edges('M2M'),1, embed_dim)
             mesh_mesh_bond_embedding[M2Mweightorder2] = mesh_mesh_bond_embedding[M2Mweightorder2]    
             self.mesh_mesh_bond_embedding  = nn.Parameter(mesh_mesh_bond_embedding)
+
+        @staticmethod
+        def convertOLDweight(weigth):
+            new_weight = {}
+            for key, w in weigth.items():
+                skip=False
+                for activate_key in ['STE2E_S2E','STE2E_T2E','STE2E_E2E',
+                                    'ET2T_E2T','ET2T_T2T','S2S']:
+                    if activate_key in key:
+                        key += ".main.weight"
+                        new_weight[key] = w.transpose(1,0)
+                        skip = True
+                        continue
+                        
+                if skip:continue
+                new_weight[key] = w
+            return model2
+
+    class FixEmbedding(nn.Module):
+        def __init__(self, args, backbone):
+            super().__init__()
+            self.backbone =  backbone
+        def set_epoch(self,epoch,epoch_total,**kargs):
+            for p in self.backbone.grid_rect_embedding_layer.parameters():p.requires_grad = False
+            self.backbone.northsouthembbed.requires_grad = False
+            self.backbone.mesh_node_embedding.requires_grad = False
+            self.backbone.mesh_mesh_bond_embedding.requires_grad = False
+            self.backbone.grid_mesh_bond_embedding.requires_grad = False
+        def forward(self, x,**kargs):
+            return self.backbone(x,**kargs)
 
 except:
     pass
