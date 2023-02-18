@@ -20,7 +20,7 @@ def get_args_parser():
     parser.add_argument('--dropout_rate', default=0, type=float)
     parser.add_argument('--seed', default=-1, type=int)
     parser.add_argument('--input_noise_std', type=float, default=0.0, help='input_noise_std')
-    parser.add_argument('--do_final_fourcast', type=int, default=1, help='do fourcast step after finish training')
+    parser.add_argument('--do_final_fourcast', type=str, default="backbone.best.pt", help='do fourcast step after finish training')
     parser.add_argument('--debug', type=int, default=0, help='debug mode')
     parser.add_argument('--distributed', type=int, default=0, help='distributed')
     parser.add_argument('--rank', type=int, default=0, help='rank')
