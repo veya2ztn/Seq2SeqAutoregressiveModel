@@ -645,6 +645,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     loss = 0
     diff = 0
     loss_count = diff_count = len(model.activate_error_coef)
+
     for (level_1, level_2, stamp, coef,_type) in model.activate_error_coef:
         tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
         tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
@@ -2674,6 +2675,8 @@ def parser_compute_graph(compute_graph_set):
     # y2 y3 
     # |  
     # z3 
+
+    
     if compute_graph_set is None:return None,None
     compute_graph_set_pool={
         'fwd3_D'   :([[1],[2],[3]], [[0,1,1,0.33, "quantity"], 
@@ -2710,6 +2713,43 @@ def parser_compute_graph(compute_graph_set):
                                      [0,2,2, 1, "quantity"],
                                      [1,2,2, 0.5, "quantity"]
                                     ]),
+        'fwd4_AC'   :([ [1,2,3,4],
+                  [2],
+                  [3],
+                  [4]], 
+                 [ [0,1,1, 1, "quantity"], 
+                  [1,2,2, 1, "quantity"],
+                  [1,3,3, 1, "quantity"],
+                  [1,4,4, 1, "quantity"],
+                              ]),
+        'fwd4_KC_L'   :([ [1,2,3,4],
+                  [2],
+                  [3],
+                  [4]], 
+                 [ [0,3,3, 1, "quantity"], 
+                  [1,2,2, 0.33, "quantity"],
+                  [1,3,3, 0.33, "quantity"],
+                  [1,4,4, 0.33, "quantity"],
+                              ]),
+        'fwd4_AC'   :([ [1,2,3,4],
+                  [2],
+                  [3],
+                  [4]], 
+                 [ [0,1,1, 1, "quantity"], 
+                  [1,2,2, 1, "quantity"],
+                  [1,3,3, 1, "quantity"],
+                  [1,4,4, 1, "quantity"],
+                              ]),
+        
+
+        'fwd4_C'   :([ [1,2,3,4],
+                        [2],
+                        [3],
+                        [4]], 
+                        [[0,1,1, 1, "quantity"], 
+                        [1,4,4, 1, "quantity"],
+                                    ]),
+
         'fwd4_ABC'   :([[1,2,3,4],
                         [2],
                         [3],
@@ -2721,7 +2761,37 @@ def parser_compute_graph(compute_graph_set):
                         [1,3,3, 1, "quantity"],
                         [1,4,4, 1, "quantity"],
                                     ]),
+        'fwd4_ABC_H'   :([[1,2,3,4],
+                        [2],
+                        [3],
+                        [4]], 
+                       [[0,1,1, 1, "quantity"], 
+                        [0,1,2, 1, "quantity"],
+                        [0,1,3, 1, "quantity"],
+                        [1,2,2, 2, "quantity"],
+                        [1,3,3, 2, "quantity"],
+                        [1,4,4, 2, "quantity"],
+                                    ]),
+        'fwd4_ABC_L'   :([[1,2,3,4],
+                        [2],
+                        [3],
+                        [4]], 
+                       [[0,1,1, 0.5, "quantity"], 
+                        [0,1,2, 0.5, "quantity"],
+                        [0,1,3, 0.5, "quantity"],
+                        [1,2,2, 1, "quantity"],
+                        [1,3,3, 1, "quantity"],
+                        [1,4,4, 1, "quantity"],
+                                    ]),
 
+        'fwd3_ABC'   :([[1,2,3],
+                  [2],
+                  [3]], 
+                 [ [0,1,1, 1, "quantity"], 
+                  [0,1,2, 1, "quantity"],
+                  [1,2,2, 1, "quantity"],
+                  [1,3,3, 1, "quantity"]
+                              ]),
         'fwd2_PA'  :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "alpha"]
@@ -3097,8 +3167,9 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                         save_model(model, path=f'{latest_ckpt_p}-epoch{epoch}', only_model=True)
                         #os.system(f'cp {latest_ckpt_p} {latest_ckpt_p}-epoch{epoch}')
             
-
+        
         if os.path.exists(now_best_path) and args.do_final_fourcast:# and not args.distributed:
+            now_best_path = SAVE_PATH / args.do_final_fourcast ##<--this is not safe, but fine.
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
             start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=now_best_path, only_model=True,loc = 'cuda:{}'.format(args.gpu))
             run_fourcast(args, model,logsys)
