@@ -2680,8 +2680,8 @@ def parser_compute_graph(compute_graph_set):
     if compute_graph_set is None:return None,None
     compute_graph_set_pool={
         'fwd3_D'   :([[1],[2],[3]], [[0,1,1,0.33, "quantity"], 
-                                     [0,2,2,0.33, "quantity"], 
-                                     [0,3,3,0.33, "quantity"]]),
+                         [0,2,2,0.33, "quantity"], 
+                         [0,3,3,0.33, "quantity"]]),
         'fwd2_TA'  :([[1,2,3],[2],[3]], [[0,1,1, 0.25, "quantity"], 
                                          [0,2,2, 0.25, "quantity"],
                                          [1,2,2, 0.25, "alpha"],
@@ -2701,6 +2701,7 @@ def parser_compute_graph(compute_graph_set):
         'fwd1_D'   :([[1]],   [[0,1,1,1.0, "quantity"]]),
         'fwd1_TA'  :([[1,2],[2]],   [[0,1,1,1.0, "quantity"], [1,2,2,1.0, "alpha"]]),
         'fwd2_D'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"]]),
+        'fwd2_D_Log'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_log"], [0,2,2,1.0, "quantity_log"]]),
         'fwd2_P'   :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "quantity"]
@@ -2739,9 +2740,7 @@ def parser_compute_graph(compute_graph_set):
                   [1,2,2, 1, "quantity"],
                   [1,3,3, 1, "quantity"],
                   [1,4,4, 1, "quantity"],
-                              ]),
-        
-
+                              ]),        
         'fwd4_C'   :([ [1,2,3,4],
                         [2],
                         [3],
@@ -2749,7 +2748,6 @@ def parser_compute_graph(compute_graph_set):
                         [[0,1,1, 1, "quantity"], 
                         [1,4,4, 1, "quantity"],
                                     ]),
-
         'fwd4_ABC'   :([[1,2,3,4],
                         [2],
                         [3],
@@ -2783,7 +2781,6 @@ def parser_compute_graph(compute_graph_set):
                         [1,3,3, 1, "quantity"],
                         [1,4,4, 1, "quantity"],
                                     ]),
-
         'fwd3_ABC'   :([[1,2,3],
                   [2],
                   [3]], 
@@ -2792,16 +2789,30 @@ def parser_compute_graph(compute_graph_set):
                   [1,2,2, 1, "quantity"],
                   [1,3,3, 1, "quantity"]
                               ]),
+        'fwd3_ABC_Log'   :([[1,2,3],
+                   [2],
+                   [3]], 
+                 [  [0,1,1, 1, "quantity_log"], 
+                    [0,1,2, 1, "quantity_log"],
+                   [1,2,2, 1, "quantity_log"],
+                  [1,3,3, 1, "quantity_log"]
+                              ]),
+        'fwd3_DC_Log'   :([[1,3],
+                   [2],
+                   [3]], 
+                 [  [0,1,1, 1, "quantity_log"], 
+                   [0,2,2, 1, "quantity_log"],
+                   [1,3,3, 1, "quantity_log"]
+                              ]),
+        'fwd3_D_Log'   :(  [[1],[2],[3]],   [[0,1,1,1.0, "quantity_log"], [0,2,2,1.0, "quantity_log"], [0,3,3,1.0, "quantity_log"]]),
         'fwd2_PA'  :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "alpha"]
-                                  ]),
-        
+                                  ]),        
         'fwd2_PAL' :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "alpha_log"]
-                                   ])
-        
+                                   ])        
         }
 
     return compute_graph_set_pool[compute_graph_set]
