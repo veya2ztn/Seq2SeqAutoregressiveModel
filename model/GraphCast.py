@@ -1273,8 +1273,8 @@ try:
             for i in range(depth):self.mesh2mesh.append(LoRANode2Edge2NodeBlockDGLSymmetry('mesh','M2M','mesh',embed_dim=embed_dim))        
             self.mesh2grid = LoRANode2Edge2NodeBlockDGL('mesh','M2G','grid',embed_dim=embed_dim)
             
-            self.grid_rect_embedding_layer = nn.Linear(in_chans,embed_dim)
-            self.projection         = nn.Linear(embed_dim,out_chans)
+            self.grid_rect_embedding_layer = LoRALinear(in_chans,embed_dim)
+            self.projection         = LoRALinear(embed_dim,out_chans)
             self.northsouthembbed      = nn.Parameter(torch.randn(2,embed_dim))
             self.mesh_node_embedding    = nn.Parameter(torch.randn(g.num_nodes('mesh'),1, embed_dim))
             self.grid_mesh_bond_embedding  = nn.Parameter(torch.randn(g.num_edges('G2M'),1, embed_dim))

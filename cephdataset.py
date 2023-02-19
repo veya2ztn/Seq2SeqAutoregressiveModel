@@ -722,11 +722,8 @@ class WeathBench(BaseDataset):
         
         return config_pool
 
-
-
     def __len__(self):
         return len(self.single_data_path_list) - self.time_step*self.time_intervel + 1
-
 
     def get_item(self,idx,reversed_part=False):
         year, hour = self.single_data_path_list[idx]
@@ -868,7 +865,37 @@ class WeathBench71(WeathBench):
 
 class WeathBench32x64(WeathBench71):
     default_root = 'datasets/weatherbench32x64'
+
+class WeathBench32x64CK(WeathBench):
+    default_root = 'datasets/weatherbench32x64'
     
+    def config_pool_initial(self):
+        CK_order = [1, 2, 0, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 
+               29, 30, 31, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 
+               68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83]
+        config_pool={
+            'SWINRNN69' : (CK_order    ,'gauss_norm'   , self.mean_std[:,CK_order].reshape(2,69,1,1)      , identity, identity ),
+        }
+        self.constant_index = [0,2]
+        return config_pool
+        
+    def load_numpy_from_url(self,url):#the saved numpy is not buffer, so use normal reading
+        if "s3://" in url:
+            if self.client is None:self.client=Client(conf_path="~/petreloss.conf")
+            with io.BytesIO(self.client.get(url)) as f:
+                array = np.load(f)
+        else:
+            array = np.load(url)
+        return array
+    def get_item(self,idx,reversed_part=False):
+        year, hour = self.single_data_path_list[idx]
+        url  = f"{self.root}/{year}/{year}-{hour:04d}.npy"
+        odata = np.load(url)
+        data = odata[self.channel_choice]
+        data = (data - self.mean)/self.std
+        cons = self.constants[self.constant_index]
+        return np.concatenate([cons,data])
+        
 class WeathBench32x64d6(WeathBench71):
     def __len__(self):
         aaa =  len(self.single_data_path_list) - self.time_step*self.time_intervel + 1
