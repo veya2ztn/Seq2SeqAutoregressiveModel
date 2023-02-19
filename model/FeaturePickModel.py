@@ -385,3 +385,8 @@ class CombM_UVTPH2p2uvth2p_shift(CombM_UVTPH2p2uvth):
         p     = self.UVTPH2p(uvtph)
         uvtph = torch.cat([uvtph,p], 1) 
         return uvtph
+    
+class SWIN_Feature(FeaturePickModel):
+    default_input_channel  = 71
+    default_output_channel = 69 
+    pred_channel_for_next_stamp = list(range(2,71))

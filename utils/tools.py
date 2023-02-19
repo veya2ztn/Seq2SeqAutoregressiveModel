@@ -30,6 +30,8 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
 
         if only_model:
             model_state_dict = ckpt['model']
+            if "loragrashcastdglsym" in model_state_dict:
+                model_state_dict = model_state_dict["loragrashcastdglsym"]
             first_key  = list(model_state_dict.keys())[0]
             if "_orig_mod." in first_key:
                 model_state_dict = dict([(key.replace("_orig_mod.",""),val) for key,val in model_state_dict.items()])

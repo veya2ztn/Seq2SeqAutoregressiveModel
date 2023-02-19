@@ -1969,9 +1969,9 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
         
 
     property_names = test_dataset.vnames
-    if hasattr(test_dataset,"pred_channel_for_next_stamp"):
-        property_names = [property_names[t] for t in test_dataset.pred_channel_for_next_stamp]
-        test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp]
+    # if hasattr(test_dataset,"pred_channel_for_next_stamp"):
+    #     property_names = [property_names[t] for t in test_dataset.pred_channel_for_next_stamp]
+    #     test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp]
     # if 'UVTP' in args.wrapper_model:
     #     property_names = [property_names[t] for t in eval(args.wrapper_model).pred_channel_for_next_stamp]
     ## <============= ACCU ===============>
