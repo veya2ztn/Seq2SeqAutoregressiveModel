@@ -1735,7 +1735,7 @@ def get_error_propagation(last_pred, last_target, now_target, now_pred, virtual_
 
 
 
-def recovery_tensor(dataset,start,end,ltmv_pred,target):
+def recovery_tensor(dataset,start,end,ltmv_pred,target,index=None):
         if 'Delta' in dataset.__class__.__name__:
             with torch.no_grad():
                 ltmv_pred = dataset.combine_base_delta(start[-1][1], start[-1][0]) 
@@ -1748,6 +1748,10 @@ def recovery_tensor(dataset,start,end,ltmv_pred,target):
             with torch.no_grad():
                 ltmv_pred = dataset.recovery(start[-1])
                 target    = dataset.recovery(end)    
+        elif 'SPnorm' in dataset.__class__.__name__:
+            with torch.no_grad():
+                ltmv_pred = dataset.recovery(ltmv_pred,index)
+                target = dataset.recovery(target, index)
         return ltmv_pred,target
 
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
@@ -1795,7 +1799,7 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
             end = batch[i:i+model.pred_len]
             end = end[0] if len(end) == 1 else end
             ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
-            ltmv_pred, target = recovery_tensor(dataset,start,end,ltmv_pred,target)
+            ltmv_pred, target = recovery_tensor(dataset,start,end,ltmv_pred,target,index=idxes+i) # the index is the timestamp position in dataset
             ltmv_trues = dataset.inv_normlize_data([target])[0]#.detach().cpu() ### use CUDA computing
             ltmv_preds = ltmv_pred#.detach().cpu()
             time_list  = range(i,i+model.pred_len)
@@ -1998,9 +2002,9 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
         
 
     property_names = test_dataset.vnames
-    # if hasattr(test_dataset,"pred_channel_for_next_stamp"):
-    #     property_names = [property_names[t] for t in test_dataset.pred_channel_for_next_stamp]
-    #     test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp]
+    if hasattr(test_dataset,"pred_channel_for_next_stamp"):
+        property_names = [property_names[t] for t in test_dataset.pred_channel_for_next_stamp] # do not allow padding constant at begining.
+        test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp]
     # if 'UVTP' in args.wrapper_model:
     #     property_names = [property_names[t] for t in eval(args.wrapper_model).pred_channel_for_next_stamp]
     ## <============= ACCU ===============>
@@ -3194,7 +3198,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             
         
         if os.path.exists(now_best_path) and args.do_final_fourcast:# and not args.distributed:
-            if isinstance(args.do_final_fourcast,'int'):args.do_final_fourcast = 'backbone.best.pt'
+            if not isinstance(args.do_final_fourcast,str):args.do_final_fourcast = 'backbone.best.pt'
             now_best_path = SAVE_PATH / args.do_final_fourcast ##<--this is not safe, but fine.
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
             start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=now_best_path, only_model=True,loc = 'cuda:{}'.format(args.gpu))

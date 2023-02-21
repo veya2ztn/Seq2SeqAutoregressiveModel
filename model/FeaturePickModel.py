@@ -390,3 +390,8 @@ class SWIN_Feature(FeaturePickModel):
     default_input_channel  = 71
     default_output_channel = 69 
     pred_channel_for_next_stamp = list(range(2,71))
+
+class SWINFeatureT(FeaturePickModel):
+    default_input_channel  = 73
+    default_output_channel = 68 
+    pred_channel_for_next_stamp = list(range(68))

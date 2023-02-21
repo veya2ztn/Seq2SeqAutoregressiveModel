@@ -866,6 +866,96 @@ class WeathBench71(WeathBench):
 class WeathBench32x64(WeathBench71):
     default_root = 'datasets/weatherbench32x64'
 
+class WeathBench32x64SPnorm(WeathBench32x64):
+    space_time_mean = None
+    space_time_std  = None
+
+    def __init__(self, **kargs):
+        use_offline_data = kargs.get('use_offline_data', 0)
+        assert use_offline_data == 0
+        super().__init__(**kargs)
+        self.add_LunaSolarDirectly = kargs.get('add_LunaSolarDirectly', False)
+        self.LaLotude, self.LaLotudeVector = self.get_mesh_lon_lat(32, 64)
+        self.add_ConstDirectly = kargs.get('add_ConstDirectly', False)
+        if self.add_ConstDirectly == 2:
+            # we will normlize const, only the last one need
+            mean = self.constants[-1].mean()
+            std = self.constants[-1].std()
+            self.constants[-1] = (self.constants[-1] - mean)/(std+1e-10)
+
+    def config_pool_initial(self):
+        self._component_list69 = self._component_list68 + [4]
+        _list = self._component_list
+        vector_scalar_mean = self.mean_std.copy()
+        vector_scalar_mean[:,self.volicity_idx] = 0
+        _list2 = [_list[iii] for iii in (list(range(0,14*4-1))+list(range(14*4,14*5-1)))]
+        config_pool={
+            '2D68S': (self._component_list68 ,'space_time_norm'  , self.mean_std[:,self._component_list68].reshape(2,68,1,1), identity, identity ),
+            '2D69S': (self._component_list69 ,'space_time_norm'  , self.mean_std[:,self._component_list69].reshape(2,69,1,1), identity, identity ),
+        }
+        return config_pool
+
+    def get_mesh_lon_lat(self, tH=32, tW=64):
+        resolution = tH
+        assert tW == 2*tH
+        theta_offset= (180/resolution/2)
+        latitude   = (np.linspace(0,180,resolution+1) + theta_offset)[:resolution]
+        longitude  = np.linspace(0,360,2*resolution+1)[:(2*resolution)]
+        x, y       = np.meshgrid(latitude, longitude)
+        LaLotude = np.stack([y, x])/180*np.pi
+        LaLotudeVector = np.stack([np.cos(LaLotude[1])*np.cos(LaLotude[0]), np.cos(
+            LaLotude[1])*np.sin(LaLotude[0]), np.sin(LaLotude[1])], 2)
+        return LaLotude, LaLotudeVector
+    def get_space_time_mean_std(self,idx):
+        if self.space_time_mean is None:
+            self.space_time_mean = np.zeros((8784,110,32,64))
+            self.space_time_std  = np.zeros((8784,110,32,64))
+            self.loaded_flag = {}
+        now_time_stamp  = self.datatimelist_pool[self.split][idx]
+        start_time_stamp= np.datetime64("2016-01-01")
+        the_meanstd_index = int((now_time_stamp - start_time_stamp)/ np.timedelta64(1,'h'))
+        the_meanstd_index =the_meanstd_index%8784
+        if the_meanstd_index not in self.loaded_flag:
+            self.loaded_flag[the_meanstd_index]=1
+            self.space_time_mean[the_meanstd_index], self.space_time_std[the_meanstd_index] = np.load(
+                f"datasets/weatherbench32x64/sp_meanstd/{the_meanstd_index:4d}.npy") # this will gradually take 28G memory
+        return self.space_time_mean[the_meanstd_index][self.channel_choice], self.space_time_std[the_meanstd_index][self.channel_choice]
+
+    def generate_runtime_data(self,idx,reversed_part=False):
+        assert not reversed_part
+        assert self.normalize_type == 'space_time_norm'
+        odata = self.load_otensor(idx)[self.channel_choice]
+        mean,std = self.get_space_time_mean_std(idx)
+        data    = (odata - mean)/(std+1e-10)
+        if self.add_LunaSolarDirectly:
+            timenow = self.datatimelist_pool[self.split][idx]
+            moon_lon, moon_lat = get_sub_luna_point(timenow.item())
+            sun_lon, sun_lat = get_sub_sun_point(timenow.item())
+            sun_vector = np.stack([np.cos(sun_lat/180*np.pi)*np.cos(sun_lon/180*np.pi),
+                                   np.cos(sun_lat/180*np.pi) *
+                                   np.sin(sun_lon/180*np.pi),
+                                   np.sin(sun_lat/180*np.pi)])
+            moon_vector = np.stack([np.cos(moon_lat/180*np.pi)*np.cos(moon_lon/180*np.pi),
+                                    np.cos(moon_lat/180*np.pi) *
+                                    np.sin(moon_lon/180*np.pi),
+                                    np.sin(moon_lat/180*np.pi)])
+            sun_mask = (self.LaLotudeVector@sun_vector).reshape(1, 32, 64)
+            moon_mask = (self.LaLotudeVector@moon_vector).reshape(1, 32, 64)
+            data = np.concatenate([data, sun_mask, moon_mask])
+        if self.add_ConstDirectly:
+            data = np.concatenate([data, self.constants])
+        return data
+    
+    def recovery(self,x,indexes):
+        fake_mean, fake_std = self.mean_std
+        
+        real_mean = torch.from_numpy(np.stack(self.get_space_time_mean_std(idx)[0] for idx in indexes))  # (B, 68, 32, 64)
+        real_std  = torch.from_numpy(np.stack(self.get_space_time_mean_std(idx)[1] for idx in indexes))  # (B, 68, 32, 64)
+
+        x = x * real_std.to(x.device) + real_mean.to(x.device) # (B,68,32,64) * (B,68,32,64) + (B,68,32,64)
+        x = x/torch.from_numpy(self.std[None]).to(x.device)
+        return x
+
 class WeathBench32x64CK(WeathBench):
     default_root = 'datasets/weatherbench32x64'
     
@@ -906,8 +996,7 @@ class WeathBench32x64d6(WeathBench71):
         batch = [self.get_item(i,False) for i in time_step_list]
         self.error_path = []
         return batch if not self.with_idx else (idx,batch)
-
-        
+      
 class WeathBench71_H5(WeathBench71):
 
     def load_otensor(self,idx):
