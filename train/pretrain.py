@@ -40,6 +40,8 @@ from model.FeaturePickModel import *
 from model.GraphCast import * 
 from model.TimesNet import TimesNet4D
 
+from criterions.criterions import *
+
 from utils.params import get_args
 from utils.tools import getModelSize, load_model, save_model
 from utils.eval import single_step_evaluate
@@ -535,11 +537,11 @@ def once_forward(model,i,start,end,dataset,time_step_1_mode):
         return once_forward_deltaMode(model,i,start,end,dataset,time_step_1_mode)
     elif dataset.__class__.__name__ == "WeathBench7066Self":
         return once_forward_self_relation(model,i,start,end,dataset,time_step_1_mode)
-    elif hasattr(model,'flag_this_is_shift_model') or (hasattr(model,'module') and hasattr(model,'flag_this_is_shift_model')):
+    elif hasattr(model,'flag_this_is_shift_model') or (hasattr(model,'module') and hasattr(model.module,'flag_this_is_shift_model')):
         return  once_forward_shift(model,i,start,end,dataset,time_step_1_mode)
     else:   
        return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
-
+ 
 
 
 
@@ -669,7 +671,34 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
         loss   += coef*error
         if level_1 ==0 and level_2 == stamp:# to be same as normal train 
             diff += coef*error
+    if model.directly_esitimate_longterm_error:
+        level_1, level_2, stamp, coef, _type
+        a1 = torch.nn.MSELoss()(all_level_batch[3][:,all_level_record[3].index(3)] , all_level_batch[1][:,all_level_record[1].index(3)])\
+           /torch.nn.MSELoss()(all_level_batch[2][:,all_level_record[2].index(2)] , all_level_batch[0][:,all_level_record[0].index(2)])
+        a0 = torch.nn.MSELoss()(all_level_batch[2][:,all_level_record[2].index(2)] , all_level_batch[1][:,all_level_record[1].index(2)])\
+           /torch.nn.MSELoss()(all_level_batch[1][:,all_level_record[1].index(1)] , all_level_batch[0][:,all_level_record[0].index(1)])
+        error = esitimate_longterm_error(a0, a1, model.directly_esitimate_longterm_error)
+        iter_info_pool[f"{status}_error_longterm_error_{model.directly_esitimate_longterm_error}"] = error.item()
+        loss += error
     return loss, diff, iter_info_pool, None, None
+
+def esitimate_longterm_error(a0,a1, n =10):
+    """
+        # X0 X1 X2
+        # |  |  |  
+        # x1 x2 x3 
+        # |   
+        # y2 
+        # |  
+        # z3 
+        a1 = (z3 - x3)/(y2-X2)
+        a0 = (y2 - x2)/(x1-X1)
+    """
+    Bn=1
+    for i in range(n):
+        Bn = 1 + torch.pow(1-a1,i)*torch.pow(1-a0,1-i)*Bn
+    return Bn
+
 
 def once_forward_error_evaluation(model,now_level_batch):
     target_level_batch = now_level_batch[:,1:]
@@ -2724,14 +2753,14 @@ def parser_compute_graph(compute_graph_set):
                   [1,4,4, 1, "quantity"],
                               ]),
         'fwd4_KC_L'   :([ [1,2,3,4],
-                  [2],
-                  [3],
-                  [4]], 
-                 [ [0,3,3, 1, "quantity"], 
-                  [1,2,2, 0.33, "quantity"],
-                  [1,3,3, 0.33, "quantity"],
-                  [1,4,4, 0.33, "quantity"],
-                              ]),
+                          [2],
+                          [3],
+                          [4]], 
+                        [ [0,3,3, 1, "quantity"], 
+                          [1,2,2, 0.33, "quantity"],
+                          [1,3,3, 0.33, "quantity"],
+                          [1,4,4, 0.33, "quantity"],
+                        ]),
         'fwd4_AC'   :([ [1,2,3,4],
                   [2],
                   [3],
@@ -2812,7 +2841,14 @@ def parser_compute_graph(compute_graph_set):
         'fwd2_PAL' :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "alpha_log"]
-                                   ])        
+                                   ])  ,
+        'fwd3_DlongT5' :([ [1,2,3],
+                          [2],
+                          [3]], 
+                        [[0,1,1, 1, "quantity"], 
+                         [0,1,2, 1, "quantity"],
+                         [0,1,3, 1, "quantity"],
+                        ], 5)
         }
 
     return compute_graph_set_pool[compute_graph_set]
@@ -2911,7 +2947,12 @@ def build_model(args):
     model.vertical_constrain= args.vertical_constrain
     model.consistancy_activate_wall = args.consistancy_activate_wall
     model.mean_path_length = torch.zeros(1)
-    model.activate_stamps,model.activate_error_coef = parser_compute_graph(args.compute_graph_set)
+    compute_graph  = parser_compute_graph(args.compute_graph_set)
+    if len(compute_graph)==2:
+        model.activate_stamps,model.activate_error_coef = compute_graph
+        model.directly_esitimate_longterm_error=0
+    else:
+        model.activate_stamps,model.activate_error_coef,model.directly_esitimate_longterm_error = compute_graph
     model.skip_constant_2D70N = args.skip_constant_2D70N
     if 'UVT' in args.wrapper_model:
         print(f"notice we are in property_pick mode, be careful. Current dataset is {args.dataset_type}")
@@ -2936,39 +2977,6 @@ def update_experiment_info(experiment_hub_path,epoch,args):
     except:
         pass
 
-class CenterWeightMSE(nn.Module):
-    def __init__(self, center_range, boundary):
-        super().__init__()
-        self.boundary = boundary
-        self.center_range = center_range
-        center_x = (boundary-1)//2
-        center_y = (boundary-1)//2
-        weight   = torch.zeros(boundary,boundary)
-        for i in range(boundary):
-            for j in range(boundary):
-                weight[i,j] =  np.sqrt((i - center_x)**2 + (j - center_y)**2)/(10.0*center_range/boundary)
-        self.weight = weight.reshape(1,1,boundary,boundary)
-    def forward(self, pred, real):
-        if real.shape[-2:] != (self.boundary,self.boundary):
-            return torch.mean((pred - real)**2)
-        else:
-            return torch.mean(((pred-real)*self.weight.to(pred.device))**2)
-
-class PressureWeightMSE(nn.Module):
-    def __init__(self, alpha=0.5,min_weight=0.1,level=14):
-        super().__init__()
-        self.alpha    = alpha
-        self.min_weight = min_weight
-        self.level = level
-        self.weight = 1-torch.exp(-alpha*torch.arange(level))+min_weight
-        self.weight = self.weight/self.weight.sum()*level
-        self.weight = self.weight.reshape(1,1,level,1,1)
-    def forward(self, pred, real):
-
-        delta = (pred - real)**2
-        B,P,W,H=delta.shape
-        delta = delta.reshape(B,-1,self.level,W,H)*self.weight.to(pred.device)
-        return delta.mean()
 
 def build_optimizer(args,model):
     if args.opt == 'adamw':
@@ -2978,6 +2986,9 @@ def build_optimizer(args,model):
         optimizer       = torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.95))
     elif args.opt == 'sgd':
         optimizer       = torch.optim.SGD(model.parameters(), lr=args.lr)
+    elif args.opt == 'lion':
+        from lion_pytorch import Lion
+        optimizer       = Lion(model.parameters(), lr=args.lr,use_triton = True)
     else:
         raise NotImplementedError
     GDMod_type  = args.GDMod_type
