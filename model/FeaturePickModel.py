@@ -377,6 +377,7 @@ class CombM_UVTPH2p2uvth_ForP(CombM_UVTPH2p2uvth):
 
 class CombM_UVTPH2p2uvth2p_shift(CombM_UVTPH2p2uvth):
     flag_this_is_shift_model = 1
+    pred_channel_for_next_stamp = list(range(70))  # care, here we assign feature in once_forward, so use 70
     def forward(self, UVTPH):
         # assert not next(self.UVTP2p.parameters()).requires_grad ## use torch.no_grad is same
         p     = self.UVTPH2p(UVTPH)

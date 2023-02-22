@@ -906,6 +906,7 @@ class WeathBench32x64SPnorm(WeathBench32x64):
         LaLotudeVector = np.stack([np.cos(LaLotude[1])*np.cos(LaLotude[0]), np.cos(
             LaLotude[1])*np.sin(LaLotude[0]), np.sin(LaLotude[1])], 2)
         return LaLotude, LaLotudeVector
+    
     def get_space_time_mean_std(self,idx):
         if self.space_time_mean is None:
             self.space_time_mean = np.zeros((8784,110,32,64))
@@ -956,6 +957,36 @@ class WeathBench32x64SPnorm(WeathBench32x64):
         x = x/torch.from_numpy(self.std[None]).to(x.device)
         return x
 
+class WeathBench32x64Dailynorm(WeathBench32x64SPnorm):
+    '''
+    notice when generate daily norm, we firstly divide a unit to avoid overflow.
+    '''
+    def get_space_time_mean_std(self,idx):
+        if self.space_time_mean is None:
+            self.space_time_mean = np.zeros((8784,110,32,64))
+            self.space_time_std  = np.zeros((8784,110,32,64))
+            self.loaded_flag = {}
+        now_time_stamp  = self.datatimelist_pool[self.split][idx]
+        start_time_stamp= np.datetime64("2016-01-01")
+        the_meanstd_index = int((now_time_stamp - start_time_stamp)/ np.timedelta64(1,'h'))
+        the_meanstd_index = the_meanstd_index%8784
+        if the_meanstd_index not in self.loaded_flag:
+            self.loaded_flag[the_meanstd_index]=1
+            self.space_time_mean[the_meanstd_index], self.space_time_std[the_meanstd_index] = np.load(
+                f"datasets/weatherbench32x64/daily_meanstd/{the_meanstd_index:4d}.npy") # this will gradually take 28G memory
+        return self.space_time_mean[the_meanstd_index][self.channel_choice], self.space_time_std[the_meanstd_index][self.channel_choice]
+    
+    def recovery(self,x,indexes):
+        fake_mean, fake_std = self.mean_std
+        
+        real_mean = torch.from_numpy(np.stack(self.get_space_time_mean_std(idx)[0] for idx in indexes))  # (B, 68, 32, 64)
+        real_std  = torch.from_numpy(np.stack(self.get_space_time_mean_std(idx)[1] for idx in indexes))  # (B, 68, 32, 64)
+
+        x = x * real_std.to(x.device) + real_mean.to(x.device) # (B,68,32,64) * (B,68,32,64) + (B,68,32,64)
+        #x = x/torch.from_numpy(self.std[None]).to(x.device)#notice when generate daily norm, then we wont divide this more.
+        return x
+
+    
 class WeathBench32x64CK(WeathBench):
     default_root = 'datasets/weatherbench32x64'
     
