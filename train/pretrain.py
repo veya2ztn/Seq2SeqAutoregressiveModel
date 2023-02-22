@@ -359,12 +359,18 @@ def once_forward_shift(model,i,start,end,dataset,time_step_1_mode):
 
     ltmv_pred = out
 
-    assert ltmv_pred.shape[1] == 70 + 13
+    # notice the target is now be modified as [next_p + now_others]
+    assert ltmv_pred.shape[1] == 70 + 13 
     next_target = start[-1].detach().type(ltmv_pred.dtype)
     next_target[:,range(14*3,14*4-1)] = ltmv_pred[:,-13:]
-    ltmv_pred = ltmv_pred[:,:-13] 
-    start     =  [ltmv_pred, next_target]
-    return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
+    #####################################
+    start     =  [ltmv_pred[:,:-13] , next_target]
+    #<--- this implement is needed, the ltmv_pred used to measure with target should be also the next_p
+    new_picked= list(range(14*3)) + list(range(70,83)) + [14*4-1] + list(range(14*4,70))
+    assert len(new_picked)==70
+    #####################################
+    return ltmv_pred[:,new_picked], target, extra_loss, extra_info_from_model_list, start 
+
 
 
 def once_forward_patch(model,i,start,end,dataset,time_step_1_mode):
@@ -1735,7 +1741,7 @@ def get_error_propagation(last_pred, last_target, now_target, now_pred, virtual_
 
 
 
-def recovery_tensor(dataset,start,end,ltmv_pred,target,index=None):
+def recovery_tensor(dataset,start,end,ltmv_pred,target,index=None,model=None):
         if 'Delta' in dataset.__class__.__name__:
             with torch.no_grad():
                 ltmv_pred = dataset.combine_base_delta(start[-1][1], start[-1][0]) 
@@ -1748,10 +1754,14 @@ def recovery_tensor(dataset,start,end,ltmv_pred,target,index=None):
             with torch.no_grad():
                 ltmv_pred = dataset.recovery(start[-1])
                 target    = dataset.recovery(end)    
-        elif 'SPnorm' in dataset.__class__.__name__:
+        elif ('SPnorm' in dataset.__class__.__name__) or ('Dailynorm' in dataset.__class__.__name__):
             with torch.no_grad():
                 ltmv_pred = dataset.recovery(ltmv_pred,index)
                 target = dataset.recovery(target, index)
+        elif hasattr(model,'flag_this_is_shift_model'):
+            assert len(start)==2
+            ltmv_pred = start[-2]
+            target    = end
         return ltmv_pred,target
 
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
@@ -1799,7 +1809,9 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
             end = batch[i:i+model.pred_len]
             end = end[0] if len(end) == 1 else end
             ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
-            ltmv_pred, target = recovery_tensor(dataset,start,end,ltmv_pred,target,index=idxes+i) # the index is the timestamp position in dataset
+            # the index is the timestamp position in dataset
+            ltmv_pred, target = recovery_tensor(
+                dataset, start, end, ltmv_pred, target, index=idxes+i*dataset.time_intervel,model=model)
             ltmv_trues = dataset.inv_normlize_data([target])[0]#.detach().cpu() ### use CUDA computing
             ltmv_preds = ltmv_pred#.detach().cpu()
             time_list  = range(i,i+model.pred_len)
@@ -2013,6 +2025,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
     total_num = len(accu_list)
     accu_list = accu_list.mean(0)# (fourcast_num,property_num)
     real_times = [(predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit for predict_time in range(len(accu_list))]
+
     save_and_log_table(accu_list,logsys, prefix+'accu_table', property_names, real_times)    
 
     ## <============= RMSE ===============>
