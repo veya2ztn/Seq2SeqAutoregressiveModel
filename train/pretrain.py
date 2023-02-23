@@ -329,7 +329,7 @@ def once_forward_shift(model,i,start,end,dataset,time_step_1_mode):
     
     model.shift_feature_index = list(range(14*3, 14*4-1))
     normlized_Field = start[0]
-    target = start[1]
+    target = start[1].clone()
     target[:,model.shift_feature_index ] = end[:,model.shift_feature_index]
 
     
@@ -361,10 +361,9 @@ def once_forward_shift(model,i,start,end,dataset,time_step_1_mode):
 
     # notice the target is now be modified as [next_p + now_others]
     assert ltmv_pred.shape[1] == 70 + 13 
-    next_target = start[-1].detach().type(ltmv_pred.dtype)
-    next_target[:,range(14*3,14*4-1)] = ltmv_pred[:,-13:]
+    end[:,range(14*3,14*4-1)] = ltmv_pred[:,-13:]
     #####################################
-    start     =  [ltmv_pred[:,:-13] , next_target]
+    start     =  [ltmv_pred[:,:-13] , end]
     #<--- this implement is needed, the ltmv_pred used to measure with target should be also the next_p
     new_picked= list(range(14*3)) + list(range(70,83)) + [14*4-1] + list(range(14*4,70))
     assert len(new_picked)==70
@@ -1610,6 +1609,7 @@ def get_tensor_norm(tensor,dim):#<--use mse way
     return (torch.mean(tensor**2,dim=dim))#(N,B)
 
 def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature']):
+    
     origin_ckpt_path = logsys.ckpt_root
     row=[]
     for epoch, fourcastresult in enumerate(fourcastresult_path_list):
@@ -1627,7 +1627,6 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
                     fourcastresult[key] = val
                 else:
                     if key == 'global_rmse_map':
-
                         fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],tmp['global_rmse_map'])]
                     else:
                         fourcastresult[key] = val # overwrite
@@ -1758,10 +1757,7 @@ def recovery_tensor(dataset,start,end,ltmv_pred,target,index=None,model=None):
             with torch.no_grad():
                 ltmv_pred = dataset.recovery(ltmv_pred,index)
                 target = dataset.recovery(target, index)
-        elif hasattr(model,'flag_this_is_shift_model'):
-            assert len(start)==2
-            ltmv_pred = start[-2]
-            target    = end
+        
         return ltmv_pred,target
 
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
@@ -1810,8 +1806,13 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
             end = end[0] if len(end) == 1 else end
             ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
             # the index is the timestamp position in dataset
+            #print(ltmv_pred.shape)
             ltmv_pred, target = recovery_tensor(
                 dataset, start, end, ltmv_pred, target, index=idxes+i*dataset.time_intervel,model=model)
+            if hasattr(model,'flag_this_is_shift_model'):
+                assert len(start)==2
+                ltmv_pred = start[0]
+                target    = batch[i-1]
             ltmv_trues = dataset.inv_normlize_data([target])[0]#.detach().cpu() ### use CUDA computing
             ltmv_preds = ltmv_pred#.detach().cpu()
             time_list  = range(i,i+model.pred_len)
@@ -3119,7 +3120,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
                         only_model= ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu),strict=bool(args.load_model_strict))
     start_epoch = start_epoch if args.continue_train else 0
-
+    logsys.info(f"======> start from epoch:{start_epoch:3d}/{args.epochs:3d}")
     if args.more_epoch_train:
         assert args.pretrain_weight
         print(f"detect more epoch training, we will do a copy processing for {args.pretrain_weight}")
