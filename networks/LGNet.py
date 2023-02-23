@@ -227,7 +227,33 @@ class LG_net(nn.Module):
         return res
 
 
+class LG_Cross_net(LG_net):
+    def forward(self, x,trend):
+        # x: [B, C, H, W]
+        B = x.shape[0]
+        x, T, H, W  = self.patch_embed(x)  # x:[B, H*W, C]
+        trend,T,H,W = self.patch_embed(trend)  # x:[B, H*W, C]
+        #x = x + self.pos_embed
+        #x = self.pos_drop(x)
+        if len(self.window_size) == 3:
+            x = x.view(B, T, H, W, -1)
+        elif len(self.window_size) == 2:
+            x = x.view(B, H, W, -1)
 
+        for layer in self.layers:
+            x = layer(x, trend)
+
+        x = self.final(x)
+
+        res = rearrange(
+            x,
+            "b h w (p1 p2 c_out) -> b c_out (h p1) (w p2)",
+            p1=self.patch_size[-2],
+            p2=self.patch_size[-1],
+            h=self.img_size[0] // self.patch_size[-2],
+            w=self.img_size[1] // self.patch_size[-1],
+        )
+        return res
 class LGNet(nn.Module):
     def __init__(self, img_size=[32, 64], patch_size=(1,1,1), in_chans=20, out_chans=20, embed_dim=768, window_size=[4,8], depths=[2, 2, 6, 2], \
                 num_heads=[3, 6, 12, 24], Weather_T=16, drop_rate=0., attn_drop_rate=0., drop_path=0., use_checkpoint=False,use_pos_embed=True) -> None:
