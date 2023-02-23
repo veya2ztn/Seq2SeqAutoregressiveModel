@@ -927,7 +927,7 @@ class WeathBench32x64SPnorm(WeathBench32x64):
         assert self.normalize_type == 'space_time_norm'
         odata = self.load_otensor(idx)[self.channel_choice]
         mean,std = self.get_space_time_mean_std(idx)
-        data    = (odata - mean)/(std+1e-10)
+        data    = (odata - mean)/(std)
         if self.add_LunaSolarDirectly:
             timenow = self.datatimelist_pool[self.split][idx]
             moon_lon, moon_lat = get_sub_luna_point(timenow.item())
@@ -945,6 +945,7 @@ class WeathBench32x64SPnorm(WeathBench32x64):
             data = np.concatenate([data, sun_mask, moon_mask])
         if self.add_ConstDirectly:
             data = np.concatenate([data, self.constants])
+        
         return data
     
     def recovery(self,x,indexes):
@@ -972,10 +973,41 @@ class WeathBench32x64Dailynorm(WeathBench32x64SPnorm):
         the_meanstd_index = the_meanstd_index%8784
         if the_meanstd_index not in self.loaded_flag:
             self.loaded_flag[the_meanstd_index]=1
-            self.space_time_mean[the_meanstd_index], self.space_time_std[the_meanstd_index] = np.load(
-                f"datasets/weatherbench32x64/daily_meanstd/{the_meanstd_index:4d}.npy") # this will gradually take 28G memory
+            mean, std = np.load(
+                f"datasets/weatherbench32x64/daily_meanstd/{the_meanstd_index:4d}.npy").reshape(2,110,32,64) # this will gradually take 28G memory
+            self.space_time_mean[the_meanstd_index] = mean
+            std[std<0.01]=1
+            self.space_time_std[the_meanstd_index]=std #we find some variable std is zero, then skip. The larget value in the zero slot is 2.7 safe for using
+        
         return self.space_time_mean[the_meanstd_index][self.channel_choice], self.space_time_std[the_meanstd_index][self.channel_choice]
     
+    def generate_runtime_data(self,idx,reversed_part=False):
+        assert not reversed_part
+        assert self.normalize_type == 'space_time_norm'
+        odata = self.load_otensor(idx)[self.channel_choice]
+        unit = self.std
+        mean,std = self.get_space_time_mean_std(idx)
+        data    = (odata/unit - mean)/(std)
+        if self.add_LunaSolarDirectly:
+            timenow = self.datatimelist_pool[self.split][idx]
+            moon_lon, moon_lat = get_sub_luna_point(timenow.item())
+            sun_lon, sun_lat = get_sub_sun_point(timenow.item())
+            sun_vector = np.stack([np.cos(sun_lat/180*np.pi)*np.cos(sun_lon/180*np.pi),
+                                   np.cos(sun_lat/180*np.pi) *
+                                   np.sin(sun_lon/180*np.pi),
+                                   np.sin(sun_lat/180*np.pi)])
+            moon_vector = np.stack([np.cos(moon_lat/180*np.pi)*np.cos(moon_lon/180*np.pi),
+                                    np.cos(moon_lat/180*np.pi) *
+                                    np.sin(moon_lon/180*np.pi),
+                                    np.sin(moon_lat/180*np.pi)])
+            sun_mask = (self.LaLotudeVector@sun_vector).reshape(1, 32, 64)
+            moon_mask = (self.LaLotudeVector@moon_vector).reshape(1, 32, 64)
+            data = np.concatenate([data, sun_mask, moon_mask])
+        if self.add_ConstDirectly:
+            data = np.concatenate([data, self.constants])
+        
+        return data
+
     def recovery(self,x,indexes):
         fake_mean, fake_std = self.mean_std
         
