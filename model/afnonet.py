@@ -108,7 +108,7 @@ class AdaptiveFourierNeuralOperator(nn.Module):
         x = x.reshape(*x.shape[:-1], self.num_blocks, self.block_size)
         #timer.record('reshape2','filter',2)
         x_real = F.relu(self.multiply(x.real, self.w1[0]) - self.multiply(x.imag, self.w1[1]) + self.b1[0], inplace=True)
-        #timer.record('multiply1','filter',2)
+          
         x_imag = F.relu(self.multiply(x.real, self.w1[1]) + self.multiply(x.imag, self.w1[0]) + self.b1[1], inplace=True)
         #timer.record('multiply2','filter',2)
         x_real = self.multiply(x_real, self.w2[0]) - self.multiply(x_imag, self.w2[1]) + self.b2[0]
