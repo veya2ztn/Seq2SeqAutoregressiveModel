@@ -691,11 +691,21 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
         e1 = (error_record[0,1,1] + error_record[0,1,2] + error_record[0,1,3])/3
         e2 = error_record[0,2,2]
         e3 = error_record[0,3,3]
-        a0 = (error_record[0, 2, 2] - error_record[0,1,2])/error_record[0,1,1]
-        a1 = (error_record[0, 3, 3] - error_record[0,1,3])/error_record[0,2,2]
-        c1,c2,c3 = calculate_coef(e1.item(),a0.item(),a1.item(),rank=model.directly_esitimate_longterm_error)
-        norm = np.sqrt(c1**2+c2**2+c3**2)
-        c1,c2,c3 = c1/norm,c2/norm,c3/norm
+        if status == 'valid':
+            # we would evaluate c1 c2 c3 in valid phase
+            a0 = (error_record[0, 2, 2] - error_record[0,1,2])/error_record[0,1,1]
+            a1 = (error_record[0, 3, 3] - error_record[0,1,3])/error_record[0,2,2]
+            model.e1_record.append(e1)
+            model.a0_record.append(a0)
+            model.a1_record.append(a1)
+
+            # a0 = (error_record[0, 2, 2] - error_record[0,1,2])/error_record[0,1,1]
+            # a1 = (error_record[0, 3, 3] - error_record[0,1,3])/error_record[0,2,2]
+            # c1,c2,c3 = calculate_coef(e1.item(),a0.item(),a1.item(),rank=model.directly_esitimate_longterm_error)
+            # norm = np.sqrt(c1**2+c2**2+c3**2)
+            # c1,c2,c3 = c1/norm,c2/norm,c3/norm
+        
+        c1,  c2,  c3 = model.c1, model.c2, model.c3
         iter_info_pool[f"{status}_rank{model.directly_esitimate_longterm_error}_c1"] = c1
         iter_info_pool[f"{status}_rank{model.directly_esitimate_longterm_error}_c2"] = c2
         iter_info_pool[f"{status}_rank{model.directly_esitimate_longterm_error}_c3"] = c3
@@ -998,6 +1008,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
     skip = False
     count_update = 0
     nan_detect   = NanDetect(logsys,model.use_amp)
+
     while inter_b.update_step():
         #if inter_b.now>10:break
         step = inter_b.now
@@ -1232,6 +1243,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                         if grad_modifier.lambda2!=0:
                             Nodeloss2 = grad_modifier.getL2loss(model, batch[0],coef=grad_modifier.coef)
                             Nodeloss2=Nodeloss2.item()
+
         if logsys.do_iter_log > 0:
             if logsys.do_iter_log ==  1:iter_info_pool={} # disable forward extra information
             iter_info_pool[f'{status}_loss_gpu{gpu}']       =  loss.item()
@@ -1265,6 +1277,21 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
         for x in [total_diff, total_num]:
             dist.barrier()
             dist.reduce(x, 0)
+
+    if model.directly_esitimate_longterm_error and status == 'valid':
+        e1 = torch.stack(model.e1_record).mean()
+        a0 = torch.stack(model.a0_record).mean()
+        a1 = torch.stack(model.a1_record).mean()
+        if hasattr(model, 'module')  :
+            for x in [e1, a0, a1]: # the element in e1.record is loss tensor, so can do reduce
+                dist.barrier()
+                dist.reduce(x, 0)
+        c1,c2,c3 = calculate_coef(e1.item(),a0.item(),a1.item(),rank=model.directly_esitimate_longterm_error)
+        norm   = np.sqrt(c1**2+c2**2+c3**2)
+        c1,c2,c3 = c1/norm,c2/norm,c3/norm
+        model.c1 = c1;model.c2 = c2;model.c3 = c3
+        model.e1_record = [];model.a0_record=[];model.a1_record=[]
+        #print(c1,c2,c3)
 
     loss_val = total_diff/ total_num
     loss_val = loss_val.item()
@@ -3017,6 +3044,8 @@ def build_model(args):
         model.directly_esitimate_longterm_error=0
     else:
         model.activate_stamps,model.activate_error_coef,model.directly_esitimate_longterm_error = compute_graph
+        model.e1_record = [];model.a0_record=[];model.a1_record=[]
+        model.c1 = model.c2 = model.c3 = 1
     model.skip_constant_2D70N = args.skip_constant_2D70N
     if 'UVT' in args.wrapper_model:
         print(f"notice we are in property_pick mode, be careful. Current dataset is {args.dataset_type}")
@@ -3225,6 +3254,9 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if (args.fourcast_during_train) and (epoch==0 and args.pretrain_weight): # do fourcast once at begining
                 Z500_now,test_dataloader = run_fourcast_during_training(args,epoch,logsys,model,test_dataloader) # will 
                 if Z500_now > 0:logsys.record('Z500', Z500_now, epoch-1, epoch_flag='epoch') #<---only rank 0 tensor create Z500
+            if epoch == 0 and not args.skip_first_valid:
+                fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
+                val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=False)
             logsys.record('learning rate',optimizer.param_groups[0]['lr'],epoch, epoch_flag='epoch')
             train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
@@ -3232,8 +3264,9 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if (not args.more_epoch_train) and (lr_scheduler is not None) and not freeze_learning_rate:lr_scheduler.step(epoch)
             #torch.cuda.empty_cache()
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys,status='train') if 'small' in args.train_set else -1
-            fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
+            
             if (epoch%args.valid_every_epoch == 0 and not (epoch==0 and args.skip_first_valid)) or (epoch == args.epochs - 1):
+                fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
                 val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             if (args.fourcast_during_train) and  (epoch%args.fourcast_during_train == 0):
                 Z500_now,test_dataloader = run_fourcast_during_training(args,epoch,logsys,model,test_dataloader)
