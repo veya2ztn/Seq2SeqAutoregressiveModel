@@ -126,7 +126,7 @@ class LG_net(nn.Module):
                  embed_dim=768, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),
                  window_size=(2, 4, 8), mlp_ratio=4., qkv_bias=True,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
-                 norm_layer=partial(nn.LayerNorm, eps=1e-6), patch_norm=False,use_checkpoint=False):
+                 norm_layer=partial(nn.LayerNorm, eps=1e-6), patch_norm=False,use_checkpoint=False,use_pos_embed=True):
         super().__init__()
 
         self.num_layers = len(depths)
@@ -173,8 +173,11 @@ class LG_net(nn.Module):
         # self.avgpool = nn.AdaptiveAvgPool1d(1)
         # self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
 
-        self.pos_embed = nn.Parameter(torch.zeros(1, img_size[0]//patch_size[-2]*img_size[1]//patch_size[-1], embed_dim))
-        nn.init.trunc_normal_(self.pos_embed, std=.02)
+        if use_pos_embed:
+            self.pos_embed = nn.Parameter(torch.zeros(1, img_size[0]//patch_size[-2]*img_size[1]//patch_size[-1], embed_dim)) 
+            nn.init.trunc_normal_(self.pos_embed, std=.02)
+        else:
+            self.pos_embed = 0
 
         self.apply(self._init_weights)
 
@@ -227,12 +230,12 @@ class LG_net(nn.Module):
 
 class LGNet(nn.Module):
     def __init__(self, img_size=[32, 64], patch_size=(1,1,1), in_chans=20, out_chans=20, embed_dim=768, window_size=[4,8], depths=[2, 2, 6, 2], \
-                num_heads=[3, 6, 12, 24], Weather_T=16, drop_rate=0., attn_drop_rate=0., drop_path=0., use_checkpoint=False) -> None:
+                num_heads=[3, 6, 12, 24], Weather_T=16, drop_rate=0., attn_drop_rate=0., drop_path=0., use_checkpoint=False,use_pos_embed=True) -> None:
         super().__init__()
         self.net = LG_net(img_size=img_size, patch_size=patch_size, in_chans=in_chans, out_chans=out_chans, \
                                         embed_dim=embed_dim, depths=depths, num_heads=num_heads, \
                                         window_size=window_size, drop_rate=drop_rate, attn_drop_rate=attn_drop_rate, 
-                                        drop_path_rate=drop_path, use_checkpoint=use_checkpoint)
+                                        drop_path_rate=drop_path, use_checkpoint=use_checkpoint,use_pos_embed=use_pos_embed)
     
 
 
