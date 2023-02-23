@@ -1988,7 +1988,7 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do
     fourcastresult['snap_index'] = snap_index
     return fourcastresult
 
-def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature']):
+def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature'],return_value = None):
     prefix_pool={
         'only_backward':"time_reverse_",
         'only_forward':""
@@ -2020,36 +2020,17 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
     # if 'UVTP' in args.wrapper_model:
     #     property_names = [property_names[t] for t in eval(args.wrapper_model).pred_channel_for_next_stamp]
     ## <============= ACCU ===============>
-    if fourcastresult['snap_index'] is None:del fourcastresult['snap_index']
+    if 'snap_index' in fourcastresult and fourcastresult['snap_index'] is None:del fourcastresult['snap_index']
     accu_list = torch.stack([p['accu'].cpu() for p in fourcastresult.values() if 'accu' in p]).numpy()    
     total_num = len(accu_list)
     accu_list = accu_list.mean(0)# (fourcast_num,property_num)
     real_times = [(predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit for predict_time in range(len(accu_list))]
-
-    save_and_log_table(accu_list,logsys, prefix+'accu_table', property_names, real_times)    
-
     ## <============= RMSE ===============>
     rmse_list = torch.stack([p['rmse'].cpu() for p in fourcastresult.values() if 'rmse' in p]).mean(0)# (fourcast_num,property_num)
-    save_and_log_table(rmse_list,logsys, prefix+'rmse_table', property_names, real_times)       
-    
-    
     ## <============= HMSE ===============>
     hmse_list = torch.stack([p['hmse'].cpu() for p in fourcastresult.values() if 'hmse' in p]).mean(0)# (fourcast_num,property_num)
-    if (hmse_list>0).all():
-        save_and_log_table(rmse_list,logsys, prefix+'hmse_table', property_names, real_times)           
-    
-    ## <============= Error_Norm ===============>
-    #fourcastresult[idx.item()]['abs_error'] = abs_error
-    #fourcastresult[idx.item()]['est_error'] = est_error
-    
-    ## <============= STD_Location ===============>
-    meanofstd = torch.stack([p['std_pred'].cpu() for p in fourcastresult.values() if 'std_pred' in p]).numpy().mean(0)# (B, (fourcast_num,property_num)
-    save_and_log_table(meanofstd,logsys, prefix+'meanofstd_table', property_names, real_times)       
-
-    stdofstd = torch.stack([p['std_pred'].cpu() for p in fourcastresult.values() if 'std_pred' in p]).numpy().std(0)# (B, (fourcast_num,property_num)
-    save_and_log_table(stdofstd,logsys, prefix+'stdofstd_table', property_names, real_times)      
-
-    
+    hmse_unit_list = None
+    rmse_unit_list = None
     try:
         if not isinstance(test_dataset.unit_list,int):
             unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
@@ -2066,13 +2047,37 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
             unit_list= test_dataset.unit_list
         
         rmse_unit_list= (rmse_list*unit_list)
-        save_and_log_table(rmse_unit_list,logsys, prefix+'rmse_unit_list', property_names, real_times)
+        
         hmse_unit_list= (hmse_list*unit_list)
-        if (hmse_list>0).all():
-            save_and_log_table(hmse_unit_list,logsys, prefix+'hmse_unit_list', property_names, real_times)       
+        
     except:
         logsys.info(f"get wrong when use unit list, we will fource let [rmse_unit_list] = [rmse_list]")
         traceback.print_exc()
+
+    if return_value is not None:
+        assert isinstance(return_value,list) 
+        """
+        we only check the Z500 
+        """
+        return rmse_unit_list[real_times.index(120)][property_names.index('500hPa_geopotential')]
+    save_and_log_table(accu_list,logsys, prefix+'accu_table', property_names, real_times)    
+    save_and_log_table(rmse_list,logsys, prefix+'rmse_table', property_names, real_times)  
+    if rmse_unit_list is not None:save_and_log_table(rmse_unit_list,logsys, prefix+'rmse_unit_list', property_names, real_times)     
+    if (hmse_list>0).all():save_and_log_table(hmse_list,logsys, prefix+'hmse_table', property_names, real_times)    
+    if hmse_unit_list is not None and (hmse_list>0).all():save_and_log_table(hmse_unit_list,logsys, prefix+'hmse_unit_list', property_names, real_times)       
+    ## <============= Error_Norm ===============>
+    #fourcastresult[idx.item()]['abs_error'] = abs_error
+    #fourcastresult[idx.item()]['est_error'] = est_error
+    
+    ## <============= STD_Location ===============>
+    meanofstd = torch.stack([p['std_pred'].cpu() for p in fourcastresult.values() if 'std_pred' in p]).numpy().mean(0)# (B, (fourcast_num,property_num)
+    save_and_log_table(meanofstd,logsys, prefix+'meanofstd_table', property_names, real_times)       
+
+    stdofstd = torch.stack([p['std_pred'].cpu() for p in fourcastresult.values() if 'std_pred' in p]).numpy().std(0)# (B, (fourcast_num,property_num)
+    save_and_log_table(stdofstd,logsys, prefix+'stdofstd_table', property_names, real_times)      
+
+    
+    
 
     ## <============= Snap_PLot ==================>
     snap_tables = []
@@ -2158,7 +2163,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
 
     return info_pool_list
 
-def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True):
+def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True,get_value = None):
     import warnings
     warnings.filterwarnings("ignore")
     logsys.info_log_path = os.path.join(logsys.ckpt_root, 'fourcast.info')
@@ -2195,7 +2200,14 @@ def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True):
             dist.barrier()
             if dist.get_rank() == 0:
                 create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
-    return 1
+    if get_value:
+        if not args.distributed:
+            return create_fourcast_metric_table(fourcastresult, logsys,test_dataset,return_value = ['Z500'])
+        else:
+            dist.barrier()
+            if dist.get_rank() == 0:
+                return create_fourcast_metric_table(fourcastresult, logsys,test_dataset,return_value = ['Z500'])
+    return -1
 
 
 #########################################
@@ -3078,8 +3090,22 @@ def fast_set_model_epoch(model,**kargs):
     if hasattr(model,'set_epoch'):model.set_epoch(**kargs)
     if hasattr(model,'module') and hasattr(model.module,'set_epoch'):model.module.set_epoch(**kargs)
             
-
-
+def run_fourcast_during_training(args,epoch,logsys,model,test_dataloader):
+    if test_dataloader is None:
+        test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=None,test_record_load=None)# should disable at 
+    origin_ckpt   =   logsys.ckpt_root
+    new_ckpt      =   os.path.join(logsys.ckpt_root,f'result_of_epoch_{epoch}')
+    try:# in multi process will conflict
+        if new_ckpt and not os.path.exists(new_ckpt):os.makedirs(new_ckpt)
+    except:
+        pass
+    logsys.ckpt_root = new_ckpt
+    use_amp = model.use_amp
+    model.use_amp= True
+    Z500_now = run_fourcast(args, model,logsys,test_dataloader,do_table=False,get_value=1)
+    model.use_amp=use_amp 
+    logsys.ckpt_root = origin_ckpt
+    return Z500_now,test_dataloader
 def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     if local_rank==0:print(f"we are at mode={args.mode}")
@@ -3131,8 +3157,10 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     logsys.info(f"entering {args.mode} training in {next(model.parameters()).device}")
     now_best_path = SAVE_PATH / 'backbone.best.pt'
     latest_ckpt_p = SAVE_PATH / 'pretrain_latest.pt'
+    now_Z500_path = SAVE_PATH / 'fourcast.best.pt'
     test_dataloader = None
     train_loss=-1
+    Z500_now = Z500_best =  -1
     if args.mode=='fourcast':
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
         run_fourcast(args, model,logsys,test_dataloader)
@@ -3159,21 +3187,9 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         if args.tracemodel:logsys.wandb_watch(model,log_freq=100)
         for epoch in master_bar:
             if epoch < start_epoch:continue
-            if (args.fourcast_during_train) and (epoch%args.fourcast_during_train == 0 and (epoch>0 or args.pretrain_weight)):
-                if test_dataloader is None:
-                    test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=None,test_record_load=None)# should disable at 
-                origin_ckpt = logsys.ckpt_root
-                new_ckpt  = os.path.join(logsys.ckpt_root,f'result_of_epoch_{epoch}')
-                try:# in multi process will conflict
-                    if new_ckpt and not os.path.exists(new_ckpt):os.makedirs(new_ckpt)
-                except:
-                    pass
-                logsys.ckpt_root = new_ckpt
-                use_amp = model.use_amp
-                model.use_amp= True
-                run_fourcast(args, model,logsys,test_dataloader,do_table=False)
-                model.use_amp=use_amp 
-                logsys.ckpt_root = origin_ckpt
+            if (args.fourcast_during_train) and (epoch==0 and args.pretrain_weight): # do fourcast once at begining
+                Z500_now,test_dataloader = run_fourcast_during_training(args,epoch,logsys,model,test_dataloader) # will 
+                if Z500_now > 0:logsys.record('Z500', Z500_now, epoch-1, epoch_flag='epoch') #<---only rank 0 tensor create Z500
             fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=False)
             logsys.record('learning rate',optimizer.param_groups[0]['lr'],epoch, epoch_flag='epoch')
             train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
@@ -3184,11 +3200,15 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
             if (epoch%args.valid_every_epoch == 0 and not (epoch==0 and args.skip_first_valid)) or (epoch == args.epochs - 1):
                 val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
+            if (args.fourcast_during_train) and  (epoch%args.fourcast_during_train == 0):
+                Z500_now,test_dataloader = run_fourcast_during_training(args,epoch,logsys,model,test_dataloader)
+            
             logsys.metric_dict.update({'valid_loss':val_loss},epoch)
             logsys.banner_show(epoch,args.SAVE_PATH,train_losses=[train_loss])
             if (not args.distributed) or (args.rank == 0 and local_rank == 0) :
                 logsys.info(f"Epoch {epoch} | Train loss: {train_loss:.6f}, Val loss: {val_loss:.6f}",show=False)
                 logsys.record('train', train_loss, epoch, epoch_flag='epoch')
+                if Z500_now > 0:logsys.record('Z500', Z500_now, epoch, epoch_flag='epoch')
                 logsys.record('valid', val_loss, epoch, epoch_flag='epoch')
                 if val_loss < min_loss:
                     min_loss = val_loss
@@ -3199,6 +3219,16 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                     #if last_best_path is not None:os.system(f"rm {last_best_path}")
                     #last_best_path= now_best_path
                     logsys.info(f"The best accu is {val_loss}", show=False)
+                if Z500_now < Z500_best:
+                    min_Z500 = Z500_now
+                    if epoch > args.epochs//10:
+                        logsys.info(f"saving best Z500 model ....",show=False)
+                        save_model(model, path=now_Z500_path, only_model=True)
+                        logsys.info(f"done;",show=False)
+                    #if last_best_path is not None:os.system(f"rm {last_best_path}")
+                    #last_best_path= now_best_path
+                    logsys.info(f"The best Z500 is {Z500_best}", show=False)
+
                 logsys.record('best_loss', min_loss, epoch, epoch_flag='epoch')
                 update_experiment_info(experiment_hub_path,epoch,args)
                 if ((epoch>args.save_warm_up) and (epoch%args.save_every_epoch==0)) or (epoch==args.epochs-1) or (epoch in args.epoch_save_list):
