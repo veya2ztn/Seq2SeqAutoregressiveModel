@@ -329,7 +329,7 @@ def once_forward_shift(model,i,start,end,dataset,time_step_1_mode):
     
     model.shift_feature_index = list(range(14*3, 14*4-1))
     normlized_Field = start[0]
-    target = start[1]
+    target = start[1].clone()
     target[:,model.shift_feature_index ] = end[:,model.shift_feature_index]
 
     
@@ -361,10 +361,9 @@ def once_forward_shift(model,i,start,end,dataset,time_step_1_mode):
 
     # notice the target is now be modified as [next_p + now_others]
     assert ltmv_pred.shape[1] == 70 + 13 
-    next_target = start[-1].detach().type(ltmv_pred.dtype)
-    next_target[:,range(14*3,14*4-1)] = ltmv_pred[:,-13:]
+    end[:,range(14*3,14*4-1)] = ltmv_pred[:,-13:]
     #####################################
-    start     =  [ltmv_pred[:,:-13] , next_target]
+    start     =  [ltmv_pred[:,:-13] , end]
     #<--- this implement is needed, the ltmv_pred used to measure with target should be also the next_p
     new_picked= list(range(14*3)) + list(range(70,83)) + [14*4-1] + list(range(14*4,70))
     assert len(new_picked)==70
@@ -572,6 +571,8 @@ def full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,tar
     #print(full_fourcast_error_list)
     return hidden_fourcast_list,full_fourcast_error_list,extra_loss
 
+
+from criterions.high_order_loss_coef import calculate_coef
 def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     assert model.history_length == 1
     assert model.pred_len == 1
@@ -654,38 +655,61 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     diff = 0
     loss_count = diff_count = len(model.activate_error_coef)
 
-    for (level_1, level_2, stamp, coef,_type) in model.activate_error_coef:
-        tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
-        tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
-        if 'quantity' in _type:
-            if _type == 'quantity':
-                error   = torch.mean((tensor1-tensor2)**2)
-            elif _type == 'quantity_log':
-                error   = ((tensor1-tensor2)**2+1).log().mean()
-            else:raise NotImplementedError
-        elif 'alpha' in _type:
-            last_tensor1 = all_level_batch[level_1-1][:,all_level_record[level_1-1].index(stamp-1)]
-            last_tensor2 = all_level_batch[level_2-1][:,all_level_record[level_2-1].index(stamp-1)]
-            if _type == 'alpha':
-                error   = torch.mean(  ((tensor1-tensor2)**2) / ((last_tensor1-last_tensor2)**2+1e-4)  )
-            elif _type == 'alpha_log':
-                error   = torch.mean(  ((tensor1-tensor2)**2+1).log() - ((last_tensor1-last_tensor2)**2+1).log() )
-            else:raise NotImplementedError
-        else:
-            raise NotImplementedError
-        iter_info_pool[f"{status}_error_{level_1}_{level_2}_{stamp}"] = error.item()
-        loss   += coef*error
-        if level_1 ==0 and level_2 == stamp:# to be same as normal train 
-            diff += coef*error
-    if model.directly_esitimate_longterm_error:
-        level_1, level_2, stamp, coef, _type
-        a1 = torch.nn.MSELoss()(all_level_batch[3][:,all_level_record[3].index(3)] , all_level_batch[1][:,all_level_record[1].index(3)])\
-           /torch.nn.MSELoss()(all_level_batch[2][:,all_level_record[2].index(2)] , all_level_batch[0][:,all_level_record[0].index(2)])
-        a0 = torch.nn.MSELoss()(all_level_batch[2][:,all_level_record[2].index(2)] , all_level_batch[1][:,all_level_record[1].index(2)])\
-           /torch.nn.MSELoss()(all_level_batch[1][:,all_level_record[1].index(1)] , all_level_batch[0][:,all_level_record[0].index(1)])
-        error = esitimate_longterm_error(a0, a1, model.directly_esitimate_longterm_error)
-        iter_info_pool[f"{status}_error_longterm_error_{model.directly_esitimate_longterm_error}"] = error.item()
-        loss += error
+    if not model.directly_esitimate_longterm_error:
+        for (level_1, level_2, stamp, coef,_type) in model.activate_error_coef:
+            tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
+            tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
+            if 'quantity' in _type:
+                if _type == 'quantity':
+                    error   = torch.mean((tensor1-tensor2)**2)
+                elif _type == 'quantity_log':
+                    error   = ((tensor1-tensor2)**2+1).log().mean()
+                else:raise NotImplementedError
+            elif 'alpha' in _type:
+                last_tensor1 = all_level_batch[level_1-1][:,all_level_record[level_1-1].index(stamp-1)]
+                last_tensor2 = all_level_batch[level_2-1][:,all_level_record[level_2-1].index(stamp-1)]
+                if _type == 'alpha':
+                    error   = torch.mean(  ((tensor1-tensor2)**2) / ((last_tensor1-last_tensor2)**2+1e-4)  )
+                elif _type == 'alpha_log':
+                    error   = torch.mean(  ((tensor1-tensor2)**2+1).log() - ((last_tensor1-last_tensor2)**2+1).log() )
+                else:raise NotImplementedError
+            else:
+                raise NotImplementedError
+            iter_info_pool[f"{status}_error_{level_1}_{level_2}_{stamp}"] = error.item()
+            loss   += coef*error
+            if level_1 ==0 and level_2 == stamp:# to be same as normal train 
+                diff += coef*error
+    else:
+        error_record = {}
+        for (level_1, level_2, stamp, coef,_type) in model.activate_error_coef:
+            tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
+            tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
+            error = torch.mean((tensor1-tensor2)**2)
+            error_record[level_1,level_2,stamp] = error
+            iter_info_pool[f"{status}_error_{level_1}_{level_2}_{stamp}"] = error.item(
+            )
+        e1 = (error_record[0,1,1] + error_record[0,1,2] + error_record[0,1,3])/3
+        e2 = error_record[0,2,2]
+        e3 = error_record[0,3,3]
+        a0 = (error_record[0, 2, 2] - error_record[0,1,2])/error_record[0,1,1]
+        a1 = (error_record[0, 3, 3] - error_record[0,1,3])/error_record[0,2,2]
+        c1,c2,c3 = calculate_coef(e1.item(),a0.item(),a1.item(),rank=model.directly_esitimate_longterm_error)
+        norm = np.sqrt(c1**2+c2**2+c3**2)
+        c1,c2,c3 = c1/norm,c2/norm,c3/norm
+        iter_info_pool[f"{status}_rank{model.directly_esitimate_longterm_error}_c1"] = c1
+        iter_info_pool[f"{status}_rank{model.directly_esitimate_longterm_error}_c2"] = c2
+        iter_info_pool[f"{status}_rank{model.directly_esitimate_longterm_error}_c3"] = c3
+        loss = c1*e1 + c2*e2 + c3*e3
+        diff = (e1 + e2 + e3)/3
+        # level_1, level_2, stamp, coef, _type
+        # a1 = torch.nn.MSELoss()(all_level_batch[3][:,all_level_record[3].index(3)] , all_level_batch[1][:,all_level_record[1].index(3)])\
+        #    /torch.nn.MSELoss()(all_level_batch[2][:,all_level_record[2].index(2)] , all_level_batch[0][:,all_level_record[0].index(2)])
+        # a0 = torch.nn.MSELoss()(all_level_batch[2][:,all_level_record[2].index(2)] , all_level_batch[1][:,all_level_record[1].index(2)])\
+        #    /torch.nn.MSELoss()(all_level_batch[1][:,all_level_record[1].index(1)] , all_level_batch[0][:,all_level_record[0].index(1)])
+        # error = esitimate_longterm_error(a0, a1, model.directly_esitimate_longterm_error)
+        # iter_info_pool[f"{status}_error_longterm_error_{model.directly_esitimate_longterm_error}"] = error.item()
+        # loss += error
+
     return loss, diff, iter_info_pool, None, None
 
 def esitimate_longterm_error(a0,a1, n =10):
@@ -1610,6 +1634,7 @@ def get_tensor_norm(tensor,dim):#<--use mse way
     return (torch.mean(tensor**2,dim=dim))#(N,B)
 
 def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature']):
+    
     origin_ckpt_path = logsys.ckpt_root
     row=[]
     for epoch, fourcastresult in enumerate(fourcastresult_path_list):
@@ -1627,7 +1652,6 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
                     fourcastresult[key] = val
                 else:
                     if key == 'global_rmse_map':
-
                         fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],tmp['global_rmse_map'])]
                     else:
                         fourcastresult[key] = val # overwrite
@@ -1758,10 +1782,7 @@ def recovery_tensor(dataset,start,end,ltmv_pred,target,index=None,model=None):
             with torch.no_grad():
                 ltmv_pred = dataset.recovery(ltmv_pred,index)
                 target = dataset.recovery(target, index)
-        elif hasattr(model,'flag_this_is_shift_model'):
-            assert len(start)==2
-            ltmv_pred = start[-2]
-            target    = end
+        
         return ltmv_pred,target
 
 def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
@@ -1810,8 +1831,13 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
             end = end[0] if len(end) == 1 else end
             ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
             # the index is the timestamp position in dataset
+            #print(ltmv_pred.shape)
             ltmv_pred, target = recovery_tensor(
                 dataset, start, end, ltmv_pred, target, index=idxes+i*dataset.time_intervel,model=model)
+            if hasattr(model,'flag_this_is_shift_model'):
+                assert len(start)==2
+                ltmv_pred = start[0]
+                target    = batch[i-1]
             ltmv_trues = dataset.inv_normlize_data([target])[0]#.detach().cpu() ### use CUDA computing
             ltmv_preds = ltmv_pred#.detach().cpu()
             time_list  = range(i,i+model.pred_len)
@@ -2877,7 +2903,16 @@ def parser_compute_graph(compute_graph_set):
                         [[0,1,1, 1, "quantity"], 
                          [0,1,2, 1, "quantity"],
                          [0,1,3, 1, "quantity"],
-                        ], 5)
+                        ], 5),# <--- in old better version it is another mean
+        'fwd3_longT10' :([ [1,2,3],
+                          [2],
+                          [3]], 
+                        [ [0,1,1, 1, "quantity"], 
+                          [0,1,2, 1, "quantity"],
+                          [0,1,3, 1, "quantity"],
+                          [0,2,2, 1, "quantity"],
+                          [0,3,3, 1, "quantity"],
+                        ], 10)
         }
 
     return compute_graph_set_pool[compute_graph_set]
@@ -3145,7 +3180,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
                         only_model= ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu),strict=bool(args.load_model_strict))
     start_epoch = start_epoch if args.continue_train else 0
-
+    logsys.info(f"======> start from epoch:{start_epoch:3d}/{args.epochs:3d}")
     if args.more_epoch_train:
         assert args.pretrain_weight
         print(f"detect more epoch training, we will do a copy processing for {args.pretrain_weight}")

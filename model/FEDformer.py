@@ -827,7 +827,7 @@ class DecoderLayerN(nn.Module):
                                     #padding_mode='circular', 
                                     bias=False)
         self.activation = F.relu if activation == "relu" else F.gelu
-
+ 
     def forward(self, x, cross, x_mask=None, cross_mask=None):
         # x     [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T1, in_channels]
         # cross [Batch,  *space_dims, in_channels] -> [Batch, z, h ,w, T2, in_channels]

@@ -105,7 +105,6 @@ class Windowattn_block(nn.Module):
 
         return x
 
-
 class Hilo_Block(nn.Module):
     def __init__(self, dim, window_size, num_heads=1, mlp_ratio=4., 
                 qkv_bias=True, drop=0., attn_drop=0., drop_path=0., 
@@ -174,7 +173,6 @@ class ConvFFNBlock(nn.Module):
     def forward(self, x):
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
-
 
 class Windowattn_block_withmoe(nn.Module):
     def __init__(self, dim, attr_len, window_size, attr_hidden_size, num_heads=1, mlp_ratio=4., 
@@ -264,9 +262,6 @@ class Windowattn_block_withmoe(nn.Module):
             x = self.norm2(shortcut + self.drop_path(x))
 
         return x, [z_loss1, z_loss2], [balance_loss1, balance_loss2]
-
-
-
 
 class Windowattn_parallelblock(nn.Module):
     def __init__(self, dim, window_size, num_heads=1, mlp_ratio=4., 
