@@ -2925,7 +2925,7 @@ def build_model(args):
     if local_rank == 0:
         param_sum, buffer_sum, all_size = getModelSize(model)
         logsys.info(f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
-    if args.pretrain_weight and args.torch_compile :
+    if args.pretrain_weight and args.torch_compile and not args.continue_train:
         only_model = ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train)
         assert only_model
         load_model(model,path=args.pretrain_weight,only_model= only_model ,loc = 'cpu',strict=bool(args.load_model_strict))
@@ -3113,7 +3113,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     args.pretrain_weight = args.pretrain_weight.strip()
     logsys.info(f"loading weight from {args.pretrain_weight}")
     # we put pretrain loading here due to we need load optimizer
-    if args.torch_compile and args.pretrain_weight:
+    if args.torch_compile and args.pretrain_weight and not args.continue_train:
         start_epoch, start_step, min_loss = 0, 0, 0
         print(f"remind in torch compile mode, any pretrain model should be load before torch.compile and DistributedDataParallel")
     else:

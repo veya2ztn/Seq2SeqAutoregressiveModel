@@ -784,6 +784,7 @@ class WeathBench71(WeathBench):
         vector_scalar_mean = self.mean_std.copy()
         vector_scalar_mean[:,self.volicity_idx] = 0
         config_pool={
+            '2D68N': (self._component_list68 ,'gauss_norm'  , self.mean_std[:,self._component_list68].reshape(2,68,1,1), identity, identity ),
             '2D70V': (_list ,'gauss_norm'   , vector_scalar_mean[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
             '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
