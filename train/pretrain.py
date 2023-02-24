@@ -693,11 +693,19 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
         e3 = error_record[0,3,3]
         if status == 'valid':
             # we would evaluate c1 c2 c3 in valid phase
-            a0 = (error_record[0, 2, 2] - error_record[0,1,2])/error_record[0,1,1]
-            a1 = (error_record[0, 3, 3] - error_record[0,1,3])/error_record[0,2,2]
+            level_1, level_2, stamp = 1,2,2
+            tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
+            tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
+            e122    = torch.mean((tensor1-tensor2)**2)
+            level_1, level_2, stamp = 1, 3, 3
+            tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
+            tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
+            e133    = torch.mean((tensor1-tensor2)**2)
             model.e1_record.append(e1)
-            model.a0_record.append(a0)
-            model.a1_record.append(a1)
+            model.e012_record.append(error_record[0,1,2])
+            model.e013_record.append(error_record[0,1,3])
+            model.e122_record.append(e122)
+            model.e133_record.append(e133)
 
             # a0 = (error_record[0, 2, 2] - error_record[0,1,2])/error_record[0,1,1]
             # a1 = (error_record[0, 3, 3] - error_record[0,1,3])/error_record[0,2,2]
@@ -765,7 +773,7 @@ def once_forward_error_evaluation(model,now_level_batch):
         else:
             real_res_error_tensor = first_level_batch[:,-(L-1):] - next_level_batch
             real_res_error        = get_tensor_norm(real_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
-            base_error = first_level_error_tensor[:,-(L-1):]
+            base_error            = first_level_error_tensor[:,-(L-1):]
             real_res_angle        = torch.einsum('btpwh,btpwh->bt',real_res_error_tensor, base_error)/(torch.sum(real_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
             #real_res_error_alpha  = real_res_error/error_record[-1][:,-(L-1):] #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
             real_appx_delta       = get_tensor_norm(real_res_error_tensor - appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
@@ -784,12 +792,12 @@ def once_forward_error_evaluation(model,now_level_batch):
             appx_res_angle_record.append(appx_res_angle)
             #appx_res_error_alpha  = appx_res_error/error_record[-1][:,-(L-1):]  #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
         now_level_batch = next_level_batch
-    error_record          = torch.cat(error_record,1).detach().cpu()
-    real_res_error_record = torch.cat(real_res_error_record,1).detach().cpu()
+    error_record          = torch.cat(error_record,          1).detach().cpu()
+    real_res_error_record = torch.cat(real_res_error_record, 1).detach().cpu()
     real_appx_delta_record= torch.cat(real_appx_delta_record,1).detach().cpu()
-    real_res_angle_record = torch.cat(real_res_angle_record,1).detach().cpu()
-    appx_res_error_record = torch.cat(appx_res_error_record,1).detach().cpu()
-    appx_res_angle_record = torch.cat(appx_res_angle_record,1).detach().cpu()
+    real_res_angle_record = torch.cat(real_res_angle_record, 1).detach().cpu()
+    appx_res_error_record = torch.cat(appx_res_error_record, 1).detach().cpu()
+    appx_res_angle_record = torch.cat(appx_res_angle_record, 1).detach().cpu()
 
     ltmv_preds = torch.cat(ltmv_preds,1)
     ltmv_trues = target_level_batch
@@ -1279,18 +1287,25 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             dist.reduce(x, 0)
 
     if model.directly_esitimate_longterm_error and status == 'valid':
-        e1 = torch.stack(model.e1_record).mean()
-        a0 = torch.stack(model.a0_record).mean()
-        a1 = torch.stack(model.a1_record).mean()
+        e1   = torch.stack(model.e1_record ).mean()
+        e012 = torch.stack(model.e012_record ).mean()
+        e013 = torch.stack(model.e013_record ).mean()
+        e122 = torch.stack(model.e122_record ).mean()
+        e133 = torch.stack(model.e133_record ).mean()
+        a0 = e122/e012
+        a1 = e133/e012
         if hasattr(model, 'module')  :
             for x in [e1, a0, a1]: # the element in e1.record is loss tensor, so can do reduce
                 dist.barrier()
                 dist.reduce(x, 0)
         c1,c2,c3 = calculate_coef(e1.item(),a0.item(),a1.item(),rank=model.directly_esitimate_longterm_error)
+        c1 = c1 if c1 >0 else 0
+        c2 = c2 if c2 >0 else 0
+        c3 = c3 if c3 >0 else 0
         norm   = np.sqrt(c1**2+c2**2+c3**2)
         c1,c2,c3 = c1/norm,c2/norm,c3/norm
         model.c1 = c1;model.c2 = c2;model.c3 = c3
-        model.e1_record = [];model.a0_record=[];model.a1_record=[]
+        model.e012_record  = [];model.e122_record =[];model.e133_record =[];model.e013_record=[];model.e1_record=[]
         #print(c1,c2,c3)
 
     loss_val = total_diff/ total_num
@@ -1660,15 +1675,9 @@ def get_tensor_norm(tensor,dim):#<--use mse way
     #return (torch.sum(tensor**2,dim=dim)).sqrt()#(N,B)
     return (torch.mean(tensor**2,dim=dim))#(N,B)
 
-def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature']):
-    
-    origin_ckpt_path = logsys.ckpt_root
-    row=[]
-    for epoch, fourcastresult in enumerate(fourcastresult_path_list):
-        assert isinstance(fourcastresult,str)
-        prefix = os.path.split(fourcastresult)[-1]
-        #logsys.ckpt_root = fourcastresult
-        # then it is the fourcastresult path
+def collect_fourcast_result(fourcastresult,test_dataset,consume=False,force=False):
+    offline_out = os.path.join(fourcastresult,"fourcastresult.out")
+    if not os.path.exists(offline_out) or force:
         ROOT= fourcastresult
         fourcastresult_list = [os.path.join(ROOT,p) for p in os.listdir(fourcastresult) if 'fourcastresult.gpu' in p]
         fourcastresult={}
@@ -1687,7 +1696,7 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
             property_names = [property_names[t] for t in test_dataset.pred_channel_for_next_stamp]
             test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp]
         accu_list = [p['accu'].cpu() for p in fourcastresult.values() if 'accu' in p]
-        if len(accu_list)==0:continue
+        if len(accu_list)==0:return None
         accu_list = torch.stack(accu_list).numpy()   
         
         total_num = len(accu_list)
@@ -1699,7 +1708,6 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
         rmse_list = torch.stack([p['rmse'].cpu() for p in fourcastresult.values() if 'rmse' in p]).mean(0)# (fourcast_num,property_num)
         #rmse_table= save_and_log_table(rmse_list,logsys, prefix+'rmse_table', property_names, real_times)       
 
-    
         if not isinstance(test_dataset.unit_list,int):
             unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
             #print(unit_list)
@@ -1713,9 +1721,29 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
         else:
             logsys.info(f"unit list is int, ")
             unit_list= test_dataset.unit_list
-        
         rmse_unit_list= (rmse_list*unit_list)
-        row += [[time_stamp,epoch]+value_list for time_stamp, value_list in zip(real_times,rmse_unit_list.tolist())]
+        average_metrix = {'accu': accu_list,'rmse':rmse_list,'rmse_unit':rmse_unit_list,'real_times':real_times}
+        torch.save(average_metrix,offline_out)
+        if consume:
+            os.system(f"rm {ROOT}/fourcastresult.gpu_*")
+    
+    return torch.load(offline_out)
+def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature']):
+    
+    origin_ckpt_path = logsys.ckpt_root
+    row=[]
+    property_names = test_dataset.vnames
+    for epoch, fourcastresult in enumerate(fourcastresult_path_list):
+        assert isinstance(fourcastresult,str)
+        prefix = os.path.split(fourcastresult)[-1]
+        #logsys.ckpt_root = fourcastresult
+        # then it is the fourcastresult path
+        result = collect_fourcast_result(fourcastresult, test_dataset,consume=True,force =False)
+
+        if result is not None:
+            rmse_unit_list = result['rmse_unit']
+            real_times = result['real_times']
+            row += [[time_stamp,epoch]+value_list for time_stamp, value_list in zip(real_times,rmse_unit_list.tolist())]
 
     #logsys.add_table(prefix+'_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     logsys.add_table('multi_epoch_fourcast_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
@@ -2041,6 +2069,7 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do
     fourcastresult['snap_index'] = snap_index
     return fourcastresult
 
+
 def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature'],return_value = None):
     prefix_pool={
         'only_backward':"time_reverse_",
@@ -2060,7 +2089,6 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
                     fourcastresult[key] = val
                 else:
                     if key == 'global_rmse_map':
-
                         fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],tmp['global_rmse_map'])]
                     else:
                         fourcastresult[key] = val # overwrite
@@ -3044,7 +3072,11 @@ def build_model(args):
         model.directly_esitimate_longterm_error=0
     else:
         model.activate_stamps,model.activate_error_coef,model.directly_esitimate_longterm_error = compute_graph
-        model.e1_record = [];model.a0_record=[];model.a1_record=[]
+        model.e012_record = []
+        model.e122_record = []
+        model.e133_record = []
+        model.e013_record = []
+        model.e1_record = []
         model.c1 = model.c2 = model.c3 = 1
     model.skip_constant_2D70N = args.skip_constant_2D70N
     if 'UVT' in args.wrapper_model:
