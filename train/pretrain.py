@@ -572,7 +572,58 @@ def full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,tar
     return hidden_fourcast_list,full_fourcast_error_list,extra_loss
 
 
-from criterions.high_order_loss_coef import calculate_coef
+def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_record, iter_info_pool):
+    if 'during_valid' in mode:
+        if status == 'valid':
+            fixed_activate_error_coef = [[0,1,1],[0,1,2],[0,1,3],
+                                         [0,2,2],[0,3,3],
+                                         [1,2,2],[1,3,3]]
+            for (level_1, level_2, stamp) in fixed_activate_error_coef:
+                tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
+                tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
+                error = torch.mean((tensor1-tensor2)**2).detach()
+                if (level_1,level_2,stamp) not in model.err_record:model.err_record[level_1,level_2,stamp] = []
+                model.err_record[level_1,level_2,stamp].append(error)
+
+            # we would initialize err_reocrd and generate c1,c2,c2 out of the function
+        else:
+            pass
+    else:
+        raise
+
+    c1,  c2,  c3 = model.c1, model.c2, model.c3
+    iter_info_pool[f"{status}_c1"] = c1
+    iter_info_pool[f"{status}_c2"] = c2
+    iter_info_pool[f"{status}_c3"] = c3    
+    if 'deltalog' in mode:
+        error_record = {}
+        fixed_activate_error_coef = [[0, 1, 1], [0, 2, 2], [0, 3, 3]]
+        for (level_1, level_2, stamp) in fixed_activate_error_coef:
+                tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
+                tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
+                error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2)
+        e1 = torch.log(error_record[0,1,1] + 1)
+        e2 = torch.log(error_record[0,2,2] - error_record[0,1,1] + 1)
+        e3 = torch.log(error_record[0,3,3] - error_record[0,2,2] + 1)
+
+    elif 'normal' in mode:
+        error_record = {}
+        fixed_activate_error_coef = [[0,1,1],[0,2,2],[0,3,3]]
+        for (level_1, level_2, stamp) in fixed_activate_error_coef:
+                tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
+                tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
+                error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2)
+        e1 = error_record[0,1,1]
+        e2 = error_record[0,2,2]
+        e3 = error_record[0,3,3]
+    iter_info_pool[f"{status}_e1"] = e1
+    iter_info_pool[f"{status}_e2"] = e2
+    iter_info_pool[f"{status}_e3"] = e3
+    loss = c1*e1 + c2*e2 + c3*e3
+    diff = (e1 + e2 + e3)/3
+    return loss, diff,iter_info_pool
+
+from criterions.high_order_loss_coef import calculate_coef,calculate_deltalog_coef
 def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     assert model.history_length == 1
     assert model.pred_len == 1
@@ -616,12 +667,14 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     # so we need a flag 
     ####################################################
     train_channel_from_this_stamp,train_channel_from_next_stamp,pred_channel_for_next_stamp = feature_pick_check(model)
-
-    for i in range(len(model.activate_stamps)): # generate L , L-1, L-2
+    activate_stamps = model.activate_stamps
+    if 'during_valid' in model.directly_esitimate_longterm_error and status == 'valid':
+        activate_stamps = [[1,2,3],[2],[3]]
+    for i in range(len(activate_stamps)): # generate L , L-1, L-2
         # the least coding here
         # now_level_batch = model(now_level_batch[:,:(L-i)].flatten(0,1)).reshape(B,(L-i),*tshp)  
         # all_level_batch.append(now_level_batch)
-        activate_stamp      = model.activate_stamps[i]
+        activate_stamp      = activate_stamps[i]
         last_activate_stamp = all_level_record[-1]
         picked_stamp = []
         for t in activate_stamp:
@@ -679,46 +732,10 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
             loss   += coef*error
             if level_1 ==0 and level_2 == stamp:# to be same as normal train 
                 diff += coef*error
+            
     else:
-        error_record = {}
-        for (level_1, level_2, stamp, coef,_type) in model.activate_error_coef:
-            tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
-            tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
-            error = torch.mean((tensor1-tensor2)**2)
-            error_record[level_1,level_2,stamp] = error
-            iter_info_pool[f"{status}_error_{level_1}_{level_2}_{stamp}"] = error.item(
-            )
-        e1 = (error_record[0,1,1] + error_record[0,1,2] + error_record[0,1,3])/3
-        e2 = error_record[0,2,2]
-        e3 = error_record[0,3,3]
-        if status == 'valid':
-            # we would evaluate c1 c2 c3 in valid phase
-            level_1, level_2, stamp = 1,2,2
-            tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
-            tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
-            e122    = torch.mean((tensor1-tensor2)**2)
-            level_1, level_2, stamp = 1, 3, 3
-            tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
-            tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
-            e133    = torch.mean((tensor1-tensor2)**2)
-            model.e1_record.append(e1)
-            model.e012_record.append(error_record[0,1,2])
-            model.e013_record.append(error_record[0,1,3])
-            model.e122_record.append(e122)
-            model.e133_record.append(e133)
-
-            # a0 = (error_record[0, 2, 2] - error_record[0,1,2])/error_record[0,1,1]
-            # a1 = (error_record[0, 3, 3] - error_record[0,1,3])/error_record[0,2,2]
-            # c1,c2,c3 = calculate_coef(e1.item(),a0.item(),a1.item(),rank=model.directly_esitimate_longterm_error)
-            # norm = np.sqrt(c1**2+c2**2+c3**2)
-            # c1,c2,c3 = c1/norm,c2/norm,c3/norm
-        
-        c1,  c2,  c3 = model.c1, model.c2, model.c3
-        iter_info_pool[f"{status}_rank{model.directly_esitimate_longterm_error}_c1"] = c1
-        iter_info_pool[f"{status}_rank{model.directly_esitimate_longterm_error}_c2"] = c2
-        iter_info_pool[f"{status}_rank{model.directly_esitimate_longterm_error}_c3"] = c3
-        loss = c1*e1 + c2*e2 + c3*e3
-        diff = (e1 + e2 + e3)/3
+        loss, diff, iter_info_pool = lets_calculate_the_coef(
+            model, model.directly_esitimate_longterm_error, status, all_level_batch, all_level_record, iter_info_pool)
         # level_1, level_2, stamp, coef, _type
         # a1 = torch.nn.MSELoss()(all_level_batch[3][:,all_level_record[3].index(3)] , all_level_batch[1][:,all_level_record[1].index(3)])\
         #    /torch.nn.MSELoss()(all_level_batch[2][:,all_level_record[2].index(2)] , all_level_batch[0][:,all_level_record[0].index(2)])
@@ -729,6 +746,9 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
         # loss += error
 
     return loss, diff, iter_info_pool, None, None
+        
+        
+    
 
 def esitimate_longterm_error(a0,a1, n =10):
     """
@@ -1287,25 +1307,31 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             dist.reduce(x, 0)
 
     if model.directly_esitimate_longterm_error and status == 'valid':
-        e1   = torch.stack(model.e1_record ).mean()
-        e012 = torch.stack(model.e012_record ).mean()
-        e013 = torch.stack(model.e013_record ).mean()
-        e122 = torch.stack(model.e122_record ).mean()
-        e133 = torch.stack(model.e133_record ).mean()
-        a0 = e122/e012
-        a1 = e133/e012
-        if hasattr(model, 'module')  :
-            for x in [e1, a0, a1]: # the element in e1.record is loss tensor, so can do reduce
+        for key in model.err_record.keys():
+            model.err_record[key] = torch.stack(model.err_record[key]).mean()
+            if hasattr(model, 'module')  :
                 dist.barrier()
-                dist.reduce(x, 0)
-        c1,c2,c3 = calculate_coef(e1.item(),a0.item(),a1.item(),rank=model.directly_esitimate_longterm_error)
+                dist.reduce(model.err_record[key], 0)
+            model.err_record[key] = model.err_record[key].item()
+        
+        e1   = (model.err_record[0,1,1] + model.err_record[0,1,2] + model.err_record[0,1,3])/3
+        a0   = model.err_record[1,2,2]/model.err_record[0,1,2]
+        a1   = model.err_record[1,3,3]/model.err_record[0,1,3]
+        c1,c2,c3 = calculate_coef(e1,a0,a1,rank=int(model.directly_esitimate_longterm_error.split('_')[-1]))
+        if 'deltalog' in model.directly_esitimate_longterm_error:
+            c1,c2,c3 = calculate_deltalog_coef(c1,c2,c3,e1,model.err_record[0,2,2],model.err_record[0,3,3])
         c1 = c1 if c1 >0 else 0
         c2 = c2 if c2 >0 else 0
         c3 = c3 if c3 >0 else 0
+        
         norm   = np.sqrt(c1**2+c2**2+c3**2)
         c1,c2,c3 = c1/norm,c2/norm,c3/norm
+        c1 = c1 if c1 >0.1 else 0.1
+        c2 = c2 if c2 >0.1 else 0.1
+        c3 = c3 if c3 >0.1 else 0.1
+        print("\n"*5 + "{} {} {}" + "\n"*5, c1, c2, c3)
         model.c1 = c1;model.c2 = c2;model.c3 = c3
-        model.e012_record  = [];model.e122_record =[];model.e133_record =[];model.e013_record=[];model.e1_record=[]
+        model.err_record = {}
         #print(c1,c2,c3)
 
     loss_val = total_diff/ total_num
@@ -1728,6 +1754,7 @@ def collect_fourcast_result(fourcastresult,test_dataset,consume=False,force=Fals
             os.system(f"rm {ROOT}/fourcastresult.gpu_*")
     
     return torch.load(offline_out)
+
 def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature']):
     
     origin_ckpt_path = logsys.ckpt_root
@@ -1816,9 +1843,6 @@ def get_error_propagation(last_pred, last_target, now_target, now_pred, virtual_
             epsilon_Jacobian_valn,
             epsilon_Jacobian_a,
             the_angle_between_two    )
-
-
-
 
 def recovery_tensor(dataset,start,end,ltmv_pred,target,index=None,model=None):
         if 'Delta' in dataset.__class__.__name__:
@@ -2967,7 +2991,13 @@ def parser_compute_graph(compute_graph_set):
                           [0,1,3, 1, "quantity"],
                           [0,2,2, 1, "quantity"],
                           [0,3,3, 1, "quantity"],
-                        ], 10)
+                        ], "during_valid_normal"),
+        'fwd3_D_go10' :([[1],[2],[3]], 
+                        [], #<--- no need, will auto deploy for during_valid_normal mode
+                        "during_valid_normal_10"),
+        'fwd3_D_go10_deltalog' :([[1],[2],[3]], 
+                        [], #<--- no need, will auto deploy for during_valid_normal mode
+            "during_valid_deltalog_10")
         }
 
     return compute_graph_set_pool[compute_graph_set]
@@ -3072,11 +3102,7 @@ def build_model(args):
         model.directly_esitimate_longterm_error=0
     else:
         model.activate_stamps,model.activate_error_coef,model.directly_esitimate_longterm_error = compute_graph
-        model.e012_record = []
-        model.e122_record = []
-        model.e133_record = []
-        model.e013_record = []
-        model.e1_record = []
+        model.err_record = {}
         model.c1 = model.c2 = model.c3 = 1
     model.skip_constant_2D70N = args.skip_constant_2D70N
     if 'UVT' in args.wrapper_model:

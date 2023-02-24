@@ -329,6 +329,12 @@ def calculate_coef(e1,alpha0,alpha1,rank=4):
     de  = 1/e2*dp - ((1/e1+alpha0/e1)/(1-alpha0)**2)*dq + de
     return de, de2, de3
 
+def calculate_deltalog_coef(c1,c2,c3,e1,e2,e3):
+    p1 = (c1+c2+c3)/(1+e1)
+    p2 = (c2+c3)/(1+e2-e1)
+    p3 = (c3)/(1+e3-e2)
+    return p1,p2,p3
+
 def normlized_coef_type1(coef1,coef2,coef3):
     """
     Input 
