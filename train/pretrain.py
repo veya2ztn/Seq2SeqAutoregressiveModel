@@ -1822,6 +1822,7 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
         prefix = os.path.split(fourcastresult)[-1]
         #logsys.ckpt_root = fourcastresult
         # then it is the fourcastresult path
+
         result = collect_fourcast_result(fourcastresult, test_dataset,consume=True,force =force)
 
         if result is not None:
@@ -1930,6 +1931,7 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
     rmse_series=[]
     rmse_maps = []
     hmse_series=[]
+    mse_serise= []
     extra_info = {}
     time_step_1_mode=False
     batch_variance_line_pred = [] 
@@ -2019,22 +2021,25 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
             #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
             accu_series.append(compute_accu(ltmv_pred - clim.to(ltmv_pred.device), ltmv_true - clim.to(ltmv_pred.device)).detach().cpu())
             rmse_v,rmse_map = compute_rmse(ltmv_pred , ltmv_true, return_map_also=True)
+            mse = ((ltmv_pred - ltmv_true)**2).mean(dim=(-1,-2))
+            mse_serise.append(mse.detach().cpu())
             rmse_series.append(rmse_v.detach().cpu()) #(B,70)
             rmse_maps.append(rmse_map.detach().cpu()) #(70,32,64)
             hmse_value = compute_rmse(ltmv_pred[...,8:24,:], ltmv_true[...,8:24,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
             hmse_series.append(hmse_value.detach().cpu())
         #torch.cuda.empty_cache()
 
+    mse_serise  = torch.stack(mse_serise,1)
     accu_series = torch.stack(accu_series,1) # (B,fourcast_num,property_num)
     rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,property_num)
     hmse_series = torch.stack(hmse_series,1) # (B,fourcast_num,property_num)
     batch_variance_line_pred = torch.stack(batch_variance_line_pred,1) # (B,fourcast_num,property_num)
     batch_variance_line_true = torch.stack(batch_variance_line_true,1) # (B,fourcast_num,property_num)
     
-    for idx, accu,rmse,hmse, std_pred,std_true in zip(idxes,accu_series,rmse_series,hmse_series,
+    for idx, mse,accu,rmse,hmse, std_pred,std_true in zip(idxes,mse_serise,accu_series,rmse_series,hmse_series,
                                                 batch_variance_line_pred,batch_variance_line_true):
         #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
-        fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse,'std_pred':std_pred,'std_true':std_true,'snap_line':[],
+        fourcastresult[idx.item()] = {'mse':mse,'accu':accu,"rmse":rmse,'std_pred':std_pred,'std_true':std_true,'snap_line':[],
                                       "hmse":hmse}
     
     if error_information is not None:
@@ -2132,6 +2137,22 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do
                                          save_prediction_first_step=save_prediction_first_step,
                                          save_prediction_final_step=save_prediction_final_step,
                                          snap_index=the_snap_index_in_iter,do_error_propagration_monitor=do_error_propagration_monitor)
+                #print(data_loader.dataset.datatimelist_pool[data_loader.dataset.split][0])
+                #property_names = data_loader.dataset.vnames
+                #unit_list = data_loader.dataset.unit_list[2:].squeeze()
+                #for i, (val,unit,name) in enumerate(zip(fourcastresult[0]["mse"][5],unit_list,property_names)):
+                #    print(f"{i:3d} {name:30s} {val*unit:.4f}")
+                #print("="*20)
+                #unit = unit_list[11].item()
+                #name = property_names[11]
+                #for i, val in enumerate(fourcastresult[0]["mse"][:,11]):
+                #    print(f"{i:3d} {name:30s} {val*unit:.4f}")
+                #print("="*20)
+                #unit = unit_list[27].item()
+                #name = property_names[27]
+                #for i, val in enumerate(fourcastresult[0]["mse"][:,27]):
+                #    print(f"{i:3d} {name:30s} {val*unit:.4f}")
+                #raise
             train_cost += time.time() - now;now = time.time()
             for _ in range(random_repeat):
                 raise NotImplementedError
@@ -2177,8 +2198,9 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
 
     property_names = test_dataset.vnames
     if hasattr(test_dataset,"pred_channel_for_next_stamp"):
+        offset = 2 if 'CK' in test_dataset.__class__.__name__ else 0
         property_names = [property_names[t] for t in test_dataset.pred_channel_for_next_stamp] # do not allow padding constant at begining.
-        test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp]
+        test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp-offset]
     # if 'UVTP' in args.wrapper_model:
     #     property_names = [property_names[t] for t in eval(args.wrapper_model).pred_channel_for_next_stamp]
     ## <============= ACCU ===============>
@@ -3106,8 +3128,10 @@ def build_model(args):
     else:
         model = eval(args.model_type)(**args.model_kargs)
         if args.wrapper_model:
+            
             if args.subweight:
-                load_model(model,path=args.subweight,only_model=True, loc = 'cpu',strict=bool(args.load_model_strict))
+                print(f"in wrapper model, load subweight from {args.subweight}")
+                load_model(model.backbone,path=args.subweight,only_model=True, loc = 'cpu',strict=bool(args.load_model_strict))
             model = eval(args.wrapper_model)(args,model)
     
     logsys.info(f"use model ==> {model.__class__.__name__}")
