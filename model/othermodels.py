@@ -114,7 +114,7 @@ try:
         def __init__(self,*args,**kargs):
             super().__init__()
             print("this is pre-set model, we disable all config")
-            self.backbone = LGNet(patch_size= [1, 1],
+            self.backbone = LGNet(img_size=kargs.get("img_size",(32,64)),patch_size= [1, 1],
                             in_chans= kargs.get("in_chans",70),
                             out_chans= kargs.get("out_chans",70),
                             embed_dim=kargs.get("embed_dim", 768),
@@ -125,7 +125,20 @@ try:
         def forward(self,x):
             return self.backbone(x)
 
-
+    class CK_LgNet_138(LGNet):
+        def __init__(self,*args,**kargs):
+            super().__init__()
+            print("this is pre-set model, we disable all config")
+            self.backbone = LGNet(img_size=kargs.get("img_size",(32,64)),patch_size= [1, 1],
+                            in_chans= kargs.get("in_chans",71),
+                            out_chans= kargs.get("out_chans",68),
+                            embed_dim=kargs.get("embed_dim", 1152),
+                            window_size= (4,8),
+                            depths= [4, 4, 4],
+                            num_heads= [6, 6, 6],
+                            Weather_T=1,use_pos_embed=True)
+        def forward(self,x):
+            return self.backbone(x)[:,:69]
     
 except:
     class CK_SWDformer_3264(BaseModel):pass
