@@ -39,7 +39,7 @@ from model.othermodels import *
 from model.FeaturePickModel import *
 from model.GraphCast import * 
 from model.TimesNet import TimesNet4D
-
+from model.lora import SwinLora128Nb    
 from criterions.criterions import *
 
 from utils.params import get_args
@@ -2199,8 +2199,10 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
     property_names = test_dataset.vnames
     if hasattr(test_dataset,"pred_channel_for_next_stamp"):
         offset = 2 if 'CK' in test_dataset.__class__.__name__ else 0
-        property_names = [property_names[t] for t in test_dataset.pred_channel_for_next_stamp] # do not allow padding constant at begining.
-        test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp-offset]
+        test_dataset.pred_channel_for_next_stamp = np.array(test_dataset.pred_channel_for_next_stamp) -offset
+        
+        property_names = [property_names[t] for t in (test_dataset.pred_channel_for_next_stamp) ] # do not allow padding constant at begining.
+        test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp]
     # if 'UVTP' in args.wrapper_model:
     #     property_names = [property_names[t] for t in eval(args.wrapper_model).pred_channel_for_next_stamp]
     ## <============= ACCU ===============>
@@ -2605,7 +2607,7 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
                                   record_load_tensor=train_record_load,**args.dataset_kargs)
     val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,
                                   record_load_tensor=valid_record_load,**args.dataset_kargs)
-
+    
     train_datasampler = DistributedSampler(train_dataset, shuffle=args.do_train_shuffle) if args.distributed else None
     val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
     g = torch.Generator()
@@ -3403,7 +3405,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if (args.fourcast_during_train) and (epoch==0 and args.pretrain_weight): # do fourcast once at begining
                 Z500_now,test_dataloader = run_fourcast_during_training(args,epoch,logsys,model,test_dataloader) # will 
                 if Z500_now > 0:logsys.record('Z500', Z500_now, epoch-1, epoch_flag='epoch') #<---only rank 0 tensor create Z500
-            if epoch == 0 and not args.skip_first_valid:
+            if epoch == 0 and not args.skip_first_valid and args.mode != 'pretrain':
                 fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
                 val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=False)
@@ -3414,7 +3416,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             #torch.cuda.empty_cache()
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys,status='train') if 'small' in args.train_set else -1
             
-            if (epoch%args.valid_every_epoch == 0 and not (epoch==0 and args.skip_first_valid)) or (epoch == args.epochs - 1):
+            if (epoch%args.valid_every_epoch == 0) or (epoch == args.epochs - 1):
                 fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
                 val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             if (args.fourcast_during_train) and  (epoch%args.fourcast_during_train == 0):
