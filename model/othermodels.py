@@ -130,8 +130,8 @@ try:
             super().__init__()
             print("this is pre-set model, we disable all config")
             self.backbone = LGNet(img_size=kargs.get("img_size",(32,64)),patch_size= [1, 1],
-                            in_chans= kargs.get("in_chans",71),
-                            out_chans= kargs.get("out_chans",68),
+                            in_chans= 71,
+                            out_chans= 138,
                             embed_dim=kargs.get("embed_dim", 1152),
                             window_size= (4,8),
                             depths= [4, 4, 4],
