@@ -575,13 +575,14 @@ def full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,tar
 def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_record, iter_info_pool):
     if 'during_valid' in mode:
         if status == 'valid':
-            fixed_activate_error_coef = [[0,1,1],[0,1,2],[0,1,3],
-                                         [0,2,2],[0,3,3],
-                                         [1,2,2],[1,3,3]]
+            fixed_activate_error_coef = [[0,1,1],[0,1,2],[0,1,3],[0,2,2],[0,3,3],[1,2,2],[1,3,3]]
             for (level_1, level_2, stamp) in fixed_activate_error_coef:
                 tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
                 tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
-                error = torch.mean((tensor1-tensor2)**2).detach()
+                if 'per_feature' in mode:
+                    error = torch.mean((tensor1-tensor2)**2,dim=(2,3)).detach()
+                else:
+                    error = torch.mean((tensor1-tensor2)**2).detach()
                 if (level_1,level_2,stamp) not in model.err_record:model.err_record[level_1,level_2,stamp] = []
                 model.err_record[level_1,level_2,stamp].append(error)
 
@@ -592,10 +593,9 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
         raise
 
     c1,  c2,  c3 = model.c1, model.c2, model.c3
-    iter_info_pool[f"{status}_c1"] = c1
-    iter_info_pool[f"{status}_c2"] = c2
-    iter_info_pool[f"{status}_c3"] = c3    
+    
     if 'deltalog' in mode:
+
         error_record = {}
         fixed_activate_error_coef = [[0, 1, 1], [0, 2, 2], [0, 3, 3]]
         for (level_1, level_2, stamp) in fixed_activate_error_coef:
@@ -606,6 +606,14 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
         e2 = torch.log(error_record[0,2,2] - error_record[0,1,1] + 1)
         e3 = torch.log(error_record[0,3,3] - error_record[0,2,2] + 1)
 
+        iter_info_pool[f"{status}_c1"] = c1
+        iter_info_pool[f"{status}_c2"] = c2
+        iter_info_pool[f"{status}_c3"] = c3
+        iter_info_pool[f"{status}_e1"] = e1
+        iter_info_pool[f"{status}_e2"] = e2
+        iter_info_pool[f"{status}_e3"] = e3
+        loss = c1*e1 + c2*e2 + c3*e3 
+        diff = (e1 + e2 + e3)/3
     elif 'normal' in mode:
         error_record = {}
         fixed_activate_error_coef = [[0,1,1],[0,2,2],[0,3,3]]
@@ -616,11 +624,34 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
         e1 = error_record[0,1,1]
         e2 = error_record[0,2,2]
         e3 = error_record[0,3,3]
-    iter_info_pool[f"{status}_e1"] = e1
-    iter_info_pool[f"{status}_e2"] = e2
-    iter_info_pool[f"{status}_e3"] = e3
-    loss = c1*e1 + c2*e2 + c3*e3
-    diff = (e1 + e2 + e3)/3
+        iter_info_pool[f"{status}_c1"] = c1
+        iter_info_pool[f"{status}_c2"] = c2
+        iter_info_pool[f"{status}_c3"] = c3
+        iter_info_pool[f"{status}_e1"] = e1
+        iter_info_pool[f"{status}_e2"] = e2
+        iter_info_pool[f"{status}_e3"] = e3
+        loss = c1*e1 + c2*e2 + c3*e3 
+        diff = (e1 + e2 + e3)/3
+    elif 'per_feature' in mode:
+        error_record = {}
+        fixed_activate_error_coef = [[0,1,1],[0,2,2],[0,3,3]]
+        for (level_1, level_2, stamp) in fixed_activate_error_coef:
+                tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
+                tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
+                error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2,dim=(0,2,3))
+        e1 = error_record[0,1,1]
+        e2 = error_record[0,2,2]
+        e3 = error_record[0,3,3]
+        iter_info_pool[f"{status}_c1"] = c1.mean() if isinstance(c1,torch.Tensor) else c1#(110)
+        iter_info_pool[f"{status}_c2"] = c2.mean() if isinstance(c2,torch.Tensor) else c2#(110)
+        iter_info_pool[f"{status}_c3"] = c3.mean() if isinstance(c3,torch.Tensor) else c3#(110)
+        iter_info_pool[f"{status}_e1"] = e1.mean() if isinstance(e1,torch.Tensor) else e1#(110)
+        iter_info_pool[f"{status}_e2"] = e2.mean() if isinstance(e2,torch.Tensor) else e2#(110)
+        iter_info_pool[f"{status}_e3"] = e3.mean() if isinstance(e3,torch.Tensor) else e3#(110)
+        loss = (c1*e1 + c2*e2 + c3*e3).mean()
+        diff = ((e1 + e2 + e3)/3).mean()
+
+    
     return loss, diff,iter_info_pool
 
 from criterions.high_order_loss_coef import calculate_coef,calculate_deltalog_coef
@@ -1307,29 +1338,55 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             dist.reduce(x, 0)
 
     if model.directly_esitimate_longterm_error and status == 'valid':
-        for key in model.err_record.keys():
-            model.err_record[key] = torch.stack(model.err_record[key]).mean()
-            if hasattr(model, 'module')  :
-                dist.barrier()
-                dist.reduce(model.err_record[key], 0)
-            model.err_record[key] = model.err_record[key].item()
         
-        e1   = (model.err_record[0,1,1] + model.err_record[0,1,2] + model.err_record[0,1,3])/3
-        a0   = model.err_record[1,2,2]/model.err_record[0,1,2]
-        a1   = model.err_record[1,3,3]/model.err_record[0,1,3]
-        c1,c2,c3 = calculate_coef(e1,a0,a1,rank=int(model.directly_esitimate_longterm_error.split('_')[-1]))
-        if 'deltalog' in model.directly_esitimate_longterm_error:
-            c1,c2,c3 = calculate_deltalog_coef(c1,c2,c3,e1,model.err_record[0,2,2],model.err_record[0,3,3])
-        c1 = c1 if c1 >0 else 0
-        c2 = c2 if c2 >0 else 0
-        c3 = c3 if c3 >0 else 0
-        
-        norm   = np.sqrt(c1**2+c2**2+c3**2)
-        c1,c2,c3 = c1/norm,c2/norm,c3/norm
-        c1 = c1 if c1 >0.1 else 0.1
-        c2 = c2 if c2 >0.1 else 0.1
-        c3 = c3 if c3 >0.1 else 0.1
-        print("\n"*5 + "{} {} {}" + "\n"*5, c1, c2, c3)
+        if 'per_feature' in model.directly_esitimate_longterm_error:
+            for key in model.err_record.keys():
+                model.err_record[key] = torch.cat(model.err_record[key]).mean(0)
+                if hasattr(model, 'module')  :
+                    dist.barrier()
+                    dist.reduce(model.err_record[key], 0)
+                model.err_record[key] = model.err_record[key]
+            
+            e1   = (model.err_record[0,1,1] + model.err_record[0,1,2] + model.err_record[0,1,3])/3
+            a0   = model.err_record[1,2,2]/model.err_record[0,1,2]
+            a1   = model.err_record[1,3,3]/model.err_record[0,1,3]
+            c1_l,c2_l,c3_l = [],[],[]
+            for _e1,_a0,_a1 in zip(e1,a0,a1):
+                c1,c2,c3 = calculate_coef(_e1.item(),_a0.item(),_a1.item(),rank=int(model.directly_esitimate_longterm_error.split('_')[-1]))
+                c1 = c1 if c1 >0 else 0
+                c2 = c2 if c2 >0 else 0
+                c3 = c3 if c3 >0 else 0
+                norm   = np.sqrt(c1**2+c2**2+c3**2)
+                c1,c2,c3 = c1/norm,c2/norm,c3/norm
+                c1 = c1 if c1 >0.1 else 0.1
+                c2 = c2 if c2 >0.1 else 0.1
+                c3 = c3 if c3 >0.1 else 0.1
+                c1_l.append(c1);c2_l.append(c2);c3_l.append(c3)
+            c1 = torch.Tensor(c1_l).to(e1.device)
+            c2 = torch.Tensor(c1_l).to(e1.device)
+            c3 = torch.Tensor(c3_l).to(e1.device)
+        else:
+            for key in model.err_record.keys():
+                model.err_record[key] = torch.stack(model.err_record[key]).mean()
+                if hasattr(model, 'module')  :
+                    dist.barrier()
+                    dist.reduce(model.err_record[key], 0)
+                model.err_record[key] = model.err_record[key].item()
+
+            e1   = (model.err_record[0,1,1] + model.err_record[0,1,2] + model.err_record[0,1,3])/3
+            a0   = model.err_record[1,2,2]/model.err_record[0,1,2]
+            a1   = model.err_record[1,3,3]/model.err_record[0,1,3]
+            c1,c2,c3 = calculate_coef(e1,a0,a1,rank=int(model.directly_esitimate_longterm_error.split('_')[-1]))
+            if 'deltalog' in model.directly_esitimate_longterm_error:
+                c1,c2,c3 = calculate_deltalog_coef(c1,c2,c3,e1,model.err_record[0,2,2],model.err_record[0,3,3])
+            c1 = c1 if c1 >0 else 0
+            c2 = c2 if c2 >0 else 0
+            c3 = c3 if c3 >0 else 0
+            norm   = np.sqrt(c1**2+c2**2+c3**2)
+            c1,c2,c3 = c1/norm,c2/norm,c3/norm
+            c1 = c1 if c1 >0.1 else 0.1
+            c2 = c2 if c2 >0.1 else 0.1
+            c3 = c3 if c3 >0.1 else 0.1
         model.c1 = c1;model.c2 = c2;model.c3 = c3
         model.err_record = {}
         #print(c1,c2,c3)
@@ -1755,7 +1812,7 @@ def collect_fourcast_result(fourcastresult,test_dataset,consume=False,force=Fals
     
     return torch.load(offline_out)
 
-def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature']):
+def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature'],force=False):
     
     origin_ckpt_path = logsys.ckpt_root
     row=[]
@@ -1765,7 +1822,7 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
         prefix = os.path.split(fourcastresult)[-1]
         #logsys.ckpt_root = fourcastresult
         # then it is the fourcastresult path
-        result = collect_fourcast_result(fourcastresult, test_dataset,consume=True,force =False)
+        result = collect_fourcast_result(fourcastresult, test_dataset,consume=True,force =force)
 
         if result is not None:
             rmse_unit_list = result['rmse_unit']
@@ -2997,7 +3054,10 @@ def parser_compute_graph(compute_graph_set):
                         "during_valid_normal_10"),
         'fwd3_D_go10_deltalog' :([[1],[2],[3]], 
                         [], #<--- no need, will auto deploy for during_valid_normal mode
-            "during_valid_deltalog_10")
+            "during_valid_deltalog_10"),
+        'fwd3_D_go10_per_feature' :([[1],[2],[3]], 
+                        [], #<--- no need, will auto deploy for during_valid_normal mode
+            "during_valid_per_feature_10")
         }
 
     return compute_graph_set_pool[compute_graph_set]
