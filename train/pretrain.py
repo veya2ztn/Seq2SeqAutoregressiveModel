@@ -699,7 +699,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     ####################################################
     train_channel_from_this_stamp,train_channel_from_next_stamp,pred_channel_for_next_stamp = feature_pick_check(model)
     activate_stamps = model.activate_stamps
-    if 'during_valid' in model.directly_esitimate_longterm_error and status == 'valid':
+    if model.directly_esitimate_longterm_error and 'during_valid' in model.directly_esitimate_longterm_error and status == 'valid':
         activate_stamps = [[1,2,3],[2],[3]]
     for i in range(len(activate_stamps)): # generate L , L-1, L-2
         # the least coding here
@@ -3043,8 +3043,15 @@ def parser_compute_graph(compute_graph_set):
                    [2],
                    [3]], 
                  [  [0,1,1, 1, "quantity_log"], 
-                   [0,2,2, 1, "quantity_log"],
-                   [1,3,3, 1, "quantity_log"]
+                    [0,2,2, 1, "quantity_log"],
+                    [1,3,3, 1, "quantity_log"]
+                              ]),
+        'fwd3_DD_Log'   :([[1,3],
+                   [2],
+                   [3]], 
+                 [  [0,1,1, 1, "quantity_log"], [0,1,3, 1, "quantity_log"], 
+                    [0,2,2, 1, "quantity_log"],
+                    [1,3,3, 1, "quantity_log"]
                               ]),
         'fwd3_D_Log'   :(  [[1],[2],[3]],   [[0,1,1,1.0, "quantity_log"], [0,2,2,1.0, "quantity_log"], [0,3,3,1.0, "quantity_log"]]),
         'fwd2_PA'  :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
