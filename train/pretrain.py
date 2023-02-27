@@ -3048,13 +3048,6 @@ def parser_compute_graph(compute_graph_set):
                     [0,2,2, 1, "quantity_log"],
                     [1,3,3, 1, "quantity_log"]
                               ]),
-        'fwd3_DD_Log'   :([[1,3],
-                   [2],
-                   [3]], 
-                 [  [0,1,1, 1, "quantity_log"], [0,1,3, 1, "quantity_log"], 
-                    [0,2,2, 1, "quantity_log"],
-                    [1,3,3, 1, "quantity_log"]
-                              ]),
         'fwd3_D_Log'   :(  [[1],[2],[3]],   [[0,1,1,1.0, "quantity_log"], [0,2,2,1.0, "quantity_log"], [0,3,3,1.0, "quantity_log"]]),
         'fwd2_PA'  :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
