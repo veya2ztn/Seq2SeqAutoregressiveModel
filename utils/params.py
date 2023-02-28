@@ -13,7 +13,7 @@ def get_args_parser():
     parser.add_argument('--save_warm_up', default=5, type=int)
     parser.add_argument('--more_epoch_train', default=0, type=int)
     parser.add_argument('--skip_first_valid', default=0, type=int)
-    parser.add_argument('--epoch_save_list',default="99",type=str)
+    parser.add_argument('--epoch_save_list',default="10000",type=str)
     parser.add_argument('--valid_every_epoch', default=1, type=int)
     parser.add_argument('--save_every_epoch', default=1, type=int)
     parser.add_argument('--tracemodel', default=0, type=int)

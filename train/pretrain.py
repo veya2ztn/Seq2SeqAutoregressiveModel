@@ -183,8 +183,11 @@ def once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode):
     target_list = dataset.do_normlize_data([[t[0] for t in end]])[0]  #always use normlized input
     target      = torch.stack(target_list,2) #(B,P,T,w,h)
     
-    if 'FED' in model.__class__.__name__:
+
+    if 'FED' in model.model_type:
         out  = model(normlized_Field, start_timestamp, end_timestamp)
+    elif 'Cross' in model.model_type:
+        out = model(normlized_Field.squeeze(2), start_timestamp.squeeze(1))
     else:
         out = model(normlized_Field)
     extra_loss = 0
@@ -3182,6 +3185,8 @@ def build_model(args):
     model.vertical_constrain= args.vertical_constrain
     model.consistancy_activate_wall = args.consistancy_activate_wall
     model.mean_path_length = torch.zeros(1)
+    model.wrapper_type = args.wrapper_model
+    model.model_type  = args.model_type
     compute_graph  = parser_compute_graph(args.compute_graph_set)
     if len(compute_graph)==2:
         model.activate_stamps,model.activate_error_coef = compute_graph
