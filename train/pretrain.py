@@ -3399,6 +3399,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         train_loss = -1
         if args.tracemodel:logsys.wandb_watch(model,log_freq=100)
         for epoch in master_bar:
+            
             if epoch < start_epoch:continue
             if (args.fourcast_during_train) and (epoch==0 and args.pretrain_weight): # do fourcast once at begining
                 Z500_now,test_dataloader = run_fourcast_during_training(args,epoch,logsys,model,test_dataloader) # will 
@@ -3448,7 +3449,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
 
                 logsys.record('best_loss', min_loss, epoch, epoch_flag='epoch')
                 update_experiment_info(experiment_hub_path,epoch,args)
-                if ((epoch>args.save_warm_up) and (epoch%args.save_every_epoch==0)) or (epoch==args.epochs-1) or (epoch in args.epoch_save_list):
+                if ((epoch>=args.save_warm_up) and (epoch%args.save_every_epoch==0)) or (epoch==args.epochs-1) or (epoch in args.epoch_save_list):
                     logsys.info(f"saving latest model ....", show=False)
                     save_model(model, epoch=epoch+1, step=0, optimizer=optimizer, lr_scheduler=lr_scheduler, loss_scaler=loss_scaler, min_loss=min_loss, path=latest_ckpt_p)
                     logsys.info(f"done ....",show=False)
