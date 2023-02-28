@@ -132,6 +132,24 @@ class LoRAModule(nn.Module):
         lora.mark_only_lora_as_trainable(self, self.lora_train_bias)
 
 
+def lora_state_dict(model, *args,bias: str = 'none',**kargs) :
+    my_state_dict = model.state_dict(*args, **kargs)
+    if bias == 'none':
+        return {k: my_state_dict[k] for k in my_state_dict if 'lora_' in k}
+    elif bias == 'all':
+        return {k: my_state_dict[k] for k in my_state_dict if 'lora_' in k or 'bias' in k}
+    elif bias == 'lora_only':
+        to_return = {}
+        for k in my_state_dict:
+            if 'lora_' in k:
+                to_return[k] = my_state_dict[k]
+                bias_name = k.split('lora_')[0]+'bias'
+                if bias_name in my_state_dict:
+                    to_return[bias_name] = my_state_dict[bias_name]
+        return to_return
+    else:
+        raise NotImplementedError
+
 class LoraModel(LoRAModule):
     """
     Reward model base class.
@@ -152,11 +170,11 @@ class LoraModel(LoRAModule):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
 
-    def state_dict(self):
-        return lora.lora_state_dict(self.model)
+    def state_dict(self,*arg,**kargs):
+        return lora_state_dict(self.model, *arg, **kargs)
 
-    def load_state_dict(self,state_dict,strict=False):
-        self.model.load_state_dict(state_dict, strict=False)
+    def load_state_dict(self, state_dict, *arg, strict=False, **kargs):
+        self.model.load_state_dict(state_dict, *arg, strict=False, **kargs)
 
 class Lora128Nb(LoraModel):
     def __init__(self, args, model) -> None:
@@ -167,4 +185,5 @@ class SwinLora128Nb(LoraModel):
     default_output_channel = 69 
     pred_channel_for_next_stamp = list(range(2,71))
     def __init__(self, args, model) -> None:
+        assert args.subweight
         super().__init__(model=model, lora_rank=128, lora_train_bias='none')
