@@ -985,9 +985,9 @@ class WeathBench32x64Dailynorm(WeathBench32x64SPnorm):
     def generate_runtime_data(self,idx,reversed_part=False):
         assert not reversed_part
         assert self.normalize_type == 'space_time_norm'
-        odata = self.load_otensor(idx)[self.channel_choice]
-        unit = self.std
-        mean,std = self.get_space_time_mean_std(idx)
+        odata    = self.load_otensor(idx)[self.channel_choice]
+        unit    = self.std
+        mean,std  = self.get_space_time_mean_std(idx)
         data    = (odata/unit - mean)/(std)
         if self.add_LunaSolarDirectly:
             timenow = self.datatimelist_pool[self.split][idx]
@@ -1008,6 +1008,20 @@ class WeathBench32x64Dailynorm(WeathBench32x64SPnorm):
             data = np.concatenate([data, self.constants])
         
         return data
+
+    def get_item(self,idx,reversed_part=False):
+        '''
+        Notice for 3D case, we return (5,14,32,64) data tensor
+        '''
+        assert not self.use_offline_data
+        data = self.generate_runtime_data(idx,reversed_part=reversed_part)
+        
+        if self.use_time_stamp:
+            mean,std  = self.get_space_time_mean_std(idx)
+            return data, mean*std
+        else:
+            return data
+
 
     def recovery(self,x,indexes):
         fake_mean, fake_std = self.mean_std

@@ -11,8 +11,8 @@ class FeaturePickModel(BaseModel):
     def __init__(self, args, backbone):
         super().__init__()
         self.backbone =  backbone
-    def forward(self, Field,**kargs):
-        return self.backbone(Field,**kargs)
+    def forward(self, Field,*args,**kargs):
+        return self.backbone(Field,*args,**kargs)
 
 class OnlyPredSpeed(FeaturePickModel):
     pred_channel_for_next_stamp = list(range(28))
@@ -396,3 +396,6 @@ class SWINFeatureT(FeaturePickModel):
     default_input_channel  = 73
     default_output_channel = 68 
     pred_channel_for_next_stamp = list(range(68))
+
+
+class SWINFeatureTCross(SWINFeatureT):pass
