@@ -53,7 +53,9 @@ class Windowattn_block(nn.Module):
     def __init__(self, dim, window_size, num_heads=1, mlp_ratio=4., 
                 qkv_bias=True, drop=0., attn_drop=0., drop_path=0., 
                 act_layer=nn.GELU, norm_layer=nn.LayerNorm,
-                attn_type="windowattn", pre_norm=True, **kwargs):
+                attn_type="windowattn", pre_norm=True, 
+                relative_position_embedding_layer=None,
+                **kwargs):
         super().__init__()
         self.dim = dim
         self.window_size = window_size
@@ -73,7 +75,9 @@ class Windowattn_block(nn.Module):
                 dilated_size = [1, 1, 1]
             self.attn = SD_attn(
                 dim, window_size=self.window_size, num_heads=num_heads, qkv_bias=qkv_bias,
-                attn_drop=attn_drop, proj_drop=drop, shift_size=shift_size, dilated_size=dilated_size)
+                attn_drop=attn_drop, proj_drop=drop, shift_size=shift_size, dilated_size=dilated_size,
+                relative_position_embedding_layer=relative_position_embedding_layer)
+            
         elif attn_type == "convattn":
             self.attn = Conv_attn(dim, window_size, num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)
 
@@ -83,9 +87,6 @@ class Windowattn_block(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
     
-
-    
-
     def forward(self, x):
         shortcut = x
         # partition windows

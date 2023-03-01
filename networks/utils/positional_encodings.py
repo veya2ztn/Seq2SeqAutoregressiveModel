@@ -359,3 +359,34 @@ class RelativePositionalBias(nn.Module):
         x = x + relative_position_bias
 
         return x
+
+class Rotaty2DEmbedding(nn.Module):
+    def __init__(self, embed_dim=512, w=32, h=64, base_w=None, base_h=None):
+        super().__init__()
+        base_w = w*10 if base_w is None else base_w
+        base_h = h*10 if base_h is None else base_h
+        assert base_w > w 
+        assert base_h > h
+        theta_h = torch.pow(base_w, -torch.arange(embed_dim)/embed_dim)
+        mtheta_h= torch.einsum("i,j->ij",torch.arange(w),theta_h)
+        cos_m_theta_h = torch.cos(mtheta_h).unsqueeze(1).repeat(1,h,1).reshape(1,1,w*h,embed_dim) # (1,1,2048,512) # (B,head,L,dim)
+        sin_m_theta_h = torch.sin(mtheta_h).unsqueeze(1).repeat(1,h,1).reshape(1,1,w*h,embed_dim) # (1,1,2048,512) # (B,head,L,dim)
+        theta_w = torch.pow(base_h, -torch.arange(embed_dim)/embed_dim)
+        mtheta_w= torch.einsum("i,j->ij",torch.arange(h),theta_w)
+        cos_m_theta_w = torch.cos(mtheta_w).unsqueeze(0).repeat(w,1,1).reshape(1,1,w*h,embed_dim)
+        sin_m_theta_w = torch.sin(mtheta_w).unsqueeze(0).repeat(w,1,1).reshape(1,1,w*h,embed_dim)
+        self.embed_dim = embed_dim
+        self.register_buffer("cos_m_theta_h",cos_m_theta_h)
+        self.register_buffer("sin_m_theta_h",sin_m_theta_h)
+        self.register_buffer("cos_m_theta_w",cos_m_theta_w)
+        self.register_buffer("sin_m_theta_w",sin_m_theta_w)
+    
+    def forward(self,x):
+        assert x.shape[-1] == 2 * \
+            self.embed_dim, f"except input have {2*self.embed_dim} in last dim, get {x.shape[-1]}"
+        up_branch, dw_branch = torch.split(x,self.embed_dim,-1)
+        L1 = up_branch*self.cos_m_theta_h - dw_branch*self.sin_m_theta_h
+        L2 = up_branch*self.sin_m_theta_h + dw_branch*self.cos_m_theta_h
+        L3 = up_branch*self.cos_m_theta_w - dw_branch*self.sin_m_theta_w
+        L4 = up_branch*self.sin_m_theta_w + dw_branch*self.cos_m_theta_w
+        return torch.stack([L1,L2,L3,L4],-1).flatten(-2,-1)

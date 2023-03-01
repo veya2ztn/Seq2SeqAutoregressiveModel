@@ -3,11 +3,12 @@ import torch
 import copy
 
 from functools import partial
-from networks.utils.Attention import SD_attn,SD_attn_Cross
-from networks.utils.Blocks import Convnet_block, Windowattn_block, Windowattn_Cross_block
+from networks.utils.Attention import SD_attn
+from networks.utils.Blocks import Windowattn_block
 from networks.utils.utils import DropPath, PatchEmbed
 from networks.utils.utils import Mlp
 from einops import rearrange
+from networks.utils.positional_encodings import Rotaty2DEmbedding
 #from fairscale.nn.checkpoint.checkpoint_activations import checkpoint_wrapper
 
 
@@ -17,7 +18,7 @@ class Layer(nn.Module):
                 num_heads=1, mlp_ratio=4., qkv_bias=True, 
                 drop=0., attn_drop=0., drop_path=0., 
                 norm_layer=nn.LayerNorm, layer_type="convnet_block",
-                use_checkpoint=False) -> None:
+                use_checkpoint=False,relative_position_embedding_layer=None) -> None:
         super().__init__()
         self.dim = dim
         self.depth = depth
@@ -28,13 +29,7 @@ class Layer(nn.Module):
         self.blocks = nn.ModuleList()
         for i in range(depth):
             if layer_type == "convnet_block":
-                block = Convnet_block(
-                        dim=dim,
-                        kernel_size=window_size,
-                        drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                        layer_scale_init_value = 0,
-                        norm_layer=norm_layer,
-                    )
+                raise
             elif layer_type == "window_block":
                 block = Windowattn_block(
                         dim=dim,
@@ -45,7 +40,7 @@ class Layer(nn.Module):
                         drop=drop,
                         attn_drop=attn_drop,
                         drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                        norm_layer=norm_layer,
+                        norm_layer=norm_layer,relative_position_embedding_layer=relative_position_embedding_layer,
                     )
             elif layer_type == "swin_block":
                 block = Windowattn_block(
@@ -58,7 +53,8 @@ class Layer(nn.Module):
                     attn_drop=attn_drop,
                     drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                     norm_layer=norm_layer,
-                    shift_size=[0,0] if i%2==0 else [i//2 for i in window_size]
+                    shift_size=[0,0] if i%2==0 else [i//2 for i in window_size],
+                    relative_position_embedding_layer=relative_position_embedding_layer
                 )
             if use_checkpoint:
                 block = checkpoint_wrapper(block, offload_to_cpu=True)
@@ -120,7 +116,8 @@ class LG_net(nn.Module):
                  embed_dim=768, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),
                  window_size=(2, 4, 8), mlp_ratio=4., qkv_bias=True,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
-                 norm_layer=partial(nn.LayerNorm, eps=1e-6), patch_norm=False,use_checkpoint=False,use_pos_embed=True):
+                 norm_layer=partial(nn.LayerNorm, eps=1e-6), patch_norm=False, use_checkpoint=False, 
+                 use_pos_embed='add_at_everywhere.rotaty'):
         super().__init__()
 
         self.num_layers = len(depths)
@@ -132,15 +129,17 @@ class LG_net(nn.Module):
         self.img_size = img_size
         self.patch_size = patch_size
 
+        
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(
-            patch_size=patch_size, in_c=in_chans, embed_dim=embed_dim,
+            patch_size=patch_size, in_c=in_chans, embed_dim=embed_dim//2 if use_pos_embed in ['add_at_begining.rotaty','add_at_everywhere.rotaty'] else embed_dim,
             norm_layer=norm_layer if self.patch_norm else None)
         self.pos_drop = nn.Dropout(p=drop_rate)
 
         # stochastic depth
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
 
+        relative_position_embedding_layer = (use_pos_embed == 'add_at_everywhere.rotaty')
         # build layers
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
@@ -157,7 +156,8 @@ class LG_net(nn.Module):
                                 drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                                 norm_layer=norm_layer,
                                 layer_type="window_block" if i_layer==0 else "swin_block",
-                                use_checkpoint=use_checkpoint
+                                use_checkpoint=use_checkpoint,
+                                relative_position_embedding_layer=relative_position_embedding_layer
                                 )
             self.layers.append(layers)
 
@@ -166,14 +166,28 @@ class LG_net(nn.Module):
         # self.norm = norm_layer(self.num_features)
         # self.avgpool = nn.AdaptiveAvgPool1d(1)
         # self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.use_pos_embed = use_pos_embed
+        
+        self.initiaiize_pos_embed()
+        self.apply(self._init_weights)
 
-        if use_pos_embed:
-            self.pos_embed = nn.Parameter(torch.zeros(1, img_size[0]//patch_size[-2]*img_size[1]//patch_size[-1], embed_dim)) 
+    def initiaiize_pos_embed(self):
+        if self.use_pos_embed == 'add_at_begining.normal':
+            self.pos_embed = nn.Parameter(torch.zeros(1, self.img_size[0]//self.patch_size[-2]*self.img_size[1]//self.patch_size[-1], self.embed_dim)) 
             nn.init.trunc_normal_(self.pos_embed, std=.02)
+        elif self.use_pos_embed in ['add_at_begining.rotaty','add_at_everywhere.rotaty']:
+            self.pos_embed = Rotaty2DEmbedding(embed_dim=self.embed_dim//4, w=self.img_size[0], h=self.img_size[1])
         else:
             self.pos_embed = 0
 
-        self.apply(self._init_weights)
+    def apply_pos_embded(self,x):
+        if self.use_pos_embed == 'add_at_begining.normal':
+            x = x + self.use_pos_embed
+        elif self.use_pos_embed in ['add_at_begining.rotaty','add_at_everywhere.rotaty']:
+            x = self.pos_embed(x.unsqueeze(1)).squeeze(1)
+        else:
+            pass
+        return x 
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -188,7 +202,8 @@ class LG_net(nn.Module):
         # x: [B, C, H, W]
         B = x.shape[0]
         x, T, H, W = self.patch_embed(x)  # x:[B, H*W, C]
-        x = x + self.pos_embed
+        #x = x + self.pos_embed
+        x = self.apply_pos_embded(x)
         x = self.pos_drop(x)
         if len(self.window_size) == 3:
             x = x.view(B, T, H, W, -1)

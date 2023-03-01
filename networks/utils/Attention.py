@@ -14,7 +14,7 @@ from networks.megatron_utils.tensor_parallel.layers import ColumnParallelLinear,
 from networks.megatron_utils import mpu
 import networks.megatron_utils.utils
 
-
+from networks.utils.positional_encodings import Rotaty2DEmbedding
 
 class Cross_attn(nn.Module):
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0., proj_drop=0.) -> None:
@@ -469,7 +469,8 @@ class Swin_attn(nn.Module):
 
 
 class SD_attn(nn.Module):
-    def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0., proj_drop=0., shift_size=[0, 0, 0], dilated_size=[1,1,1]) -> None:
+    def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0., proj_drop=0., shift_size=[0, 0, 0], dilated_size=[1,1,1],
+                 relative_position_embedding_layer=None) -> None:
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
@@ -499,7 +500,10 @@ class SD_attn(nn.Module):
             self.position_enc = rope2(window_size, head_dim)
         elif len(window_size) == 3:
             self.position_enc = rope3(window_size, head_dim)
-
+        self.relative_position_embedding_layer = None
+        if relative_position_embedding_layer:
+            self.relative_position_embedding_layer = Rotaty2DEmbedding(
+                embed_dim=head_dim//2, w=self.window_size[0], h=self.window_size[1])
 
     def create_mask(self, x):
         # calculate attention mask for SW-MSA
@@ -612,14 +616,21 @@ class SD_attn(nn.Module):
                                         0, 2, 1, 3).reshape(B*self.dilated_size[0]*self.dilated_size[1], -1, C)
         B_, N, C = x_windows.shape
 
-
+        
         qkv = self.qkv(x_windows).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         # [batch_size*num_windows, num_heads, Mh*Mw, embed_dim_per_head]
         q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple)
-
-        q = self.position_enc(q.reshape(-1, *self.window_size, C // self.num_heads)).reshape(B_, self.num_heads, -1, C // self.num_heads)
-        k = self.position_enc(k.reshape(-1, *self.window_size, C // self.num_heads)).reshape(B_, self.num_heads, -1, C // self.num_heads)
-
+        
+        q = self.position_enc(q.reshape(-1, *self.window_size, C // self.num_heads)).reshape(B_, self.num_heads, -1, C // self.num_heads) # B,head,L,D
+        k = self.position_enc(k.reshape(-1, *self.window_size, C // self.num_heads)).reshape(B_, self.num_heads, -1, C // self.num_heads) # B,head,L,D
+        # print(q.shape)
+        # print(k.shape)
+        if self.relative_position_embedding_layer is not None:
+            q = self.relative_position_embedding_layer(q)
+            k = self.relative_position_embedding_layer(k)
+        # print(q.shape)
+        # print(k.shape)
+        # print("===================")
         # transpose: -> [batch_size*num_windows, num_heads, embed_dim_per_head, Mh*Mw]
         # @: multiply -> [batch_size*num_windows, num_heads, Mh*Mw, Mh*Mw]
         q = q * self.scale
