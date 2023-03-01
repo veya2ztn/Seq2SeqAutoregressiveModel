@@ -657,7 +657,7 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
     
     return loss, diff,iter_info_pool
 
-from criterions.high_order_loss_coef import calculate_coef,calculate_deltalog_coef
+from criterions.high_order_loss_coef import calculate_coef,calculate_deltalog_coef,normlized_coef_type2,normlized_coef_type3
 def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     assert model.history_length == 1
     assert model.pred_len == 1
@@ -1341,7 +1341,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             dist.reduce(x, 0)
 
     if model.directly_esitimate_longterm_error and status == 'valid':
-        
+        normlized_type = normlized_coef_type3 if "needbase" in model.directly_esitimate_longterm_error else normlized_coef_type2
         if 'per_feature' in model.directly_esitimate_longterm_error:
             for key in model.err_record.keys():
                 model.err_record[key] = torch.cat(model.err_record[key]).mean(0)
@@ -1356,14 +1356,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             c1_l,c2_l,c3_l = [],[],[]
             for _e1,_a0,_a1 in zip(e1,a0,a1):
                 c1,c2,c3 = calculate_coef(_e1.item(),_a0.item(),_a1.item(),rank=int(model.directly_esitimate_longterm_error.split('_')[-1]))
-                c1 = c1 if c1 >0 else 0
-                c2 = c2 if c2 >0 else 0
-                c3 = c3 if c3 >0 else 0
-                norm   = np.sqrt(c1**2+c2**2+c3**2)
-                c1,c2,c3 = c1/norm,c2/norm,c3/norm
-                c1 = c1 if c1 >0.1 else 0.1
-                c2 = c2 if c2 >0.1 else 0.1
-                c3 = c3 if c3 >0.1 else 0.1
+                c1,c2,c3 = normlized_type(c1,c2,c3)
                 c1_l.append(c1);c2_l.append(c2);c3_l.append(c3)
             c1 = torch.Tensor(c1_l).to(e1.device)
             c2 = torch.Tensor(c1_l).to(e1.device)
@@ -1382,14 +1375,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             c1,c2,c3 = calculate_coef(e1,a0,a1,rank=int(model.directly_esitimate_longterm_error.split('_')[-1]))
             if 'deltalog' in model.directly_esitimate_longterm_error:
                 c1,c2,c3 = calculate_deltalog_coef(c1,c2,c3,e1,model.err_record[0,2,2],model.err_record[0,3,3])
-            c1 = c1 if c1 >0 else 0
-            c2 = c2 if c2 >0 else 0
-            c3 = c3 if c3 >0 else 0
-            norm   = np.sqrt(c1**2+c2**2+c3**2)
-            c1,c2,c3 = c1/norm,c2/norm,c3/norm
-            c1 = c1 if c1 >0.1 else 0.1
-            c2 = c2 if c2 >0.1 else 0.1
-            c3 = c3 if c3 >0.1 else 0.1
+            c1,c2,c3 = normlized_type(c1,c2,c3)
         model.c1 = c1;model.c2 = c2;model.c3 = c3
         model.err_record = {}
         #print(c1,c2,c3)
@@ -3084,7 +3070,13 @@ def parser_compute_graph(compute_graph_set):
             "during_valid_deltalog_10"),
         'fwd3_D_go10_per_feature' :([[1],[2],[3]], 
                         [], #<--- no need, will auto deploy for during_valid_normal mode
-            "during_valid_per_feature_10")
+            "during_valid_per_feature_10"),
+        'fwd3_D_go10_per_feature_needbase': ([[1], [2], [3]],
+                                    [],  # <--- no need, will auto deploy for during_valid_normal mode
+                                    "needbase_during_valid_per_feature_10"),
+        'fwd3_D_go10_needbase' :([[1],[2],[3]], 
+                        [], #<--- no need, will auto deploy for during_valid_normal mode
+                        "needbase_during_valid_normal_10"),
         }
 
     return compute_graph_set_pool[compute_graph_set]
@@ -3401,8 +3393,8 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         for epoch in master_bar:
             
             if epoch < start_epoch:continue
-            if (args.fourcast_during_train) and (epoch==0 and args.pretrain_weight): # do fourcast once at begining
-                Z500_now,test_dataloader = run_fourcast_during_training(args,epoch,logsys,model,test_dataloader) # will 
+            if (args.fourcast_during_train and epoch==0 and args.pretrain_weight): # do fourcast once at begining
+                Z500_now, test_dataloader = run_fourcast_during_training(args, epoch-1, logsys, model, test_dataloader)  # will
                 if Z500_now > 0:logsys.record('Z500', Z500_now, epoch-1, epoch_flag='epoch') #<---only rank 0 tensor create Z500
             if epoch == 0 and not args.skip_first_valid and args.mode != 'pretrain':
                 fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
@@ -3420,13 +3412,12 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                 val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             if (args.fourcast_during_train) and  (epoch%args.fourcast_during_train == 0):
                 Z500_now,test_dataloader = run_fourcast_during_training(args,epoch,logsys,model,test_dataloader)
-            
+                if Z500_now > 0:logsys.record('Z500', Z500_now, epoch, epoch_flag='epoch')
             logsys.metric_dict.update({'valid_loss':val_loss},epoch)
             logsys.banner_show(epoch,args.SAVE_PATH,train_losses=[train_loss])
             if (not args.distributed) or (args.rank == 0 and local_rank == 0) :
                 logsys.info(f"Epoch {epoch} | Train loss: {train_loss:.6f}, Val loss: {val_loss:.6f}",show=False)
                 logsys.record('train', train_loss, epoch, epoch_flag='epoch')
-                if Z500_now > 0:logsys.record('Z500', Z500_now, epoch, epoch_flag='epoch')
                 logsys.record('valid', val_loss, epoch, epoch_flag='epoch')
                 if val_loss < min_loss:
                     min_loss = val_loss
