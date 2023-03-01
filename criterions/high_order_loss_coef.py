@@ -348,31 +348,37 @@ def normlized_coef_type1(coef1,coef2,coef3):
     """
     _sum = np.abs(coef1) + np.abs(coef2) + np.abs(coef3)
     return coef1/_sum,coef2/_sum,coef3/_sum
-def normlized_coef_type2(coef1,coef2,coef3):
+def normlized_coef_type2(c1,c2,c3):
     """
     Input 
-        coef_of_error1 (B,)
-        coef_of_error2 (B,)
-        coef_of_error3 (B,)
+        c1,c2,c3
     Ouput
-        normed_coef_of_error1 (B,)
-        normed_coef_of_error2 (B,)
-        normed_coef_of_error3 (B,)
+        c1,c2,c3
+    erase value <0 
+    min value 0.1
     """
-    all_coef = np.stack([coef1,coef2,coef3]) #(3,B)
-    all_coef = all_coef/np.linalg.norm(all_coef,axis=0)[None]
-    return all_coef
+    c1 = c1 if c1 >0 else 0
+    c2 = c2 if c2 >0 else 0
+    c3 = c3 if c3 >0 else 0
+    norm   = np.sqrt(c1**2+c2**2+c3**2)
+    c1,c2,c3 = c1/norm,c2/norm,c3/norm
+    c1 = c1 if c1 >0.1 else 0.1
+    c2 = c2 if c2 >0.1 else 0.1
+    c3 = c3 if c3 >0.1 else 0.1
+    return c1,c2,c3
 def normlized_coef_type3(coef1,coef2,coef3):
     """
     Input 
-        coef_of_error1 (B,)
-        coef_of_error2 (B,)
-        coef_of_error3 (B,)
+        coef_of_error1 a
+        coef_of_error2 b
+        coef_of_error3 c
     Ouput
-        normed_coef_of_error1 (B,)
-        normed_coef_of_error2 (B,)
-        normed_coef_of_error3 (B,)
+        normed_coef_of_error1 a/sqrt(a**2+b**2+c**2) + 1
+        normed_coef_of_error2 a/sqrt(a**2+b**2+c**2) + 1
+        normed_coef_of_error3 a/sqrt(a**2+b**2+c**2) + 1
     """
-    all_coef = np.stack([coef1,coef2,coef3]) #(3,B)
-    all_coef = all_coef/np.linalg.norm(all_coef,axis=0)[None]
-    return all_coef
+    all_coef = np.sqrt(coef1**2 + coef2**2 + coef3**2)
+    coef1 = coef1/all_coef + 1 
+    coef2 = coef2/all_coef + 1 
+    coef3 = coef3/all_coef + 1 
+    return  coef1,coef2,coef3
