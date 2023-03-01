@@ -109,12 +109,12 @@ try:
         def forward(self,x):
             return self.backbone(x)
 
-    from networks.LGNet import LGNet,LGNetCross
-    class CK_LgNet(BaseModel):
+    from networks.LGNet_Rotaty import LGNet as LgNet_Rotaty
+    class CK_LgNet_Rotaty(BaseModel):
         def __init__(self,*args,**kargs):
             super().__init__()
             print("this is pre-set model, we disable all config")
-            self.backbone = LGNet(img_size=kargs.get("img_size",(32,64)),patch_size= [1, 1],
+            self.backbone = LgNet_Rotaty(img_size=kargs.get("img_size",(32,64)),patch_size= [1, 1],
                             in_chans= kargs.get("in_chans",70),
                             out_chans= kargs.get("out_chans",70),
                             embed_dim=kargs.get("embed_dim", 768),
@@ -124,6 +124,25 @@ try:
                             Weather_T=1,use_pos_embed=False)
         def forward(self,x):
             return self.backbone(x)
+
+    from networks.LGNet import LGNet
+    class CK_LgNet(BaseModel):
+        def __init__(self, *args, **kargs):
+            super().__init__()
+            print("this is pre-set model, we disable all config")
+            self.backbone = LGNet(img_size=kargs.get("img_size", (32, 64)), patch_size=[1, 1],
+                                  in_chans=kargs.get("in_chans", 70),
+                                  out_chans=kargs.get("out_chans", 70),
+                                  embed_dim=kargs.get("embed_dim", 768),
+                                  window_size=(4, 8),
+                                  depths=[4, 4, 4],
+                                  num_heads=[6, 6, 6],
+                                  Weather_T=1, use_pos_embed=False)
+
+        def forward(self, x):
+            return self.backbone(x)
+
+    from networks.LGCrossNet import LGNetCross
     class CK_LgNet_Cross(BaseModel):
         def __init__(self,*args,**kargs):
             super().__init__()
