@@ -119,7 +119,7 @@ class LG_net(nn.Module):
                  norm_layer=partial(nn.LayerNorm, eps=1e-6), patch_norm=False, use_checkpoint=False, 
                  use_pos_embed='add_at_everywhere.rotaty'):
         super().__init__()
-
+        assert use_pos_embed
         self.num_layers = len(depths)
         self.embed_dim = embed_dim
         self.patch_norm = patch_norm
@@ -139,7 +139,7 @@ class LG_net(nn.Module):
         # stochastic depth
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
 
-        relative_position_embedding_layer = (use_pos_embed == 'add_at_everywhere.rotaty')
+        relative_position_embedding_layer = True#(use_pos_embed == 'add_at_everywhere.rotaty')
         # build layers
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):

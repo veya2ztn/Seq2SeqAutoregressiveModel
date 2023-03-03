@@ -121,7 +121,7 @@ try:
                             window_size= (4,8),
                             depths= [4, 4, 4],
                             num_heads= [6, 6, 6],
-                            Weather_T=1,use_pos_embed=False)
+                            Weather_T=1)
         def forward(self,x):
             return self.backbone(x)
 
