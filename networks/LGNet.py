@@ -222,7 +222,8 @@ class LG_net(nn.Module):
 
 class LGNet(nn.Module):
     def __init__(self, img_size=[32, 64], patch_size=(1, 1, 1), in_chans=20, out_chans=20, embed_dim=768, window_size=[4, 8], depths=[2, 2, 6, 2],
-                 num_heads=[3, 6, 12, 24], Weather_T=16, drop_rate=0., attn_drop_rate=0., drop_path=0., use_checkpoint=False, use_pos_embed=True) -> None:
+                 num_heads=[3, 6, 12, 24], Weather_T=16, drop_rate=0., attn_drop_rate=0., drop_path=0., use_checkpoint=False, 
+                 use_pos_embed=True) -> None:
         super().__init__()
         self.net = LG_net(img_size=img_size, patch_size=patch_size, in_chans=in_chans, out_chans=out_chans,
                             embed_dim=embed_dim, depths=depths, num_heads=num_heads,

@@ -1034,9 +1034,11 @@ class WeathBench32x64Dailynorm(WeathBench32x64SPnorm):
         return x
 
 
-class WeathBench32x64MultibranchRandom(WeathBench32x64SPnorm):
+class WeathBench32x64MultibranchRandom(WeathBench32x64):
     def __init__(self, **kargs):
         use_offline_data = kargs.get('use_offline_data', 0)
+        time_intervel   = kargs.get('time_intervel', 1)
+        assert time_intervel == 1
         assert use_offline_data == 0
         super().__init__(**kargs)
         self.multibranch_select= [int(t) for t in kargs['multibranch_select']]
