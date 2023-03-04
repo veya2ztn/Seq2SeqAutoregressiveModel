@@ -122,6 +122,7 @@ try:
                             depths= [4, 4, 4],
                             num_heads= [6, 6, 6],
                             Weather_T=1,use_pos_embed=False)
+        
         def forward(self,x):
             return self.backbone(x)
 
@@ -173,6 +174,71 @@ try:
         def forward(self,x):
             return self.backbone(x)[:,:69]
     
+    from einops import rearrange    
+    class DecodeEncodeLgNet(LGNet):
+        def encode(self, x):
+            assert len(self.layers)>1
+            # x: [B, C, H, W]
+            B = x.shape[0]
+            x, T, H, W = self.patch_embed(x)  # x:[B, H*W, C]
+            x = x + self.pos_embed
+            x = self.pos_drop(x)
+            if len(self.window_size) == 3:
+                x = x.view(B, T, H, W, -1)
+            elif len(self.window_size) == 2:
+                x = x.view(B, H, W, -1)
+
+            for layer in self.layers[:-1]:
+                x = layer(x)
+
+        def decode(self,x):
+            assert len(self.layers)>1
+            x = self.layers[-1](x)
+            x = self.final(x)
+            res = rearrange(x, "b h w (p1 p2 c_out) -> b c_out (h p1) (w p2)",
+                            p1=self.patch_size[-2],
+                            p2=self.patch_size[-1],
+                            h=self.img_size[0] // self.patch_size[-2],
+                            w=self.img_size[1] // self.patch_size[-1],
+                            )
+            return res
+        
+        def forward(self,x):
+            return self.decode(self.encode(x))
+
+
+    import copy
+    class LgNet_MultiBranch(nn.Module):
+        '''
+            use it as wrapper model.
+        '''
+        def __init__(self, args, backbone):
+            super().__init__()
+            self.backbone = backbone
+            self.new_branch= nn.ModuleList()
+            for _ in range(args.multi_branch_num):
+                self.new_branch.append(
+                    nn.Sequential(
+                    copy.deepcopy(self.backbone.layers[-1]),
+                    copy.deepcopy(self.final),
+                    Rearrange("b h w (p1 p2 c_out) -> b c_out (h p1) (w p2)",
+                            p1=self.backbone.patch_size[-2],
+                            p2=self.backbone.patch_size[-1],
+                            h=self.backbone.img_size[0] // self.backbone.patch_size[-2],
+                            w=self.backbone.img_size[1] // self.backbone.patch_size[-1],)
+                    )
+                )
+        def decode(self,x,control_flag):
+            if control_flag == 0 :
+                return self.backbone.decode(x)
+            else:
+                return self.new_branch[control_flag-1](x)
+
+        def forward(self, x, branch_flag):
+            assert (branch_flag==branch_flag[0]).all()
+            branch_flag = branch_flag[0]
+            return self.decode(self.backbone.encode(x), branch_flag)
+        
 except:
     class CK_SWDformer_3264(BaseModel):pass
 

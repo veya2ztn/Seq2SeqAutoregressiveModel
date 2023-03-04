@@ -147,17 +147,17 @@ class LG_net(nn.Module):
             # 注意这里构建的stage和论文图中有些差异
             # 这里的stage不包含该stage的patch_merging层，包含的是下个stage的
             layers = Layer(dim=embed_dim,
-                                depth=depths[i_layer],
-                                num_heads=num_heads[i_layer],
-                                window_size=[img_size[-2]//patch_size[-2], img_size[-1]//patch_size[-1]] if i_layer==0 else window_size,
-                                mlp_ratio=self.mlp_ratio,
-                                qkv_bias=qkv_bias,
-                                drop=drop_rate,
-                                attn_drop=attn_drop_rate,
-                                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                                norm_layer=norm_layer,
-                                layer_type="window_block" if i_layer==0 else "swin_block",
-                                use_checkpoint=use_checkpoint
+                     depth=depths[i_layer],
+                     num_heads=num_heads[i_layer],
+                     window_size=[img_size[-2]//patch_size[-2], img_size[-1]//patch_size[-1]] if i_layer==0 else window_size,
+                     mlp_ratio=self.mlp_ratio,
+                     qkv_bias=qkv_bias,
+                     drop=drop_rate,
+                     attn_drop=attn_drop_rate,
+                     drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+                     norm_layer=norm_layer,
+                     layer_type="window_block" if i_layer==0 else "swin_block",
+                     use_checkpoint=use_checkpoint
                                 )
             self.layers.append(layers)
 
@@ -183,7 +183,7 @@ class LG_net(nn.Module):
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
-
+    
     def forward(self, x):
         # x: [B, C, H, W]
         B = x.shape[0]
@@ -225,10 +225,10 @@ class LGNet(nn.Module):
                  num_heads=[3, 6, 12, 24], Weather_T=16, drop_rate=0., attn_drop_rate=0., drop_path=0., use_checkpoint=False, use_pos_embed=True) -> None:
         super().__init__()
         self.net = LG_net(img_size=img_size, patch_size=patch_size, in_chans=in_chans, out_chans=out_chans,
-                          embed_dim=embed_dim, depths=depths, num_heads=num_heads,
-                          window_size=window_size, drop_rate=drop_rate, attn_drop_rate=attn_drop_rate,
-                          drop_path_rate=drop_path, use_checkpoint=use_checkpoint, use_pos_embed=use_pos_embed)
-
+                            embed_dim=embed_dim, depths=depths, num_heads=num_heads,
+                            window_size=window_size, drop_rate=drop_rate, attn_drop_rate=attn_drop_rate,
+                            drop_path_rate=drop_path, use_checkpoint=use_checkpoint, use_pos_embed=use_pos_embed)
+  
     def forward(self, data, **kwargs):
         out = self.net(data)
 
