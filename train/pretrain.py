@@ -162,11 +162,11 @@ def make_data_regular(batch,half_model=False):
     #   timestamp_n:Field
     # ]
     if not isinstance(batch,(list,tuple)):
-        
-        batch = batch.half() if half_model else batch.float()
-        if len(batch.shape)==4:
-            channel_last = batch.shape[1] in [32,720] # (B, P, W, H )
-            if channel_last:batch = batch.permute(0,3,1,2)
+        if isinstance(batch,torch.Tensor):
+            batch = batch.half() if half_model else batch.float()
+            if len(batch.shape)==4:
+                channel_last = batch.shape[1] in [32,720] # (B, P, W, H )
+                if channel_last:batch = batch.permute(0,3,1,2)
         return batch
     else:
         return [make_data_regular(x,half_model=half_model) for x in batch]
@@ -324,6 +324,30 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
     if pred_channel_for_next_stamp and target is not None:
         target = target[:,pred_channel_for_next_stamp]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
+
+def once_forward_multibranch(model,i,start,end,dataset,time_step_1_mode):
+    assert len(start)==1
+    assert len(start[0])==2 # must be (batch_data, control_flag)
+    assert len(end) == 2
+
+    normlized_Field,control_flag = start[0]
+    target = end[0]
+    #print(normlized_Field.shape,torch.std_mean(normlized_Field))
+    out = model(normlized_Field, control_flag)
+
+    extra_loss = 0
+    extra_info_from_model_list = []
+    if isinstance(out,(list,tuple)):
+        extra_loss                 = out[1]
+        extra_info_from_model_list = out[2:]
+        out = out[0]
+    ltmv_pred = out
+    start   = [[ltmv_pred,control_flag]]
+    #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
+    #print(target.shape,torch.std_mean(target))
+
+    return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
+
 
 def once_forward_shift(model,i,start,end,dataset,time_step_1_mode):
     Field = Advection = None
@@ -512,8 +536,6 @@ def once_forward_deltaMode(model,i,start,end,dataset,time_step_1_mode):
     start   = start[1:] + [[base1 + (delta1*dataset.delta_std_tensor + dataset.delta_mean_tensor) ,ltmv_pred]]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
-
-
 def once_forward_self_relation(model,i,start,end,dataset,time_step_1_mode=None):
     assert len(start) == 1
     input_feature  = start[0]
@@ -530,7 +552,6 @@ def once_forward_self_relation(model,i,start,end,dataset,time_step_1_mode=None):
     start   = start[1:] + [None]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
-
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
     if 'Patch' in dataset.__class__.__name__:
         if model.pred_len > 1:
@@ -543,16 +564,16 @@ def once_forward(model,i,start,end,dataset,time_step_1_mode):
         return once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode)
     elif 'Delta' in dataset.__class__.__name__:
         return once_forward_deltaMode(model,i,start,end,dataset,time_step_1_mode)
+    elif 'Multibranch' in dataset.__class__.__name__:
+        return once_forward_multibranch(model,i,start,end,dataset,time_step_1_mode)
     elif dataset.__class__.__name__ == "WeathBench7066Self":
         return once_forward_self_relation(model,i,start,end,dataset,time_step_1_mode)
     elif hasattr(model,'flag_this_is_shift_model') or (hasattr(model,'module') and hasattr(model.module,'flag_this_is_shift_model')):
         return  once_forward_shift(model,i,start,end,dataset,time_step_1_mode)
+
     else:   
        return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
  
-
-
-
 def full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list):
     hidden_fourcast_list_next=[]
     extra_loss=0
@@ -897,7 +918,6 @@ def run_one_iter_normal(model, batch, criterion, status, gpu, dataset):
     for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
         end = batch[i:i+model.pred_len]
         end = end[0] if len(end) == 1 else end
-
         ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
         
             
@@ -1018,6 +1038,39 @@ class RandomSelectPatchFetcher:
             out = [t[0] for t in out]
         return out 
 
+class RandomSelectMultiBranchFetcher:
+    def __init__(self,data_loader,device):
+        dataset = data_loader.dataset
+        self.dataset   = dataset
+        self.batch_size = data_loader.batch_size 
+        self.img_shape  = dataset.img_shape
+        self.multibranch_select = multibranch_select = dataset.multibranch_select
+        self.length   = len(dataset) - max(multibranch_select)
+        self.time_step  = dataset.time_step
+        self.device   = device
+        self.use_time_stamp = dataset.use_time_stamp
+        self.timestamp    = dataset.timestamp
+    def next(self):
+        # we first pin the time_step 
+        time_intervel  = int(np.random.choice(self.multibranch_select))
+        batch_idx = np.random.randint(self.length, size=(self.batch_size,))# (B,)
+        batch = [[torch.from_numpy(np.stack([self.dataset.get_item(start + step*time_intervel) for start in batch_idx])).to(self.device),time_intervel] 
+                 for step in range(self.time_step)] 
+        return batch 
+
+
+def get_fetcher(status,data_loader):
+    if (status =='train' and \
+        data_loader.dataset.use_offline_data and \
+        data_loader.dataset.split=='train' and \
+        'Patch' in data_loader.dataset.__class__.__name__):
+      return RandomSelectPatchFetcher 
+    elif (status =='train' and 'Multibranch' in data_loader.dataset.__class__.__name__):
+        # notice we should not do valid when use this fetcher
+        return RandomSelectMultiBranchFetcher
+    else:
+        return Datafetcher
+
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     if optimizer.grad_modifier and optimizer.grad_modifier.__class__.__name__=='NGmod_RotationDeltaEThreeTwo':
         assert data_loader.dataset.time_step==3
@@ -1043,10 +1096,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
     rest_cost  = []
     now = time.time()
 
-    Fethcher   = RandomSelectPatchFetcher if( status =='train' and \
-                                              data_loader.dataset.use_offline_data and \
-                                              data_loader.dataset.split=='train' and \
-                                              'Patch' in data_loader.dataset.__class__.__name__) else Datafetcher
+    Fethcher   = get_fetcher(status,data_loader)
     device     = next(model.parameters()).device
     prefetcher = Fethcher(data_loader,device)
     #raise
@@ -1403,10 +1453,8 @@ def run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, op
     rest_cost  = []
     now = time.time()
 
-    Fethcher   = RandomSelectPatchFetcher if( status =='train' and \
-                                              data_loader.dataset.use_offline_data and \
-                                              data_loader.dataset.split=='train' and \
-                                              'Patch' in data_loader.dataset.__class__.__name__) else Datafetcher
+    
+    Fethcher   = get_fetcher(status,data_loader)
     device     = next(model.parameters()).device
     prefetcher = Fethcher(data_loader,device)
     #raise
@@ -2601,7 +2649,7 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
     val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
     g = torch.Generator()
     g.manual_seed(args.seed)
-    train_dataloader  = DataLoader(train_dataset, args.batch_size,   sampler=train_datasampler, num_workers=args.num_workers, pin_memory=True,
+    train_dataloader  = DataLoader(train_dataset, args.batch_size, sampler=train_datasampler, num_workers=args.num_workers, pin_memory=True,
                                    drop_last=True,worker_init_fn=seed_worker,generator=g,shuffle=True if ((not args.distributed) and args.do_train_shuffle) else False)
     val_dataloader    = DataLoader(val_dataset  , args.valid_batch_size, sampler=val_datasampler,   num_workers=args.num_workers, pin_memory=True, drop_last=False)
     return   train_dataset,   val_dataset, train_dataloader, val_dataloader
@@ -2771,7 +2819,8 @@ def parse_default_args(args):
     patch_size = args.patch_size = deal_with_tuple_string(args.patch_size,patch_size)
     img_size   = args.img_size   = deal_with_tuple_string(args.img_size,img_size)
     patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,None)
-    
+    multibranch_select = args.multibranch_select= deal_with_tuple_string(args.multibranch_select,None)
+    print(args.multibranch_select)
     if "Patch" in args.dataset_type:
         dataset_patch_range = args.dataset_patch_range = deal_with_tuple_string(args.dataset_patch_range,None)
     else:
@@ -2779,6 +2828,7 @@ def parse_default_args(args):
     dataset_kargs['img_size'] = img_size
     dataset_kargs['patch_range']= dataset_patch_range if dataset_patch_range else patch_range
     dataset_kargs['debug']= args.debug
+    dataset_kargs['multibranch_select']= args.multibranch_select
     args.dataset_kargs = dataset_kargs
     args.picked_input_property = args.picked_output_property = None
     if args.picked_inputoutput_property:
@@ -2804,7 +2854,7 @@ def parse_default_args(args):
         "in_chans": args.input_channel, 
         "out_chans": args.output_channel,
         "fno_blocks": args.fno_blocks,
-        "embed_dim": args.embed_dim if not args.debug else 32, 
+        "embed_dim": args.embed_dim if not args.debug else 16*6, 
         "depth": args.model_depth if not args.debug else 1,
         "debug_mode":args.debug,
         "double_skip":args.double_skip, 
@@ -3310,6 +3360,7 @@ def run_fourcast_during_training(args,epoch,logsys,model,test_dataloader):
     model.use_amp=use_amp 
     logsys.ckpt_root = origin_ckpt
     return Z500_now,test_dataloader
+
 def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     if local_rank==0:print(f"we are at mode={args.mode}")
@@ -3395,7 +3446,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if (args.fourcast_during_train and epoch==0 and args.pretrain_weight): # do fourcast once at begining
                 Z500_now, test_dataloader = run_fourcast_during_training(args, epoch-1, logsys, model, test_dataloader)  # will
                 if Z500_now > 0:logsys.record('Z500', Z500_now, epoch-1, epoch_flag='epoch') #<---only rank 0 tensor create Z500
-            if epoch == 0 and not args.skip_first_valid and args.mode != 'pretrain':
+            if (not args.more_epoch_train) and epoch == 0 and not args.skip_first_valid and args.mode != 'pretrain':
                 fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
                 val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=False)
@@ -3406,7 +3457,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             #torch.cuda.empty_cache()
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys,status='train') if 'small' in args.train_set else -1
             
-            if (epoch%args.valid_every_epoch == 0) or (epoch == args.epochs - 1):
+            if args.valid_every_epoch and ((epoch%args.valid_every_epoch == 0) or (epoch == args.epochs - 1)):
                 fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
                 val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             if (args.fourcast_during_train) and  (epoch%args.fourcast_during_train == 0):
