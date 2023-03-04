@@ -394,11 +394,33 @@ class Rotaty2DEmbedding(nn.Module):
             self.cos_m_theta_w = self.cos_m_theta_w.to(x.device)
             self.sin_m_theta_w = self.sin_m_theta_w.to(x.device)
             self.device = x.device
-        up_branch = x[0::2]
-        dw_branch = x[1::2]
+        up_branch = x[...,0::2]
+        dw_branch = x[...,1::2]
         assert up_branch.shape[-1] == dw_branch.shape[-1]
         L1 = up_branch*self.cos_m_theta_h - dw_branch*self.sin_m_theta_h
         L2 = up_branch*self.sin_m_theta_h + dw_branch*self.cos_m_theta_h
         L3 = up_branch*self.cos_m_theta_w - dw_branch*self.sin_m_theta_w
         L4 = up_branch*self.sin_m_theta_w + dw_branch*self.cos_m_theta_w
+        return torch.stack([L1,L2,L3,L4],-1).flatten(-2,-1)
+
+
+class Rotaty2DEmbeddingForth(Rotaty2DEmbedding):
+    def forward(self,x):
+        assert x.shape[-1] == 4 * \
+            self.embed_dim, f"except input have 4x{self.embed_dim}={4*self.embed_dim} in last dim, get {x.shape[-1]}"
+        if self.device is None:
+            self.cos_m_theta_h = self.cos_m_theta_h.to(x.device)
+            self.sin_m_theta_h = self.sin_m_theta_h.to(x.device)
+            self.cos_m_theta_w = self.cos_m_theta_w.to(x.device)
+            self.sin_m_theta_w = self.sin_m_theta_w.to(x.device)
+            self.device = x.device
+        a_branch = x[...,0::4]
+        b_branch = x[...,1::4]
+        c_branch = x[...,2::4]
+        d_branch = x[...,3::4]
+        assert a_branch.shape[-1] == b_branch.shape[-1] == c_branch.shape[-1]== d_branch.shape[-1]
+        L1 = a_branch*self.cos_m_theta_h - b_branch*self.sin_m_theta_h
+        L2 = a_branch*self.sin_m_theta_h + b_branch*self.cos_m_theta_h
+        L3 = c_branch*self.cos_m_theta_w - d_branch*self.sin_m_theta_w
+        L4 = c_branch*self.sin_m_theta_w + d_branch*self.cos_m_theta_w
         return torch.stack([L1,L2,L3,L4],-1).flatten(-2,-1)

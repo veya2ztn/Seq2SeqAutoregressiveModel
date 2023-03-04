@@ -14,7 +14,7 @@ from networks.megatron_utils.tensor_parallel.layers import ColumnParallelLinear,
 from networks.megatron_utils import mpu
 import networks.megatron_utils.utils
 
-from networks.utils.positional_encodings import Rotaty2DEmbedding
+from networks.utils.positional_encodings import Rotaty2DEmbedding, Rotaty2DEmbeddingForth
 
 class Cross_attn(nn.Module):
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0., proj_drop=0.) -> None:
@@ -502,9 +502,17 @@ class SD_attn(nn.Module):
             self.position_enc = rope3(window_size, head_dim)
         self.relative_position_embedding_layer = None
         if relative_position_embedding_layer:
-            self.relative_position_embedding_layer = Rotaty2DEmbedding(
-                embed_dim=head_dim//2, w=self.window_size[0], h=self.window_size[1])
+            #print(relative_position_embedding_layer)
+            if 'two' in relative_position_embedding_layer:
+                self.relative_position_embedding_layer = Rotaty2DEmbedding(
+                    embed_dim=head_dim//2, w=self.window_size[0], h=self.window_size[1])
+                
+            elif 'forth' in relative_position_embedding_layer :
+                self.relative_position_embedding_layer = Rotaty2DEmbeddingForth(
+                    embed_dim=head_dim//4, w=self.window_size[0], h=self.window_size[1])
 
+            else:
+                raise 
     def create_mask(self, x):
         # calculate attention mask for SW-MSA
         # 保证Hp和Wp是window_size的整数倍
@@ -625,6 +633,7 @@ class SD_attn(nn.Module):
         k = self.position_enc(k.reshape(-1, *self.window_size, C // self.num_heads)).reshape(B_, self.num_heads, -1, C // self.num_heads) # B,head,L,D
         # print(q.shape)
         # print(k.shape)
+
         if self.relative_position_embedding_layer is not None:
             q = self.relative_position_embedding_layer(q)
             k = self.relative_position_embedding_layer(k)

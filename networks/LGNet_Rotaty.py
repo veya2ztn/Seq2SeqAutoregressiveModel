@@ -117,7 +117,7 @@ class LG_net(nn.Module):
                  window_size=(2, 4, 8), mlp_ratio=4., qkv_bias=True,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=partial(nn.LayerNorm, eps=1e-6), patch_norm=False, use_checkpoint=False, 
-                 use_pos_embed='add_at_everywhere.rotaty'):
+                 use_pos_embed='add_at_everywhere.rotaty.forth'):
         super().__init__()
         assert use_pos_embed
         self.num_layers = len(depths)
@@ -139,7 +139,8 @@ class LG_net(nn.Module):
         # stochastic depth
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
 
-        relative_position_embedding_layer = True#(use_pos_embed == 'add_at_everywhere.rotaty')
+        # (use_pos_embed == 'add_at_everywhere.rotaty')
+        relative_position_embedding_layer = 'add_at_everywhere.rotaty.forth'
         # build layers
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
@@ -175,15 +176,19 @@ class LG_net(nn.Module):
         if self.use_pos_embed == 'add_at_begining.normal':
             self.pos_embed = nn.Parameter(torch.zeros(1, self.img_size[0]//self.patch_size[-2]*self.img_size[1]//self.patch_size[-1], self.embed_dim)) 
             nn.init.trunc_normal_(self.pos_embed, std=.02)
-        elif self.use_pos_embed in ['add_at_begining.rotaty','add_at_everywhere.rotaty']:
+        elif self.use_pos_embed == 'add_at_everywhere.rotaty.two':
             self.pos_embed = Rotaty2DEmbedding(embed_dim=self.embed_dim//4, w=self.img_size[0], h=self.img_size[1])
+        elif self.use_pos_embed in ['add_at_begining.rotaty','add_at_everywhere.rotaty.forth']:
+            self.pos_embed = Rotaty2DEmbeddingForth(
+                embed_dim=self.embed_dim//4, w=self.img_size[0], h=self.img_size[1])
         else:
             self.pos_embed = 0
 
     def apply_pos_embded(self,x):
         if self.use_pos_embed == 'add_at_begining.normal':
             x = x + self.use_pos_embed
-        elif self.use_pos_embed in ['add_at_begining.rotaty','add_at_everywhere.rotaty']:
+
+        elif self.use_pos_embed in ['add_at_begining.rotaty','add_at_everywhere.rotaty.two', 'add_at_everywhere.rotaty.forth']:
             x = self.pos_embed(x.unsqueeze(1)).squeeze(1)
         else:
             pass

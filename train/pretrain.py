@@ -2681,7 +2681,6 @@ def get_projectname(args):
         #if hasattr(args,'cross_sample') and args.cross_sample:project_name = project_name + f"_random_dataset"
         #print(project_name)
     return model_name, datasetname,project_name
-
 def deal_with_tuple_string(patch_size,defult=None,dtype=int):
     if isinstance(patch_size,str):
         if len(patch_size)>0:
