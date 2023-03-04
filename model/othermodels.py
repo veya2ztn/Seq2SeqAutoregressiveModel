@@ -173,6 +173,83 @@ try:
         def forward(self,x):
             return self.backbone(x)[:,:69]
     
+    from einops import rearrange    
+    class DecodeEncodeLgNet(LGNet):
+        def __init__(self, *args, **kargs):
+            super().__init__(img_size=kargs.get("img_size", (32, 64)), patch_size=[1, 1],
+                    in_chans=kargs.get("in_chans", 70),
+                    out_chans=kargs.get("out_chans", 70),
+                    embed_dim=kargs.get("embed_dim", 768),
+                    window_size=(4, 8),
+                    depths=[4, 4, 4],
+                    num_heads=[6, 6, 6],
+                    Weather_T=1, use_pos_embed=False)
+        def encode(self, x):
+            assert len(self.net.layers)>1
+            # x: [B, C, H, W]
+            B = x.shape[0]
+            x, T, H, W = self.net.patch_embed(x)  # x:[B, H*W, C]
+            x = x + self.net.pos_embed
+            x = self.net.pos_drop(x)
+            if len(self.net.window_size) == 3:
+                x = x.view(B, T, H, W, -1)
+            elif len(self.net.window_size) == 2:
+                x = x.view(B, H, W, -1)
+
+            for layer in self.net.layers[:-1]:
+                x = layer(x)
+            return x
+        def decode(self,x):
+            assert len(self.net.layers)>1
+            x = self.net.layers[-1](x)
+            x = self.net.final(x)
+            x = rearrange(x, "b h w (p1 p2 c_out) -> b c_out (h p1) (w p2)",
+                            p1=self.net.patch_size[-2],
+                            p2=self.net.patch_size[-1],
+                            h=self.net.img_size[0] // self.net.patch_size[-2],
+                            w=self.net.img_size[1] // self.net.patch_size[-1],
+                          )
+            return x
+        
+        def forward(self,x):
+            return self.decode(self.encode(x))
+
+
+    import copy
+    class LgNet_MultiBranch(nn.Module):
+        '''
+            use it as wrapper model.
+        '''
+        def __init__(self, args, backbone):
+            super().__init__()
+            self.backbone = backbone
+            self.new_branch= nn.ModuleList()
+            assert isinstance(args.multibranch_select,(list,tuple))
+            self.multibranch_select = args.multibranch_select
+            # notice the first branch should be the pretrain model branch.
+            for _ in args.multibranch_select[1:]:
+                self.new_branch.append(
+                    nn.Sequential(
+                    copy.deepcopy(self.backbone.net.layers[-1]),
+                    copy.deepcopy(self.backbone.net.final),
+                    Rearrange("b h w (p1 p2 c_out) -> b c_out (h p1) (w p2)",
+                            p1=self.backbone.net.patch_size[-2],
+                            p2=self.backbone.net.patch_size[-1],
+                            h=self.backbone.net.img_size[0] // self.backbone.net.patch_size[-2],
+                            w=self.backbone.net.img_size[1] // self.backbone.net.patch_size[-1],)
+                    )
+                )
+        def decode(self,x,branch_flag):
+            control_flag = self.multibranch_select.index(branch_flag)
+            if control_flag == 0 :
+                return self.backbone.decode(x)
+            else:
+                return self.new_branch[control_flag-1](x)
+
+        def forward(self, x, branch_flag):
+            assert isinstance(branch_flag,int)
+            return self.decode(self.backbone.encode(x), branch_flag)
+        
 except:
     class CK_SWDformer_3264(BaseModel):pass
 

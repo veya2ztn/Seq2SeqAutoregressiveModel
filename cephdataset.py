@@ -1033,6 +1033,27 @@ class WeathBench32x64Dailynorm(WeathBench32x64SPnorm):
         #x = x/torch.from_numpy(self.std[None]).to(x.device)#notice when generate daily norm, then we wont divide this more.
         return x
 
+
+class WeathBench32x64MultibranchRandom(WeathBench32x64):
+    def __init__(self, **kargs):
+        use_offline_data = kargs.get('use_offline_data', 0)
+        time_intervel   = kargs.get('time_intervel', 1)
+        assert time_intervel == 1
+        assert use_offline_data == 0
+        super().__init__(**kargs)
+        self.multibranch_select= [int(t) for t in kargs['multibranch_select']]
+    
+
+    def __getitem__(self, idx):
+        reversed_part = self.do_time_reverse(idx)
+        time_step = np.random.choice(self.multibranch_select)
+        print(f"we use random time_step:{time_step}.However, this line should not appear here. You need call a random fetcher outside" )
+        time_step_list = [idx+i*self.time_intervel for i in range(time_step)]
+        if reversed_part:time_step_list = time_step_list[::-1]
+        batch = [self.get_item(i, reversed_part) for i in time_step_list]
+        self.error_path = []
+        return batch if not self.with_idx else (idx, batch)
+
     
 class WeathBench32x64CK(WeathBench):
     default_root = 'datasets/weatherbench32x64'
