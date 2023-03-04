@@ -162,11 +162,11 @@ def make_data_regular(batch,half_model=False):
     #   timestamp_n:Field
     # ]
     if not isinstance(batch,(list,tuple)):
-        
-        batch = batch.half() if half_model else batch.float()
-        if len(batch.shape)==4:
-            channel_last = batch.shape[1] in [32,720] # (B, P, W, H )
-            if channel_last:batch = batch.permute(0,3,1,2)
+        if isinstance(batch,torch.Tensor):
+            batch = batch.half() if half_model else batch.float()
+            if len(batch.shape)==4:
+                channel_last = batch.shape[1] in [32,720] # (B, P, W, H )
+                if channel_last:batch = batch.permute(0,3,1,2)
         return batch
     else:
         return [make_data_regular(x,half_model=half_model) for x in batch]
@@ -330,10 +330,10 @@ def once_forward_multibranch(model,i,start,end,dataset,time_step_1_mode):
     assert len(start[0])==2 # must be (batch_data, control_flag)
     assert len(end) == 2
 
-    normlized_Field,control_flag = start[0][0]
+    normlized_Field,control_flag = start[0]
     target = end[0]
     #print(normlized_Field.shape,torch.std_mean(normlized_Field))
-    out   = model(normlized_Field)
+    out = model(normlized_Field, control_flag)
 
     extra_loss = 0
     extra_info_from_model_list = []
@@ -918,7 +918,6 @@ def run_one_iter_normal(model, batch, criterion, status, gpu, dataset):
     for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
         end = batch[i:i+model.pred_len]
         end = end[0] if len(end) == 1 else end
-
         ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
         
             
@@ -1044,22 +1043,18 @@ class RandomSelectMultiBranchFetcher:
         dataset = data_loader.dataset
         self.dataset   = dataset
         self.batch_size = data_loader.batch_size 
-        self.patch_range = dataset.patch_range
         self.img_shape  = dataset.img_shape
-        self.around_index = dataset.around_index
-        self.center_index = dataset.center_index
         self.multibranch_select = multibranch_select = dataset.multibranch_select
         self.length   = len(dataset) - max(multibranch_select)
         self.time_step  = dataset.time_step
         self.device   = device
         self.use_time_stamp = dataset.use_time_stamp
-        self.use_position_idx= dataset.use_position_idx
         self.timestamp    = dataset.timestamp
     def next(self):
         # we first pin the time_step 
-        time_intervel  = np.random.choice(self.multibranch_select)
+        time_intervel  = int(np.random.choice(self.multibranch_select))
         batch_idx = np.random.randint(self.length, size=(self.batch_size,))# (B,)
-        batch = [[torch.from_numpy(np.stack([self.get_item(start + step*time_intervel) for start in batch_idx])).to(self.device),time_intervel] 
+        batch = [[torch.from_numpy(np.stack([self.dataset.get_item(start + step*time_intervel) for start in batch_idx])).to(self.device),time_intervel] 
                  for step in range(self.time_step)] 
         return batch 
 
@@ -2825,7 +2820,8 @@ def parse_default_args(args):
     patch_size = args.patch_size = deal_with_tuple_string(args.patch_size,patch_size)
     img_size   = args.img_size   = deal_with_tuple_string(args.img_size,img_size)
     patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,None)
-    
+    multibranch_select = args.multibranch_select= deal_with_tuple_string(args.multibranch_select,None)
+    print(args.multibranch_select)
     if "Patch" in args.dataset_type:
         dataset_patch_range = args.dataset_patch_range = deal_with_tuple_string(args.dataset_patch_range,None)
     else:
@@ -2833,6 +2829,7 @@ def parse_default_args(args):
     dataset_kargs['img_size'] = img_size
     dataset_kargs['patch_range']= dataset_patch_range if dataset_patch_range else patch_range
     dataset_kargs['debug']= args.debug
+    dataset_kargs['multibranch_select']= args.multibranch_select
     args.dataset_kargs = dataset_kargs
     args.picked_input_property = args.picked_output_property = None
     if args.picked_inputoutput_property:
@@ -2858,7 +2855,7 @@ def parse_default_args(args):
         "in_chans": args.input_channel, 
         "out_chans": args.output_channel,
         "fno_blocks": args.fno_blocks,
-        "embed_dim": args.embed_dim if not args.debug else 32, 
+        "embed_dim": args.embed_dim if not args.debug else 16*6, 
         "depth": args.model_depth if not args.debug else 1,
         "debug_mode":args.debug,
         "double_skip":args.double_skip, 
@@ -3450,7 +3447,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if (args.fourcast_during_train and epoch==0 and args.pretrain_weight): # do fourcast once at begining
                 Z500_now, test_dataloader = run_fourcast_during_training(args, epoch-1, logsys, model, test_dataloader)  # will
                 if Z500_now > 0:logsys.record('Z500', Z500_now, epoch-1, epoch_flag='epoch') #<---only rank 0 tensor create Z500
-            if epoch == 0 and not args.skip_first_valid and args.mode != 'pretrain':
+            if (not args.more_epoch_train) and epoch == 0 and not args.skip_first_valid and args.mode != 'pretrain':
                 fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
                 val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=False)
@@ -3461,7 +3458,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             #torch.cuda.empty_cache()
             #train_loss = single_step_evaluate(train_dataloader, model, criterion,epoch,logsys,status='train') if 'small' in args.train_set else -1
             
-            if (epoch%args.valid_every_epoch == 0) or (epoch == args.epochs - 1):
+            if args.valid_every_epoch and ((epoch%args.valid_every_epoch == 0) or (epoch == args.epochs - 1)):
                 fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
                 val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             if (args.fourcast_during_train) and  (epoch%args.fourcast_during_train == 0):
