@@ -376,15 +376,27 @@ class Rotaty2DEmbedding(nn.Module):
         cos_m_theta_w = torch.cos(mtheta_w).unsqueeze(0).repeat(w,1,1).reshape(1,1,w*h,embed_dim)
         sin_m_theta_w = torch.sin(mtheta_w).unsqueeze(0).repeat(w,1,1).reshape(1,1,w*h,embed_dim)
         self.embed_dim = embed_dim
-        self.register_buffer("cos_m_theta_h",cos_m_theta_h)
-        self.register_buffer("sin_m_theta_h",sin_m_theta_h)
-        self.register_buffer("cos_m_theta_w",cos_m_theta_w)
-        self.register_buffer("sin_m_theta_w",sin_m_theta_w)
-    
+        self.cos_m_theta_h = cos_m_theta_h
+        self.sin_m_theta_h = sin_m_theta_h
+        self.cos_m_theta_w = cos_m_theta_w
+        self.sin_m_theta_w = sin_m_theta_w
+        # self.register_buffer("cos_m_theta_h",cos_m_theta_h)
+        # self.register_buffer("sin_m_theta_h",sin_m_theta_h)
+        # self.register_buffer("cos_m_theta_w",cos_m_theta_w)
+        # self.register_buffer("sin_m_theta_w",sin_m_theta_w)
+        self.device = None
     def forward(self,x):
         assert x.shape[-1] == 2 * \
             self.embed_dim, f"except input have {2*self.embed_dim} in last dim, get {x.shape[-1]}"
-        up_branch, dw_branch = torch.split(x,self.embed_dim,-1)
+        if self.device is None:
+            self.cos_m_theta_h = self.cos_m_theta_h.to(x.device)
+            self.sin_m_theta_h = self.sin_m_theta_h.to(x.device)
+            self.cos_m_theta_w = self.cos_m_theta_w.to(x.device)
+            self.sin_m_theta_w = self.sin_m_theta_w.to(x.device)
+            self.device = x.device
+        up_branch = x[0::2]
+        dw_branch = x[1::2]
+        assert up_branch.shape[-1] == dw_branch.shape[-1]
         L1 = up_branch*self.cos_m_theta_h - dw_branch*self.sin_m_theta_h
         L2 = up_branch*self.sin_m_theta_h + dw_branch*self.cos_m_theta_h
         L3 = up_branch*self.cos_m_theta_w - dw_branch*self.sin_m_theta_w
