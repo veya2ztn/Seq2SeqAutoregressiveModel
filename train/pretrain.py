@@ -325,6 +325,30 @@ def once_forward_normal(model,i,start,end,dataset,time_step_1_mode):
         target = target[:,pred_channel_for_next_stamp]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
+def once_forward_multibranch(model,i,start,end,dataset,time_step_1_mode):
+    assert len(start)==1
+    assert len(start[0])==2 # must be (batch_data, control_flag)
+    assert len(end) == 2
+
+    normlized_Field,control_flag = start[0][0]
+    target = end[0]
+    #print(normlized_Field.shape,torch.std_mean(normlized_Field))
+    out   = model(normlized_Field)
+
+    extra_loss = 0
+    extra_info_from_model_list = []
+    if isinstance(out,(list,tuple)):
+        extra_loss                 = out[1]
+        extra_info_from_model_list = out[2:]
+        out = out[0]
+    ltmv_pred = out
+    start   = [[ltmv_pred,control_flag]]
+    #print(ltmv_pred.shape,torch.std_mean(ltmv_pred))
+    #print(target.shape,torch.std_mean(target))
+
+    return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
+
+
 def once_forward_shift(model,i,start,end,dataset,time_step_1_mode):
     Field = Advection = None
     assert len(start) == 2
@@ -512,8 +536,6 @@ def once_forward_deltaMode(model,i,start,end,dataset,time_step_1_mode):
     start   = start[1:] + [[base1 + (delta1*dataset.delta_std_tensor + dataset.delta_mean_tensor) ,ltmv_pred]]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
-
-
 def once_forward_self_relation(model,i,start,end,dataset,time_step_1_mode=None):
     assert len(start) == 1
     input_feature  = start[0]
@@ -530,7 +552,6 @@ def once_forward_self_relation(model,i,start,end,dataset,time_step_1_mode=None):
     start   = start[1:] + [None]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
-
 def once_forward(model,i,start,end,dataset,time_step_1_mode):
     if 'Patch' in dataset.__class__.__name__:
         if model.pred_len > 1:
@@ -543,16 +564,16 @@ def once_forward(model,i,start,end,dataset,time_step_1_mode):
         return once_forward_with_timestamp(model,i,start,end,dataset,time_step_1_mode)
     elif 'Delta' in dataset.__class__.__name__:
         return once_forward_deltaMode(model,i,start,end,dataset,time_step_1_mode)
+    elif 'Multibranch' in dataset.__class__.__name__:
+        return once_forward_multibranch(model,i,start,end,dataset,time_step_1_mode)
     elif dataset.__class__.__name__ == "WeathBench7066Self":
         return once_forward_self_relation(model,i,start,end,dataset,time_step_1_mode)
     elif hasattr(model,'flag_this_is_shift_model') or (hasattr(model,'module') and hasattr(model.module,'flag_this_is_shift_model')):
         return  once_forward_shift(model,i,start,end,dataset,time_step_1_mode)
+
     else:   
        return  once_forward_normal(model,i,start,end,dataset,time_step_1_mode)
  
-
-
-
 def full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list):
     hidden_fourcast_list_next=[]
     extra_loss=0
@@ -1018,6 +1039,43 @@ class RandomSelectPatchFetcher:
             out = [t[0] for t in out]
         return out 
 
+class RandomSelectMultiBranchFetcher:
+    def __init__(self,data_loader,device):
+        dataset = data_loader.dataset
+        self.dataset   = dataset
+        self.batch_size = data_loader.batch_size 
+        self.patch_range = dataset.patch_range
+        self.img_shape  = dataset.img_shape
+        self.around_index = dataset.around_index
+        self.center_index = dataset.center_index
+        self.multibranch_select = multibranch_select = dataset.multibranch_select
+        self.length   = len(dataset) - max(multibranch_select)
+        self.time_step  = dataset.time_step
+        self.device   = device
+        self.use_time_stamp = dataset.use_time_stamp
+        self.use_position_idx= dataset.use_position_idx
+        self.timestamp    = dataset.timestamp
+    def next(self):
+        # we first pin the time_step 
+        time_intervel  = np.random.choice(self.multibranch_select)
+        batch_idx = np.random.randint(self.length, size=(self.batch_size,))# (B,)
+        batch = [[torch.from_numpy(np.stack([self.get_item(start + step*time_intervel) for start in batch_idx])).to(self.device),time_intervel] 
+                 for step in range(self.time_step)] 
+        return batch 
+
+
+def get_fetcher(status,data_loader):
+    if (status =='train' and \
+        data_loader.dataset.use_offline_data and \
+        data_loader.dataset.split=='train' and \
+        'Patch' in data_loader.dataset.__class__.__name__):
+      return RandomSelectPatchFetcher 
+    elif (status =='train' and 'Multibranch' in data_loader.dataset.__class__.__name__):
+        # notice we should not do valid when use this fetcher
+        return RandomSelectMultiBranchFetcher
+    else:
+        return Datafetcher
+
 def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     if optimizer.grad_modifier and optimizer.grad_modifier.__class__.__name__=='NGmod_RotationDeltaEThreeTwo':
         assert data_loader.dataset.time_step==3
@@ -1043,10 +1101,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
     rest_cost  = []
     now = time.time()
 
-    Fethcher   = RandomSelectPatchFetcher if( status =='train' and \
-                                              data_loader.dataset.use_offline_data and \
-                                              data_loader.dataset.split=='train' and \
-                                              'Patch' in data_loader.dataset.__class__.__name__) else Datafetcher
+    Fethcher   = get_fetcher(status,data_loader)
     device     = next(model.parameters()).device
     prefetcher = Fethcher(data_loader,device)
     #raise
@@ -1403,10 +1458,8 @@ def run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, op
     rest_cost  = []
     now = time.time()
 
-    Fethcher   = RandomSelectPatchFetcher if( status =='train' and \
-                                              data_loader.dataset.use_offline_data and \
-                                              data_loader.dataset.split=='train' and \
-                                              'Patch' in data_loader.dataset.__class__.__name__) else Datafetcher
+    
+    Fethcher   = get_fetcher(status,data_loader)
     device     = next(model.parameters()).device
     prefetcher = Fethcher(data_loader,device)
     #raise
@@ -2601,7 +2654,7 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
     val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
     g = torch.Generator()
     g.manual_seed(args.seed)
-    train_dataloader  = DataLoader(train_dataset, args.batch_size,   sampler=train_datasampler, num_workers=args.num_workers, pin_memory=True,
+    train_dataloader  = DataLoader(train_dataset, args.batch_size, sampler=train_datasampler, num_workers=args.num_workers, pin_memory=True,
                                    drop_last=True,worker_init_fn=seed_worker,generator=g,shuffle=True if ((not args.distributed) and args.do_train_shuffle) else False)
     val_dataloader    = DataLoader(val_dataset  , args.valid_batch_size, sampler=val_datasampler,   num_workers=args.num_workers, pin_memory=True, drop_last=False)
     return   train_dataset,   val_dataset, train_dataloader, val_dataloader
@@ -3311,6 +3364,7 @@ def run_fourcast_during_training(args,epoch,logsys,model,test_dataloader):
     model.use_amp=use_amp 
     logsys.ckpt_root = origin_ckpt
     return Z500_now,test_dataloader
+
 def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     if local_rank==0:print(f"we are at mode={args.mode}")
