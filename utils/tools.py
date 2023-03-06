@@ -35,12 +35,14 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
             if "lgnet" in model_state_dict:
                 model_state_dict = model_state_dict["lgnet"]
 
-            model_first_key = list(model.state_dict().keys())
+            model_keys = list(model.state_dict().keys())
             new_state_dict = {}
             for key,val in model_state_dict.items():
                 key = key.replace("module.","").replace("_orig_mod.","")
-                if "backbone.net." in key and np.all(['backbone.net.' not in k for k in model_first_key]):
+                if "backbone.net." in key and np.all(['backbone.net.' not in k for k in model_keys]):
                     key  = key.replace("backbone.net.","net.")
+                if "backbone.net." not in key and np.any(['backbone.net.' in k for k in model_keys]):
+                    key = key.replace("net.","backbone.net.")
                 new_state_dict[key] = val
             model_state_dict = new_state_dict
             

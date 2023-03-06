@@ -158,7 +158,7 @@ try:
         def forward(self,x,cross):
             return self.backbone(x,cross)
 
-    class CK_LgNet_138(LGNet):
+    class CK_LgNet_138(BaseModel):
         def __init__(self,*args,**kargs):
             super().__init__()
             print("this is pre-set model, we disable all config")
