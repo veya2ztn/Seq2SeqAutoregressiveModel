@@ -1611,7 +1611,6 @@ class WeathBench7066PatchDataset(WeathBench7066):
         return batch if not self.with_idx else (idx,batch)
 
 
-
 if __name__ == "__main__":
     import sys
     import time
@@ -1619,48 +1618,50 @@ if __name__ == "__main__":
     from multiprocessing import Pool
     from petrel_client.client import Client
     import petrel_client
-    dataset = ERA5CephDataset(split='train')
-    print(len(dataset[0]))
-  
-    def load_data_range(dataset, start, end):
-        for i in tqdm(range(start, end)):
-            _ = dataset[i]
+    dataset = WeathBench64x128(split='test',root='weatherbench:s3://weatherbench/weatherbench32x64/npy')
+    print(len(dataset))
+    print(dataset[0].shape)
 
-    def parallel_load_data(dataset):
-        total_len = len(dataset)
-        processor = 10
-        range_list = np.linspace(0, total_len, processor+1)
-        range_list = [int(a) for a in range_list]
-        print(range_list)
-        res = []
-        p = Pool(processor)
-        for i in range(processor):
-            res.append(p.apply_async(load_data_range, args=(
-                dataset, range_list[i], range_list[i+1])))
-            print(str(i) + ' processor started !')
-        p.close()
-        p.join()
-
-    def check_range(dataset, start, end):
-        fail_list = []
-        for i in tqdm(range(start, end)):
-            if i > len(dataset):
-                continue
-            now_time = time.time()
-            try:
-                _ = dataset[i]
-            except:
-                print(f"fail at {i}")
-            fail_list.append(i)
-            cost = time.time() - now_time
-            #print(cost)
-        return fail_list
-    dataset = ERA5CephDataset(split='train')
-    print(ERA5CephDataset.__name__)
-    print(dataset[0])
     
-    print(len(dataset[0]))
-    print(len(dataset[1]))
+    # def load_data_range(dataset, start, end):
+    #     for i in tqdm(range(start, end)):
+    #         _ = dataset[i]
+
+    # def parallel_load_data(dataset):
+    #     total_len = len(dataset)
+    #     processor = 10
+    #     range_list = np.linspace(0, total_len, processor+1)
+    #     range_list = [int(a) for a in range_list]
+    #     print(range_list)
+    #     res = []
+    #     p = Pool(processor)
+    #     for i in range(processor):
+    #         res.append(p.apply_async(load_data_range, args=(
+    #             dataset, range_list[i], range_list[i+1])))
+    #         print(str(i) + ' processor started !')
+    #     p.close()
+    #     p.join()
+
+    # def check_range(dataset, start, end):
+    #     fail_list = []
+    #     for i in tqdm(range(start, end)):
+    #         if i > len(dataset):
+    #             continue
+    #         now_time = time.time()
+    #         try:
+    #             _ = dataset[i]
+    #         except:
+    #             print(f"fail at {i}")
+    #         fail_list.append(i)
+    #         cost = time.time() - now_time
+    #         #print(cost)
+    #     return fail_list
+    # dataset = ERA5CephDataset(split='train')
+    # print(ERA5CephDataset.__name__)
+    # print(dataset[0])
+    
+    # print(len(dataset[0]))
+    # print(len(dataset[1]))
 
 
     raise
