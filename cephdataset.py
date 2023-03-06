@@ -1046,9 +1046,11 @@ class WeathBench32x64MultibranchRandom(WeathBench32x64):
 
     def __getitem__(self, idx):
         reversed_part = self.do_time_reverse(idx)
-        time_step = np.random.choice(self.multibranch_select)
-        print(f"we use random time_step:{time_step}.However, this line should not appear here. You need call a random fetcher outside" )
-        time_step_list = [idx+i*self.time_intervel for i in range(time_step)]
+        time_intervel = self.time_intervel
+        if self.split=='train':
+            time_intervel = np.random.choice(self.multibranch_select)
+            print(f"we use random time_intervel:{time_intervel}.However, this line should not appear here. You need call a random fetcher outside" )
+        time_step_list = [idx+i*time_intervel for i in range(self.time_step)]
         if reversed_part:time_step_list = time_step_list[::-1]
         batch = [self.get_item(i, reversed_part) for i in time_step_list]
         self.error_path = []

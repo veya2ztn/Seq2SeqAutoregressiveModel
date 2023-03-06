@@ -333,6 +333,7 @@ def once_forward_multibranch(model,i,start,end,dataset,time_step_1_mode):
     normlized_Field,control_flag = start[0]
     target = end[0]
     #print(normlized_Field.shape,torch.std_mean(normlized_Field))
+
     out = model(normlized_Field, control_flag)
 
     extra_loss = 0
@@ -801,10 +802,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
         # loss += error
 
     return loss, diff, iter_info_pool, None, None
-        
-        
-    
-
+            
 def esitimate_longterm_error(a0,a1, n =10):
     """
         # X0 X1 X2
@@ -1959,9 +1957,16 @@ def recovery_tensor(dataset,start,end,ltmv_pred,target,index=None,model=None):
         
         return ltmv_pred,target
 
-def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,
+def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,**kargs):
+    if 'Multibranch' in dataset.__class__.__name__:
+        #assert 'MultiBranch' in model.module or model
+        return run_one_fourcast_iter_multi_branch(model, batch, idxes, fourcastresult,dataset,**kargs)
+    else:
+        return run_one_fourcast_iter_single_branch(model, batch, idxes, fourcastresult,dataset,**kargs)
+
+def run_one_fourcast_iter_single_branch(model, batch, idxes, fourcastresult,dataset,
                     save_prediction_first_step=None,save_prediction_final_step=None,
-                    snap_index=None,do_error_propagration_monitor=False):
+                    snap_index=None,do_error_propagration_monitor=False,**kargs):
     
         
     accu_series=[]
@@ -2134,7 +2139,218 @@ def run_one_fourcast_iter_with_history(model, start, batch, idxes, fourcastresul
         fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse}
     return fourcastresult,extra_info
 
-def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do_error_propagration_monitor=False):
+def compute_multibranch_route(order='do_small_first' ,max_time_step = 121,divide_num=[24, 12, 6, 1]):
+    order_table={
+        'do_small_first' : [3,2,1,0],
+        'do_large_first' : [0,1,2,3]
+    }
+    if order in order_table:
+        order = order_table[order]
+        combination_element = {}
+        combination_to_target={}
+        for target in range(0,max_time_step):
+            res = target
+            combination_element[target] = []
+            for divide_num in [24, 12, 6, 1]:
+                num = res//divide_num
+                res = res%divide_num
+                combination_element[target].append((num,divide_num))
+            combination_to_target[tuple(combination_element[target])]  = target
+
+        father_to_child = {}
+        child_to_father = {}
+
+        for target in range(1,max_time_step-1):
+            combination = combination_element[target]
+            father_combination = [None,None,None,None]
+            reduced = False
+            for  i in order:# from 1 -> 6 -> 12 -> 24  or from 24 -> 12 -> 6 -> 1 
+                num, element = combination[i]
+                if num ==0 or reduced:
+                    father_combination[i] = (num,element)
+                    continue
+                else:
+                    father_combination[i] = (num-1,element)
+                    reduced = True
+            father_combination = tuple(father_combination)
+            assert father_combination in combination_to_target, print(father_combination)
+            father = combination_to_target[father_combination]
+            child_to_father[target] = father
+            if father not in father_to_child:father_to_child[father]=[]
+            father_to_child[father].append(target)
+            father_life_time = {}
+            for key, val in father_to_child.items():
+                father_life_time[key] = max(val)
+        return father_to_child, child_to_father, father_life_time
+    else:
+        print(f"===> detact we are using {order} mode to control multibranch model")
+        if "step" in order: # step_3 step_6 step_1 step_12 step_24
+            time_intervel = int(order.split("_")[-1])
+            father_to_child  = None
+            child_to_father  = dict([(i,i-time_intervel) for i in range(max_time_step)])
+            father_life_time = dict([(i-time_intervel,i) for i in range(max_time_step)])
+        else:
+            raise NotImplementedError
+
+        return father_to_child, child_to_father, father_life_time
+def run_one_fourcast_iter_multi_branch(model, batch, idxes, fourcastresult,dataset,
+                    save_prediction_first_step=None,save_prediction_final_step=None,
+                    snap_index=None,do_error_propagration_monitor=False,order = 'do_large_first',**kargs):
+    
+    """
+    In this branch, the model should be a multibranch model which input model(x, branch_flag) get the prediction for assigned branch.
+
+    The prediction will continuly autoregression to `time_step` prediction target.
+
+    There a many route can be chosed to compute target prediction. For example, one can achieve 7 time_step by 1+6 or 6+1 or 1+1+1+1+1+1.
+    Notice the error propagation is different. 
+
+    To achieve the correct prediction, we need provide the compute route for each target. For example, use 1+6 or 6+1 compute 7.
+
+    """
+    time_step_1_mode=False
+    extra_info = {}
+    assert not do_error_propagration_monitor
+    assert dataset.time_intervel == 1 # <-- must be 1, temperaly.
+    assert model.history_length == 1 # <-- now only support use 1 timestep
+    assert model.pred_len == 1
+    accu_series              = []
+    rmse_series              = []
+    rmse_maps                = []
+    hmse_series              = []
+    mse_serise               = []
+    batch_variance_line_pred = []
+    batch_variance_line_true = []
+    
+    # we will also record the variance for each slot, assume the input is a time series of data
+    # [ (B, P, W, H) -> (B, P, W, H) -> .... -> (B, P, W, H) ,(B, P, W, H)]
+    # we would record the variance of each batch on the location (W,H)
+    error_information = None
+    clim = model.clim
+    
+    start = batch[0:model.history_length] # start must be a list    
+    snap_line = []
+    if (snap_index is not None) and (0 not in [len(t) for t in snap_index]):  
+        for i,tensor in enumerate(start):
+            snap_line.append([len(snap_line), get_tensor_value(tensor,snap_index, time=model.history_length),'input'])
+    
+    # We will mantain a buffer that record record "All" computing. 
+    # We quote `All` cause, we will delte the buffer if it will not be used anymore. This is realized by mantain a life-line table. 
+    prediction_buffer = {0:batch[0]}
+    
+    father_to_child,  child_to_father, father_life_time_table =  order
+    
+    
+    for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
+        
+        #assert len(end) == 2 and end[1]==1 # <-- dataset.time_intervel = 1 and we only return the tensor.
+        child_number = i
+        father_number = child_to_father[i] 
+        if order in ["do_small_first","do_large_first"]:
+            assert father_number in prediction_buffer
+        else:
+            if father_number not in prediction_buffer: # we skip those nonsense data. # notice in this framework we allocate all target together.
+                continue
+        start = [[prediction_buffer[father_number], child_number - father_number ]]
+        end   = [batch[i], None] #<-- set None should be ok
+        #print(father_number - child_number)
+        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward_multibranch(model,i,start,end,dataset,time_step_1_mode)
+        prediction_buffer[i] = ltmv_pred
+        if  father_life_time_table[father_number] <= i: # once the father reach the exit time, we delte it. ## maybe need torch.cuda.empty()
+            del prediction_buffer[father_number]
+        ltmv_pred, target = recovery_tensor(dataset, start, end, ltmv_pred, target, index=idxes+i*dataset.time_intervel,model=model)
+        assert not hasattr(model,'flag_this_is_shift_model')
+        ltmv_trues = dataset.inv_normlize_data([target])[0]#.detach().cpu() ### use CUDA computing
+        ltmv_preds = ltmv_pred#.detach().cpu()
+        time_list  = range(i,i+model.pred_len)
+        for extra_info_from_model in extra_info_from_model_list:
+            for key, val in extra_info_from_model.items():
+                if i not in extra_info:extra_info[i] = {}
+                if key not in extra_info[i]:extra_info[i][key] = []
+                extra_info[i][key].append(val)
+    
+        if model.pred_len > 1:
+            ltmv_trues = ltmv_trues.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)
+            ltmv_preds = ltmv_preds.transpose(0,1) #(B,T,P,W,H) -> (T,B,P,W,H)
+        else:
+            ltmv_trues = ltmv_trues.unsqueeze(0)
+            ltmv_preds = ltmv_preds.unsqueeze(0)       
+
+        
+        
+        
+        #######################################################
+        ############### computing processing ##################
+        #######################################################
+        ### save intermediate cost too much 
+        # if save_prediction_first_step is not None and i==model.history_length:save_prediction_first_step[idxes] = ltmv_pred.detach().cpu()
+        # if save_prediction_final_step is not None and i==len(batch) - 1:save_prediction_final_step[idxes] = ltmv_pred.detach().cpu()
+        for j,(ltmv_true,ltmv_pred) in enumerate(zip(ltmv_trues,ltmv_preds)):
+            time = time_list[j]
+            ### enter CPU computing
+            if len(ltmv_true.shape) == 5:#(B,P,Z,W,H) -> (B,P,W,H)
+                ltmv_true = ltmv_true.flatten(1,2) 
+            if len(ltmv_pred.shape) == 5:#(B,P,Z,W,H) -> (B,P,W,H)
+                ltmv_pred = ltmv_pred.flatten(1,2) 
+            if len(clim.shape)!=len(ltmv_pred.shape):
+                ltmv_pred = ltmv_pred.squeeze(-1)
+                ltmv_true = ltmv_true.squeeze(-1) # temporary use this for timestamp input like [B, P, w,h,T]
+            
+            if snap_index is not None:
+                snap_line.append([time, get_tensor_value(ltmv_pred,snap_index, time=time),'pred'])
+                snap_line.append([time, get_tensor_value(ltmv_true,snap_index, time=time),'true'])
+            
+            statistic_dim = tuple(range(2,len(ltmv_true.shape))) # always assume (B,P,Z,W,H)
+            batch_variance_line_pred.append(ltmv_pred.std(dim=statistic_dim).detach().cpu())
+            batch_variance_line_true.append(ltmv_true.std(dim=statistic_dim).detach().cpu())
+            #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
+            accu_series.append(compute_accu(ltmv_pred - clim.to(ltmv_pred.device), ltmv_true - clim.to(ltmv_pred.device)).detach().cpu())
+            rmse_v,rmse_map = compute_rmse(ltmv_pred , ltmv_true, return_map_also=True)
+            mse = ((ltmv_pred - ltmv_true)**2).mean(dim=(-1,-2))
+            mse_serise.append(mse.detach().cpu())
+            rmse_series.append(rmse_v.detach().cpu()) #(B,70)
+            rmse_maps.append(rmse_map.detach().cpu()) #(70,32,64)
+            hmse_value = compute_rmse(ltmv_pred[...,8:24,:], ltmv_true[...,8:24,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
+            hmse_series.append(hmse_value.detach().cpu())
+        #torch.cuda.empty_cache()
+
+    mse_serise  = torch.stack(mse_serise,1)
+    accu_series = torch.stack(accu_series,1) # (B,fourcast_num,property_num)
+    rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,property_num)
+    hmse_series = torch.stack(hmse_series,1) # (B,fourcast_num,property_num)
+    batch_variance_line_pred = torch.stack(batch_variance_line_pred,1) # (B,fourcast_num,property_num)
+    batch_variance_line_true = torch.stack(batch_variance_line_true,1) # (B,fourcast_num,property_num)
+    
+    for idx, mse,accu,rmse,hmse, std_pred,std_true in zip(idxes,mse_serise,accu_series,rmse_series,hmse_series,
+                                                batch_variance_line_pred,batch_variance_line_true):
+        #if idx in fourcastresult:logsys.info(f"repeat at idx={idx}")
+        fourcastresult[idx.item()] = {'mse':mse,'accu':accu,"rmse":rmse,'std_pred':std_pred,'std_true':std_true,'snap_line':[],
+                                      "hmse":hmse}
+    
+    if error_information is not None:
+        for key, tensor in error_information.items():
+            for idx,t in zip(idxes,tensor):
+                fourcastresult[idx.item()][key]  = t
+
+
+    if snap_index is not None:
+        for batch_id,select_batch_id in enumerate(snap_index[0]):
+            for snap_each_fourcast_time in snap_line:
+                # each snap is tensor (b, p, L)
+                time_step, tensor, label = snap_each_fourcast_time
+                fourcastresult[idxes[select_batch_id].item()]['snap_line'].append([
+                    time_step,tensor[batch_id],label
+                ])
+            #  (p, L) -> (p, L) -> (p, L)
+    if "global_rmse_map" not in fourcastresult:
+        fourcastresult['global_rmse_map'] = rmse_maps # it is a map list (70,32,64) -> (70, 28,64) ->....
+    else:
+        fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],rmse_maps)]
+    return fourcastresult,extra_info
+
+
+
+def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do_error_propagration_monitor=False,order = None):
     model.eval()
     logsys.eval()
     status     = 'test'
@@ -2152,7 +2368,7 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do
     save_prediction_final_step = None#torch.zeros_like(data_loader.dataset.data)
     # = 100
     intervel = batches//logsys.log_trace_times + 1
-
+    order = compute_multibranch_route(order=order) if order is not None else None
     with torch.no_grad():
         inter_b.lwrite("load everything, start_validating......", end="\r")
         while inter_b.update_step():
@@ -2173,7 +2389,8 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do
                 fourcastresult,extra_info = run_one_fourcast_iter(model, batch, idxes, fourcastresult,data_loader.dataset,
                                          save_prediction_first_step=save_prediction_first_step,
                                          save_prediction_final_step=save_prediction_final_step,
-                                         snap_index=the_snap_index_in_iter,do_error_propagration_monitor=do_error_propagration_monitor)
+                                         snap_index=the_snap_index_in_iter,do_error_propagration_monitor=do_error_propagration_monitor,
+                                         order = order)
                 #print(data_loader.dataset.datatimelist_pool[data_loader.dataset.split][0])
                 #property_names = data_loader.dataset.vnames
                 #unit_list = data_loader.dataset.unit_list[2:].squeeze()
@@ -2207,6 +2424,7 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do
     if save_prediction_final_step is not None:torch.save(save_prediction_final_step,os.path.join(logsys.ckpt_root,'save_prediction_final_step')) 
     fourcastresult['snap_index'] = snap_index
     return fourcastresult
+
 
 
 def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature'],return_value = None):
@@ -2379,7 +2597,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
                 info_pool[prefix + f'{real_time}_hours_test_hmse_unit_{name}'] = hmse_unit.item()
         info_pool['real_time'] = real_time
         for key, val in info_pool.items():
-            logsys.record(key,val, predict_time, epoch_flag = 'time_step')
+            logsys.record(key,val, predict_time, epoch_flag = 'time_step',extra_epoch_dict = {"real_time":real_time})
         info_pool_list.append(info_pool)
 
     
@@ -2396,7 +2614,8 @@ def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True,get_value
 
     test_dataset = test_dataloader.dataset
     
-
+    
+    
     #args.force_fourcast=True
     gpu       = dist.get_rank() if hasattr(model,'module') else 0
     fourcastresult_path = os.path.join(logsys.ckpt_root,f"fourcastresult.gpu_{gpu}")
@@ -2409,13 +2628,17 @@ def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True,get_value
         with open(os.path.join(logsys.ckpt_root,'weight_path'),'w') as f:f.write(args.pretrain_weight)
         fourcastresult  = fourcast_step(test_dataloader, model,logsys,
                                     random_repeat = args.fourcast_randn_initial,
-                                    snap_index=args.snap_index,do_error_propagration_monitor=args.do_error_propagration_monitor)
+                                    snap_index=args.snap_index,
+                                    do_error_propagration_monitor=args.do_error_propagration_monitor,
+                                    order = args.multi_branch_order )
         torch.save(fourcastresult,fourcastresult_path)
         logsys.info(f"save fourcastresult at {fourcastresult_path}")
     else:
         logsys.info(f"load fourcastresult at {fourcastresult_path}")
         fourcastresult = torch.load(fourcastresult_path)
 
+    if args.multi_branch_order and "step" in args.multi_branch_order:
+        test_dataset.time_intervel = int(args.multi_branch_order.split("_")[-1])
     if do_table:
         if not args.distributed:
             create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
@@ -2431,6 +2654,7 @@ def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True,get_value
             if dist.get_rank() == 0:
                 return create_fourcast_metric_table(fourcastresult, logsys,test_dataset,return_value = ['Z500'])
     return -1
+
 
 
 #########################################
@@ -2729,6 +2953,7 @@ def get_projectname(args):
         #if hasattr(args,'cross_sample') and args.cross_sample:project_name = project_name + f"_random_dataset"
         #print(project_name)
     return model_name, datasetname,project_name
+
 def deal_with_tuple_string(patch_size,defult=None,dtype=int):
     if isinstance(patch_size,str):
         if len(patch_size)>0:
@@ -2820,7 +3045,7 @@ def parse_default_args(args):
     img_size   = args.img_size   = deal_with_tuple_string(args.img_size,img_size)
     patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,None)
     multibranch_select = args.multibranch_select= deal_with_tuple_string(args.multibranch_select,None)
-    print(args.multibranch_select)
+    #print(args.multibranch_select)
     if "Patch" in args.dataset_type:
         dataset_patch_range = args.dataset_patch_range = deal_with_tuple_string(args.dataset_patch_range,None)
     else:
@@ -3177,7 +3402,8 @@ def build_model(args):
             
             if args.subweight:
                 print(f"in wrapper model, load subweight from {args.subweight}")
-                load_model(model.backbone,path=args.subweight,only_model=True, loc = 'cpu',strict=bool(args.load_model_strict))
+                #load_model(model.backbone,path=args.subweight,only_model=True, loc = 'cpu',strict=bool(args.load_model_strict))
+                load_model(model,path=args.subweight,only_model=True, loc = 'cpu',strict=bool(args.load_model_strict))
             model = eval(args.wrapper_model)(args,model)
     
     logsys.info(f"use model ==> {model.__class__.__name__}")
@@ -3605,6 +3831,7 @@ def create_memory_templete(args):
             valid_dataset_tensor = valid_record_load = None
         print("========      done        ==========")
     return train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load
+
 def find_free_port():
     import socket
     s = socket.socket()
