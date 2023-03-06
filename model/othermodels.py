@@ -214,12 +214,13 @@ try:
         def forward(self,x):
             return self.decode(self.encode(x))
 
-
+        
     import copy
     class LgNet_MultiBranch(nn.Module):
         '''
             use it as wrapper model.
         '''
+        
         def __init__(self, args, backbone):
             super().__init__()
             self.backbone = backbone

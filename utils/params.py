@@ -57,6 +57,7 @@ def get_args_parser():
     parser.add_argument('--vertical_constrain', type=float, default=None)
     parser.add_argument('--compute_graph_set', type=str, default=None)
     parser.add_argument('--torch_compile', type=int, default=0)
+    parser.add_argument('--multi_branch_order', type=str, default=None)
     
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
