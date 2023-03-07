@@ -260,10 +260,12 @@ class rope2(nn.Module):
         self.cos2 = self.cos2.to(x.device)
 
         x11, x21, x12, x22 = x.split([self.dim1_size, self.dim2_size, \
-                                        self.dim1_size, self.dim2_size], dim=-1)
+                         self.dim1_size, self.dim2_size], dim=-1)
         
-        res = torch.cat([x11 * self.cos1 - x12 * self.sin1, x21 * self.cos2 - x22 * self.sin2, \
-                        x12 * self.cos1 + x11 * self.sin1, x22 * self.cos2 + x21 * self.sin2], dim=-1)
+        res = torch.cat([x11 * self.cos1 - x12 * self.sin1, 
+                 x21 * self.cos2 - x22 * self.sin2, \
+                 x12 * self.cos1 + x11 * self.sin1, 
+                 x22 * self.cos2 + x21 * self.sin2], dim=-1)
 
         return res
 

@@ -4,8 +4,11 @@ import torch,os,io,socket
 from torchvision import datasets, transforms
 hostname = socket.gethostname()
 #if hostname not in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185'] and '54' not in hostname and '52' not in hostname:
-#    from petrel_client.client import Client
-#    import petrel_client
+try:
+    from petrel_client.client import Client
+    import petrel_client
+except:
+    pass
 
 from functools import lru_cache
 import traceback
@@ -1303,7 +1306,7 @@ class WeathBench64x128CK(WeathBench64x128):
     def get_item(self,idx,reversed_part=False):
         year, hour = self.single_data_path_list[idx]
         url  = f"{self.root}/{year}/{year}-{hour:04d}.npy"
-        odata = np.load(url)
+        odata = self.load_numpy_from_url(url)
         data = odata[self.channel_choice]
         data = (data - self.mean)/self.std
         cons = self.constants[self.constant_index]
@@ -1618,11 +1621,10 @@ if __name__ == "__main__":
     from multiprocessing import Pool
     from petrel_client.client import Client
     import petrel_client
-    dataset = WeathBench64x128(split='test',root='weatherbench:s3://weatherbench/weatherbench32x64/npy')
-    print(len(dataset))
-    print(dataset[0].shape)
+    dataset = WeathBench64x128(split='test',root='weatherbench:s3://weatherbench/weatherbench64x128/npy',dataset_flag='2D68N')
+    for i in tqdm(range(0, 1000)):
+        a = dataset[i][0]
 
-    
     # def load_data_range(dataset, start, end):
     #     for i in tqdm(range(start, end)):
     #         _ = dataset[i]
