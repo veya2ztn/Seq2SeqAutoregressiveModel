@@ -335,7 +335,7 @@ def calculate_deltalog_coef(c1,c2,c3,e1,e2,e3):
     p3 = (c3)/(1+e3-e2)
     return p1,p2,p3
 
-def normlized_coef_type1(coef1,coef2,coef3):
+def normlized_coef_type1(coef1,coef2,coef3,*args):
     """
     Input 
         coef_of_error1 (B,)
@@ -348,7 +348,7 @@ def normlized_coef_type1(coef1,coef2,coef3):
     """
     _sum = np.abs(coef1) + np.abs(coef2) + np.abs(coef3)
     return coef1/_sum,coef2/_sum,coef3/_sum
-def normlized_coef_type2(c1,c2,c3):
+def normlized_coef_type2(c1,c2,c3,*args):
     """
     Input 
         c1,c2,c3
@@ -366,7 +366,7 @@ def normlized_coef_type2(c1,c2,c3):
     c2 = c2 if c2 >0.1 else 0.1
     c3 = c3 if c3 >0.1 else 0.1
     return c1,c2,c3
-def normlized_coef_type3(coef1,coef2,coef3):
+def normlized_coef_type3(coef1,coef2,coef3,*args):
     """
     Input 
         coef_of_error1 a
@@ -383,9 +383,66 @@ def normlized_coef_type3(coef1,coef2,coef3):
     coef3 = coef3/all_coef + 1 
     return  coef1,coef2,coef3
 
-def normlized_coef_type0(coef1,coef2,coef3):
+def normlized_coef_type0(coef1,coef2,coef3,*args):
     all_coef = np.sqrt(coef1**2 + coef2**2 + coef3**2)
     coef1 = coef1/all_coef 
     coef2 = coef2/all_coef 
     coef3 = coef3/all_coef 
     return  coef1,coef2,coef3
+
+def normlized_coef_type_bonded(c1,c2,c3,e1,e2,e3):
+    """
+        get c1, c2, c3 for df = c1*de1 + c2*de2 + c3*de3
+        the first thing is get the norm for variable
+            v1 = ln(e1+1)
+            v2 = ln(e2+1)
+            v3 = ln(e3+1)
+        ====> df = (e1+1)c1*dv1 + (e2+1)c2*dv2 + (e3+1)c3*dv3
+        then we need apply a boundary compute 
+        the boundary condition is 
+            0< v2 - v1 < ln(2)
+            0< v3 - v1 < ln(3)
+            0< v1
+        this can be accomplish by do a `reflect` vector 
+            let z2 = (v2 - v1)/ln(2)
+            let z3 = (v3 - v1)/ln(3)
+            if z2 -> 0, this mean we need apply a gradient to increse it. 
+                Notice in gradient update, we do x = x - lr*grad. Thus, the gradient direction should be -1
+                thus, z2 -> 0 mean grad_of_z2 -> -10
+            if z2 -> ln(2), grad_of_z2 -> 10. 
+
+            can use Sinh(5*(2*z2-1))/Sinh(5) as the coef. if want to use much strong constrain replace 5 to 10
+        This mean we need add two more constrain which lead
+            c1 = (e1+1)c1 -> (e1+1)c1/N - Sinh(5*(2*z2-1))/Sinh(5) - Sinh(5*(2*z3-1))/Sinh(5)
+            c2 = (e2+1)c2 -> (e2+1)c2/N + Sinh(5*(2*z2-1))/Sinh(5)
+            c3 = (e3+1)c3 -> (e3+1)c3/N + Sinh(5*(2*z3-1))/Sinh(5)
+
+    """
+    # notice the error input must be mse e1 , but the c1,c2,c3 is calculated from e1 e2 e3
+    c1 = (e1 + 1)*c1
+    c2 = (e2 + 1)*c2
+    c3 = (e3 + 1)*c3
+    # do normlization 
+    N = np.sqrt(c1**2 + c2**2 + c3**2)
+    c1 = c1/N
+    c2 = c2/N
+    c3 = c3/N
+    # apply boundary
+    # #############
+    v1 = np.log(e1 ) # <--- this is the true loss we optimizer
+    v2 = np.log(e2 ) # <--- this is the true loss we optimizer
+    v3 = np.log(e3 ) # <--- this is the true loss we optimizer
+    print(f"v1:{v1:.4f} v2:{v2:.4f} v3:{v3:.4f}") 
+    z2 = (v2 - v1)/np.log(2)
+    z3 = (v3 - v1)/np.log(3)
+    print(f"z2:{z2:.4f} z3:{z3:.4f}")
+    z2 = (2*z2 - 1)
+    z3 = (2*z3 - 1)
+    alpha = 5
+    cc2= np.sinh(alpha*z2)/np.sinh(alpha)
+    cc3= np.sinh(alpha*z3)/np.sinh(alpha)
+    print(f"c1:{c1:.4f} c2:{c2:.4f} c3:{c3:.4f} cc2:{cc2:.4f} cc3:{cc3:.4f}")
+    c1 = c1 - cc2 - cc3
+    c2 = c2 + cc2 
+    c3 = c3 + cc3
+    return  c1,c2,c3
