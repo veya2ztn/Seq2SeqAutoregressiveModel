@@ -606,6 +606,8 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
                 tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
                 if 'per_feature' in mode:
                     error = torch.mean((tensor1-tensor2)**2,dim=(2,3)).detach()
+                elif 'per_sample' in mode:
+                    error = torch.mean((tensor1-tensor2)**2,dim=(1,2,3)).detach()
                 else:
                     error = torch.mean((tensor1-tensor2)**2).detach()
                 if (level_1,level_2,stamp) not in model.err_record:model.err_record[level_1,level_2,stamp] = []
@@ -639,7 +641,7 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
         iter_info_pool[f"{status}_e3"] = e3
         loss = c1*e1 + c2*e2 + c3*e3 
         diff = (e1 + e2 + e3)/3
-    elif 'normal' in mode:
+    elif 'normal' in mode or 'per_sample' in mode: 
         error_record = {}
         fixed_activate_error_coef = [[0,1,1],[0,2,2],[0,3,3]]
         for (level_1, level_2, stamp) in fixed_activate_error_coef:
@@ -657,7 +659,7 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
         iter_info_pool[f"{status}_e3"] = e3
         loss = c1*e1 + c2*e2 + c3*e3 
         diff = (e1 + e2 + e3)/3
-    elif 'per_feature' in mode:
+    elif 'per_feature' in mode: # need apply error coef per feature
         error_record = {}
         fixed_activate_error_coef = [[0,1,1],[0,2,2],[0,3,3]]
         for (level_1, level_2, stamp) in fixed_activate_error_coef:
@@ -675,11 +677,11 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
         iter_info_pool[f"{status}_e3"] = e3.mean() if isinstance(e3,torch.Tensor) else e3#(110)
         loss = (c1*e1 + c2*e2 + c3*e3).mean()
         diff = ((e1 + e2 + e3)/3).mean()
-
+    
     
     return loss, diff,iter_info_pool
 
-from criterions.high_order_loss_coef import calculate_coef,calculate_deltalog_coef,normlized_coef_type2,normlized_coef_type3
+from criterions.high_order_loss_coef import calculate_coef,calculate_deltalog_coef,normlized_coef_type2,normlized_coef_type3,normlized_coef_type0
 def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     assert model.history_length == 1
     assert model.pred_len == 1
@@ -1076,6 +1078,8 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     else:
         return run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status)
 
+
+
 def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     
     if status == 'train':
@@ -1389,7 +1393,10 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             dist.reduce(x, 0)
 
     if model.directly_esitimate_longterm_error and status == 'valid':
-        normlized_type = normlized_coef_type3 if "needbase" in model.directly_esitimate_longterm_error else normlized_coef_type2
+        normlized_type = normlized_coef_type2
+        if "needbase" in model.directly_esitimate_longterm_error:normlized_type = normlized_coef_type3
+        elif "vallina" in model.directly_esitimate_longterm_error:normlized_type = normlized_coef_type0
+
         if 'per_feature' in model.directly_esitimate_longterm_error:
             for key in model.err_record.keys():
                 model.err_record[key] = torch.cat(model.err_record[key]).mean(0)
@@ -1407,8 +1414,26 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                 c1,c2,c3 = normlized_type(c1,c2,c3)
                 c1_l.append(c1);c2_l.append(c2);c3_l.append(c3)
             c1 = torch.Tensor(c1_l).to(e1.device)
-            c2 = torch.Tensor(c1_l).to(e1.device)
+            c2 = torch.Tensor(c2_l).to(e1.device)
             c3 = torch.Tensor(c3_l).to(e1.device)
+        elif 'per_sample' in model.directly_esitimate_longterm_error:
+            for key in model.err_record.keys():
+                model.err_record[key] = torch.cat(model.err_record[key])# (B,)
+            e1   = (model.err_record[0,1,1] + model.err_record[0,1,2] + model.err_record[0,1,3])/3
+            a0   = model.err_record[1,2,2]/model.err_record[0,1,2]
+            a1   = model.err_record[1,3,3]/model.err_record[0,1,3]
+            c1_l,c2_l,c3_l = [],[],[]
+            for _e1,_a0,_a1 in zip(e1,a0,a1):
+                c1,c2,c3 = calculate_coef(_e1.item(),_a0.item(),_a1.item(),rank=int(model.directly_esitimate_longterm_error.split('_')[-1]))
+                c1,c2,c3 = normlized_type(c1,c2,c3)
+                c1_l.append(c1);c2_l.append(c2);c3_l.append(c3)
+            c1 = torch.Tensor(c1_l).to(e1.device).mean()
+            c2 = torch.Tensor(c2_l).to(e1.device).mean()
+            c3 = torch.Tensor(c3_l).to(e1.device).mean()
+            if hasattr(model, 'module'):
+                for x in [c1, c2, c3]:
+                    dist.barrier()
+                    dist.reduce(x, 0)
         else:
             for key in model.err_record.keys():
                 model.err_record[key] = torch.stack(model.err_record[key]).mean()
@@ -3352,6 +3377,16 @@ def parser_compute_graph(compute_graph_set):
         'fwd3_D_go10_needbase' :([[1],[2],[3]], 
                         [], #<--- no need, will auto deploy for during_valid_normal mode
                         "needbase_during_valid_normal_10"),
+        'fwd3_D_go10_vallina' :([[1],[2],[3]], 
+                        [], #<--- no need, will auto deploy for during_valid_normal mode
+                        "vallina_during_valid_normal_10"),
+        'fwd3_D_go10_per_feature_vallina': ([[1], [2], [3]],
+                                    [],  # <--- no need, will auto deploy for during_valid_normal mode
+                                    "vallina_during_valid_per_feature_10"),
+        'fwd3_D_go10_per_sample_vallina': ([[1], [2], [3]],
+                                    [],  # <--- no need, will auto deploy for during_valid_normal mode
+                                    "vallina_during_valid_per_sample_10"),
+                                            
         }
 
     return compute_graph_set_pool[compute_graph_set]
@@ -3498,7 +3533,12 @@ def build_optimizer(args,model):
         optimizer       = torch.optim.SGD(model.parameters(), lr=args.lr)
     elif args.opt == 'lion':
         from lion_pytorch import Lion
-        optimizer       = Lion(model.parameters(), lr=args.lr,use_triton = True)
+        optimizer       = Lion(model.parameters(), lr=args.lr,use_triton = False)
+    elif args.opt == 'tiger':
+        from custom_optimizer import Tiger
+        optimizer = Tiger([{'params': [p for name, p in model.named_parameters() if 'bias' in name ],'type':'tensor_adding'},
+                   {'params': [p for name, p in model.named_parameters() if 'bias' not in name ],'type':'tensor_contraction'}\
+                  ],lr =args.lr)
     else:
         raise NotImplementedError
     GDMod_type  = args.GDMod_type
@@ -3673,7 +3713,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if (args.fourcast_during_train and epoch==0 and args.pretrain_weight): # do fourcast once at begining
                 Z500_now, test_dataloader = run_fourcast_during_training(args, epoch-1, logsys, model, test_dataloader)  # will
                 if Z500_now > 0:logsys.record('Z500', Z500_now, epoch-1, epoch_flag='epoch') #<---only rank 0 tensor create Z500
-            if (not args.more_epoch_train) and epoch == 0 and not args.skip_first_valid and args.mode != 'pretrain':
+            if args.valid_every_epoch and (not args.more_epoch_train) and epoch == 0 and not args.skip_first_valid and args.mode != 'pretrain':
                 fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=True)
                 val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=False)

@@ -382,3 +382,10 @@ def normlized_coef_type3(coef1,coef2,coef3):
     coef2 = coef2/all_coef + 1 
     coef3 = coef3/all_coef + 1 
     return  coef1,coef2,coef3
+
+def normlized_coef_type0(coef1,coef2,coef3):
+    all_coef = np.sqrt(coef1**2 + coef2**2 + coef3**2)
+    coef1 = coef1/all_coef 
+    coef2 = coef2/all_coef 
+    coef3 = coef3/all_coef 
+    return  coef1,coef2,coef3
