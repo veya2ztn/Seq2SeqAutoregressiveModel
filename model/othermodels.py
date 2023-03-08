@@ -241,7 +241,12 @@ try:
                     )
                 )
         def decode(self,x,branch_flag):
-            control_flag = self.multibranch_select.index(branch_flag)
+            try:
+                control_flag = self.multibranch_select.index(branch_flag)
+            except:
+                print(f"multibranch_select.index is {self.multibranch_select}")
+                print(f"branch_flag is {branch_flag}")
+                raise
             if control_flag == 0 :
                 return self.backbone.decode(x)
             else:
