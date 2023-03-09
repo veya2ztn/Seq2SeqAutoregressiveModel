@@ -796,7 +796,10 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
                 elif _type == 'quantity_log':
                     error   = ((tensor1-tensor2)**2+1).log().mean()
                 elif _type == 'quantity_real_log':
-                    error   = ((tensor1-tensor2)**2+1e-5).log().mean()# <---face fatal problem in half precesion due to too small value
+                    error   = ((tensor1-tensor2)**2+1e-2).log().mean()# <---face fatal problem in half precesion due to too small value 
+                    # 1e-2 better than 1e-5. 
+                    # May depend on the error unit. For 6 hour task, e around 0.03 so we set 0.01 as offset 
+                    # May depend on the error unit. For 1 hour task, e around 0.006 so we may set 0.01 or 0.001 as offset 
                 else:raise NotImplementedError
             elif 'alpha' in _type:
                 last_tensor1 = all_level_batch[level_1-1][:,all_level_record[level_1-1].index(stamp-1)]
