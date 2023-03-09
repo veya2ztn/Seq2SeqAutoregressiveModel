@@ -616,13 +616,25 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
             # we would initialize err_reocrd and generate c1,c2,c2 out of the function
         else:
             pass
+    elif 'runtime' in mode:
+        if status == 'train':
+            fixed_activate_error_coef = [[0, 1, 1], [0, 2, 2], [0, 3, 3]]
+            for (level_1, level_2, stamp) in fixed_activate_error_coef:
+                tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
+                tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
+                error = torch.mean((tensor1-tensor2)**2).detach()
+                model.err_record[level_1,level_2,stamp] = error
+
+            # we would initialize err_reocrd and generate c1,c2,c2 out of the function
+        else:
+            pass
     else:
-        raise
+        raise # then we directly goes into train mode
 
     c1,  c2,  c3 = model.c1, model.c2, model.c3
     
+    
     if 'deltalog' in mode:
-
         error_record = {}
         fixed_activate_error_coef = [[0, 1, 1], [0, 2, 2], [0, 3, 3]]
         for (level_1, level_2, stamp) in fixed_activate_error_coef:
@@ -641,18 +653,17 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
         iter_info_pool[f"{status}_e3"] = e3
         loss = c1*e1 + c2*e2 + c3*e3 
         diff = (e1 + e2 + e3)/3
-    elif 'logplus1' in mode:
-
+    elif 'logoffset' in mode:
         error_record = {}
         fixed_activate_error_coef = [[0, 1, 1], [0, 2, 2], [0, 3, 3]]
         for (level_1, level_2, stamp) in fixed_activate_error_coef:
                 tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
                 tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
                 error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2)
-        
-        e1 = torch.log(error_record[0,1,1] + 1)
-        e2 = torch.log(error_record[0,2,2] + 1)
-        e3 = torch.log(error_record[0,3,3] + 1)
+        offset = 0.01 #<--- this is a hyperparameter
+        e1 = torch.log(error_record[0,1,1] + offset)
+        e2 = torch.log(error_record[0,2,2] + offset)
+        e3 = torch.log(error_record[0,3,3] + offset)
         iter_info_pool[f"{status}_c1"] = c1
         iter_info_pool[f"{status}_c2"] = c2
         iter_info_pool[f"{status}_c3"] = c3
@@ -797,6 +808,8 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
                     error   = ((tensor1-tensor2)**2+1).log().mean()
                 elif _type == 'quantity_real_log':
                     error   = ((tensor1-tensor2)**2+1e-2).log().mean()# <---face fatal problem in half precesion due to too small value 
+                elif _type == 'quantity_real_log5':
+                    error   = ((tensor1-tensor2)**2+1e-5).log().mean()# <---face fatal problem in half precesion due to too small value 
                     # 1e-2 better than 1e-5. 
                     # May depend on the error unit. For 6 hour task, e around 0.03 so we set 0.01 as offset 
                     # May depend on the error unit. For 1 hour task, e around 0.006 so we may set 0.01 or 0.001 as offset 
@@ -1360,6 +1373,23 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                     loss_scaler.unscale_(optimizer)
                 nn.utils.clip_grad_norm_(model.parameters(), model.clip_grad)
 
+            if model.directly_esitimate_longterm_error and 'runtime' in model.directly_esitimate_longterm_error:
+                assert 'logoffset' in model.directly_esitimate_longterm_error
+                normlized_type = normlized_coef_type_bonded
+                for key in model.err_record.keys():
+                    if hasattr(model, 'module')  :
+                        dist.barrier()
+                        dist.reduce(model.err_record[key], 0)
+                    model.err_record[key] = model.err_record[key][None]
+                c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
+                if not hasattr(model,'clist_buffer'):model.clist_buffer={'c1':[],'c2':[],'c3':[]}
+                for name,c in zip(['c1','c2','c3'],[c1.item(),c2.item(),c3.item()]):
+                    model.clist_buffer[name].append(c)
+                    if len(model.clist_buffer[name])>100:
+                        model.clist_buffer[name].pop(0)
+                        setattr(model,name,np.mean(model.clist_buffer[name]))
+                # model.c1 = c1;model.c2 = c2;model.c3 = c3
+            
             if (step+1) % accumulation_steps == 0:
                 loss_scaler.step(optimizer)
                 loss_scaler.update()   
@@ -1371,6 +1401,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                 count_update += 1
                 optimizer.zero_grad()
                 didunscale = False
+        
         else:
             with torch.no_grad():
                 with torch.cuda.amp.autocast(enabled=model.use_amp):
@@ -1418,36 +1449,34 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             dist.barrier()
             dist.reduce(x, 0)
 
-    if model.directly_esitimate_longterm_error and 'during_valid' in model.directly_esitimate_longterm_error and status == 'valid':
-        normlized_type = normlized_coef_type2
-        if "needbase" in model.directly_esitimate_longterm_error:normlized_type = normlized_coef_type3
-        elif "vallina" in model.directly_esitimate_longterm_error:normlized_type = normlized_coef_type0
-        if 'logplus1' in model.directly_esitimate_longterm_error:
-            normlized_type = normlized_coef_type_bonded
-        if 'per_feature' in model.directly_esitimate_longterm_error:
-            for key in model.err_record.keys():
-                model.err_record[key] = torch.cat(model.err_record[key]).mean(0)
-                if hasattr(model, 'module')  :
-                    dist.barrier()
-                    dist.reduce(model.err_record[key], 0)
-                model.err_record[key] = model.err_record[key]
-            c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
-        elif 'per_sample' in model.directly_esitimate_longterm_error:
-            for key in model.err_record.keys():
-                model.err_record[key] = torch.cat(model.err_record[key])# (B,)
-            c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
-            if hasattr(model, 'module'):
-                for x in [c1, c2, c3]:
-                    dist.barrier()
-                    dist.reduce(x, 0)
+    if model.directly_esitimate_longterm_error:
+        if 'during_valid' in model.directly_esitimate_longterm_error:
+            if status == 'valid':
+                normlized_type = normlized_coef_type2
+                if "needbase" in model.directly_esitimate_longterm_error:normlized_type = normlized_coef_type3
+                elif "vallina" in model.directly_esitimate_longterm_error:normlized_type = normlized_coef_type0
+                if 'logoffset' in model.directly_esitimate_longterm_error:
+                    normlized_type = normlized_coef_type_bonded
+                if 'per_feature' in model.directly_esitimate_longterm_error:
+                    for key in model.err_record.keys():
+                        model.err_record[key] = torch.cat(model.err_record[key]).mean(0)
+                        if hasattr(model, 'module')  :
+                            dist.barrier()
+                            dist.reduce(model.err_record[key], 0)
+                        model.err_record[key] = model.err_record[key]
+                    c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
+                elif 'per_sample' in model.directly_esitimate_longterm_error:
+                    for key in model.err_record.keys():
+                        model.err_record[key] = torch.cat(model.err_record[key])# (B,)
+                    c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
+                    if hasattr(model, 'module'):
+                        for x in [c1, c2, c3]:
+                            dist.barrier()
+                            dist.reduce(x, 0)
+                else:
+                    raise NotImplementedError
         else:
-            for key in model.err_record.keys():
-                model.err_record[key] = torch.stack(model.err_record[key]).mean()
-                if hasattr(model, 'module')  :
-                    dist.barrier()
-                    dist.reduce(model.err_record[key], 0)
-                model.err_record[key] = model.err_record[key].item()
-            c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
+            raise NotImplementedError
         model.c1 = c1;model.c2 = c2;model.c3 = c3
         model.err_record = {}
         #print(c1,c2,c3)
@@ -1459,20 +1488,29 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
 
 def compute_coef(err_record, flag,normlized_type):
     # will record mse error no matter we use log loss or other loss
-    e1   =(err_record[0,1,1]+err_record[0,1,2] + err_record[0,1,3])/3
-    a0   = err_record[1,2,2]/err_record[0,1,2]
-    a1   = err_record[1,3,3]/err_record[0,1,3]
-    e2   = err_record[0,2,2]
-    e3   = err_record[0,3,3]
+    if 'valid' in flag:
+        e1   =(err_record[0,1,1]+err_record[0,1,2] + err_record[0,1,3])/3
+        a0   = err_record[1,2,2]/err_record[0,1,2]
+        a1   = err_record[1,3,3]/err_record[0,1,3]
+        e2   = err_record[0,2,2]
+        e3   = err_record[0,3,3]
+    else: # in train mode
+        e1   = err_record[0,1,1]
+        e2   = err_record[0,2,2]
+        e3   = err_record[0,3,3]
+        a0   = (e2 - e1)/e1
+        a1   = (e3 - e1)/e2
     c1_l,c2_l,c3_l = [],[],[]
     if isinstance(e1, float):
         e1,a0,a1,e1,e2,e3 = [e1],[a0],[a1],[e1],[e2],[e3]
     for _e1,_a0,_a1,_e1,_e2,_e3 in zip(e1,a0,a1,e1,e2,e3):
-        c1,c2,c3 = calculate_coef(_e1.item(),_a0.item(),_a1.item(),rank=int(flag.split('_')[-1]))
-        print(f"e1:{_e1:.4f} e2:{_e2:.4f} e3:{_e3:.4f} c1:{c1:.4f} c2:{c2:.4f} c3:{c3:.4f}")
-        c1,c2,c3 = normlized_type(c1,c2,c3,_e1.item(),_e2.item(),_e3.item())
-        print(f"e1:{_e1:.4f} e2:{_e2:.4f} e3:{_e3:.4f} c1:{c1:.4f} c2:{c2:.4f} c3:{c3:.4f}")
-        print("====================")
+        _e1,_e2,_e3 = float(_e1), float(_e2), float(_e3)
+        _a0,_a1   = float(_a0), float(_a1)
+        c1,c2,c3 = calculate_coef(_e1,_a0,_a1,rank=int(flag.split('_')[-1]))
+        #print(f"e1:{_e1:.4f} e2:{_e2:.4f} e3:{_e3:.4f} c1:{c1:.4f} c2:{c2:.4f} c3:{c3:.4f}")
+        c1,c2,c3 = normlized_type(c1,c2,c3,_e1,_e2,_e3)
+        #print(f"e1:{_e1:.4f} e2:{_e2:.4f} e3:{_e3:.4f} c1:{c1:.4f} c2:{c2:.4f} c3:{c3:.4f}")
+        #print("====================")
         c1_l.append(c1);c2_l.append(c2);c3_l.append(c3)
     c1 = torch.Tensor(c1_l).to(e1.device).mean()
     c2 = torch.Tensor(c2_l).to(e1.device).mean()
@@ -3413,9 +3451,12 @@ def parser_compute_graph(compute_graph_set):
         'fwd3_D_go10_per_sample_vallina': ([[1], [2], [3]],
                                     [],  # <--- no need, will auto deploy for during_valid_normal mode
                                     "vallina_during_valid_per_sample_10"),
-        'fwd3_D_go10_per_sample_logplus1': ([[1], [2], [3]],
+        'fwd3_D_go10_per_sample_logoffset': ([[1], [2], [3]],
                                     [],  # <--- no need, will auto deploy for during_valid_normal mode
-                                    "logplus1_during_valid_per_sample_10"),
+                                    "logoffset_during_valid_per_sample_10"),
+        'fwd3_D_go10_runtime_logoffset': ([[1], [2], [3]],
+                                    [],  # <--- no need, will auto deploy for during_valid_normal mode
+                                    "logoffset_runtime_10"),
                                             
         }
 

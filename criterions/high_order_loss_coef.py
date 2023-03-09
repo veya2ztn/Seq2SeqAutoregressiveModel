@@ -390,7 +390,7 @@ def normlized_coef_type0(coef1,coef2,coef3,*args):
     coef3 = coef3/all_coef 
     return  coef1,coef2,coef3
 
-def normlized_coef_type_bonded(c1,c2,c3,e1,e2,e3):
+def normlized_coef_type_bonded(c1,c2,c3,e1,e2,e3,delta=0.01):
     """
         get c1, c2, c3 for df = c1*de1 + c2*de2 + c3*de3
         the first thing is get the norm for variable
@@ -419,9 +419,9 @@ def normlized_coef_type_bonded(c1,c2,c3,e1,e2,e3):
 
     """
     # notice the error input must be mse e1 , but the c1,c2,c3 is calculated from e1 e2 e3
-    c1 = (e1 + 1)*c1
-    c2 = (e2 + 1)*c2
-    c3 = (e3 + 1)*c3
+    c1 = (e1 + delta)*c1
+    c2 = (e2 + delta)*c2
+    c3 = (e3 + delta)*c3
     # do normlization 
     N = np.sqrt(c1**2 + c2**2 + c3**2)
     c1 = c1/N
@@ -429,20 +429,29 @@ def normlized_coef_type_bonded(c1,c2,c3,e1,e2,e3):
     c3 = c3/N
     # apply boundary
     # #############
-    v1 = np.log(e1 ) # <--- this is the true loss we optimizer
-    v2 = np.log(e2 ) # <--- this is the true loss we optimizer
-    v3 = np.log(e3 ) # <--- this is the true loss we optimizer
-    print(f"v1:{v1:.4f} v2:{v2:.4f} v3:{v3:.4f}") 
-    z2 = (v2 - v1)/np.log(2)
-    z3 = (v3 - v1)/np.log(3)
-    print(f"z2:{z2:.4f} z3:{z3:.4f}")
+    v1 = np.log(e1) # <--- this is the ln loss we want to optimize
+    v2 = np.log(e2) # <--- this is the ln loss we want to optimize
+    v3 = np.log(e3) # <--- this is the ln loss we want to optimize
+    #print(f"v1:{v1:.4f} v2:{v2:.4f} v3:{v3:.4f}") 
+    z2 = (v2 - v1)/np.log(np.sqrt(2)) # <--- this is the boundary
+    z3 = (v3 - v1)/np.log(np.sqrt(3)) # <--- this is the boundary
+    #print(f"z2:{z2:.4f} z3:{z3:.4f}")
     z2 = (2*z2 - 1)
     z3 = (2*z3 - 1)
     alpha = 5
     cc2= np.sinh(alpha*z2)/np.sinh(alpha)
     cc3= np.sinh(alpha*z3)/np.sinh(alpha)
-    print(f"c1:{c1:.4f} c2:{c2:.4f} c3:{c3:.4f} cc2:{cc2:.4f} cc3:{cc3:.4f}")
-    c1 = c1 - cc2 - cc3
-    c2 = c2 + cc2 
-    c3 = c3 + cc3
+    #print(f"c1:{c1:.4f} c2:{c2:.4f} z2:{z2:.4f} z3:{z3:.4f} c3:{c3:.4f} cc2:{cc2:.4f} cc3:{cc3:.4f}")
+    c1 = c1 - e1/(e1+delta)*cc2 - e1/(e1+delta)*cc3
+    c2 = c2 + e2/(e2+delta)*cc2 
+    c3 = c3 + e3/(e3+delta)*cc3
+    #print(f"c1:{c1:.4f} c2:{c2:.4f} c3:{c3:.4f} cc2:{cc2:.4f} cc3:{cc3:.4f}")
+    # apply normal constrain
+    c1+= np.sqrt(3)/3
+    c2+= np.sqrt(3)/3
+    c3+= np.sqrt(3)/3
+    N = np.sqrt(c1**2 + c2**2 + c3**2)
+    c1 = c1/N
+    c2 = c2/N
+    c3 = c3/N
     return  c1,c2,c3
