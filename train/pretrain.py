@@ -1430,7 +1430,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
 
     loss_val = total_diff/ total_num
     loss_val = loss_val.item()
-    torch.cuda.empty_cache()
+    #torch.cuda.empty_cache()
     return loss_val
 
 
