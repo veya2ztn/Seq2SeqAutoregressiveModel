@@ -1449,32 +1449,28 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             dist.barrier()
             dist.reduce(x, 0)
 
-    if model.directly_esitimate_longterm_error:
-        if 'during_valid' in model.directly_esitimate_longterm_error:
-            if status == 'valid':
-                normlized_type = normlized_coef_type2
-                if "needbase" in model.directly_esitimate_longterm_error:normlized_type = normlized_coef_type3
-                elif "vallina" in model.directly_esitimate_longterm_error:normlized_type = normlized_coef_type0
-                if 'logoffset' in model.directly_esitimate_longterm_error:
-                    normlized_type = normlized_coef_type_bonded
-                if 'per_feature' in model.directly_esitimate_longterm_error:
-                    for key in model.err_record.keys():
-                        model.err_record[key] = torch.cat(model.err_record[key]).mean(0)
-                        if hasattr(model, 'module')  :
-                            dist.barrier()
-                            dist.reduce(model.err_record[key], 0)
-                        model.err_record[key] = model.err_record[key]
-                    c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
-                elif 'per_sample' in model.directly_esitimate_longterm_error:
-                    for key in model.err_record.keys():
-                        model.err_record[key] = torch.cat(model.err_record[key])# (B,)
-                    c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
-                    if hasattr(model, 'module'):
-                        for x in [c1, c2, c3]:
-                            dist.barrier()
-                            dist.reduce(x, 0)
-                else:
-                    raise NotImplementedError
+    if model.directly_esitimate_longterm_error and 'during_valid' in model.directly_esitimate_longterm_error and status == 'valid':
+        normlized_type = normlized_coef_type2
+        if "needbase" in model.directly_esitimate_longterm_error:normlized_type = normlized_coef_type3
+        elif "vallina" in model.directly_esitimate_longterm_error:normlized_type = normlized_coef_type0
+        if 'logoffset' in model.directly_esitimate_longterm_error:
+            normlized_type = normlized_coef_type_bonded
+        if 'per_feature' in model.directly_esitimate_longterm_error:
+            for key in model.err_record.keys():
+                model.err_record[key] = torch.cat(model.err_record[key]).mean(0)
+                if hasattr(model, 'module')  :
+                    dist.barrier()
+                    dist.reduce(model.err_record[key], 0)
+                model.err_record[key] = model.err_record[key]
+            c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
+        elif 'per_sample' in model.directly_esitimate_longterm_error:
+            for key in model.err_record.keys():
+                model.err_record[key] = torch.cat(model.err_record[key])# (B,)
+            c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
+            if hasattr(model, 'module'):
+                for x in [c1, c2, c3]:
+                    dist.barrier()
+                    dist.reduce(x, 0)
         else:
             raise NotImplementedError
         model.c1 = c1;model.c2 = c2;model.c3 = c3
