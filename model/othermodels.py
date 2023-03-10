@@ -255,7 +255,16 @@ try:
         def forward(self, x, branch_flag):
             assert isinstance(branch_flag,int)
             return self.decode(self.backbone.encode(x), branch_flag)
-        
+    
+    class LgNet_Head(CK_LgNet):
+        '''
+            use it as wrapper model.
+        '''
+        def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
+            for p in self.backbone.parameters():p.requires_grad=False
+            for p in self.backbone.net.layers[-1].parameters():p.requires_grad=True
+            for p in self.backbone.net.final.parameters():p.requires_grad=True
+
 except:
     class CK_SWDformer_3264(BaseModel):pass
 
