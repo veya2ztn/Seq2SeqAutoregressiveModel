@@ -809,7 +809,9 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
                 elif _type == 'quantity_real_log':
                     error   = ((tensor1-tensor2)**2+1e-2).log().mean()# <---face fatal problem in half precesion due to too small value 
                 elif _type == 'quantity_real_log5':
-                    error   = ((tensor1-tensor2)**2+1e-5).log().mean()# <---face fatal problem in half precesion due to too small value 
+                    error   = ((tensor1-tensor2)**2+1e-5).log().mean()# <---face fatal problem in half precesion due to too small value
+                elif _type == 'quantity_real_log3':
+                    error   = ((tensor1-tensor2)**2+1e-3).log().mean()# <---face fatal problem in half precesion due to too small value 
                     # 1e-2 better than 1e-5. 
                     # May depend on the error unit. For 6 hour task, e around 0.03 so we set 0.01 as offset 
                     # May depend on the error unit. For 1 hour task, e around 0.006 so we may set 0.01 or 0.001 as offset 
@@ -3296,6 +3298,8 @@ def parser_compute_graph(compute_graph_set):
         'fwd2_D'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity"], [0,2,2,1.0, "quantity"]]),
         'fwd2_D_Log'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_log"], [0,2,2,1.0, "quantity_log"]]),
         'fwd2_D_Rog'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log"], [0,2,2,1.0, "quantity_real_log"]]),
+        'fwd2_D_Rog5'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log5"], [0,2,2,1.0, "quantity_real_log5"]]),
+        'fwd2_D_Rog3'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log3"], [0,2,2,1.0, "quantity_real_log3"]]),
         'fwd2_P'   :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "quantity"]
