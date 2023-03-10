@@ -1085,7 +1085,7 @@ class RandomSelectMultiBranchFetcher:
         self.batch_size = data_loader.batch_size 
         self.img_shape  = dataset.img_shape
         self.multibranch_select = multibranch_select = dataset.multibranch_select
-        self.length   = len(dataset) - max(multibranch_select)
+        self.length   = len(dataset) - max(multibranch_select) - 1
         self.time_step  = dataset.time_step
         self.device   = device
         self.use_time_stamp = dataset.use_time_stamp
