@@ -61,8 +61,8 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
             else:
                 print("loading lr_scheduler weight fail...........")
             
-            loss_scaler.load_state_dict(ckpt['loss_scaler'])
-            print("loading loss_scaler weight success...........")
+            #loss_scaler.load_state_dict(ckpt['loss_scaler'])
+            #print("loading loss_scaler weight success...........")
             start_epoch = ckpt["epoch"]
             start_step = ckpt["step"]
             min_loss = ckpt["min_loss"]
