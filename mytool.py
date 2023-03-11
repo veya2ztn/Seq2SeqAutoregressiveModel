@@ -300,6 +300,9 @@ def create_nodalsnap_table(ckpt_path):
 
 def create_multi_fourcast_table(ckpt_path,force=False):
     from train.pretrain import create_multi_epoch_inference,get_test_dataset,parse_default_args,create_logsys
+    if not np.any([("result_of_epoch" in t) for t in os.listdir(ckpt_path)]):return
+    if not force and os.path.exists(os.path.join(ckpt_path,"result_of_epoch_0","fourcastresult.out")):
+        return 
     args = get_the_args(ckpt_path)
     args.mode = 'fourcast'
     args.gpu = args.local_rank = gpu  = local_rank = 0
