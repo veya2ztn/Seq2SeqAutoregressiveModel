@@ -3202,6 +3202,7 @@ def parse_default_args(args):
         args.snap_index.append([[15,15,15, 7, 7, 7,23,23,23],
                                 [15,31,45,15,31,45,15,31,45]])
     if args.output_channel<=13:args.snap_index=None
+    if not hasattr(args,'ngpus_per_node'):args.ngpus_per_node=1
     args.real_batch_size = args.batch_size * args.accumulation_steps * args.ngpus_per_node 
     return args
 
