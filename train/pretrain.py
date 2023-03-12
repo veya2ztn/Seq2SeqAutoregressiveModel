@@ -2542,12 +2542,13 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
         
 
     property_names = test_dataset.vnames
+    unit_list = test_dataset.unit_list
     if hasattr(test_dataset,"pred_channel_for_next_stamp"):
         offset = 2 if 'CK' in test_dataset.__class__.__name__ else 0
-        test_dataset.pred_channel_for_next_stamp = np.array(test_dataset.pred_channel_for_next_stamp) -offset
-        
-        property_names = [property_names[t] for t in (test_dataset.pred_channel_for_next_stamp) ] # do not allow padding constant at begining.
-        test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp]
+        pred_channel_for_next_stamp = np.array(test_dataset.pred_channel_for_next_stamp) - offset
+        property_names = [property_names[t] for t in (pred_channel_for_next_stamp) ] # do not allow padding constant at begining.
+        unit_list = unit_list[pred_channel_for_next_stamp]
+    
     # if 'UVTP' in args.wrapper_model:
     #     property_names = [property_names[t] for t in eval(args.wrapper_model).pred_channel_for_next_stamp]
     ## <============= ACCU ===============>
@@ -2563,8 +2564,8 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
     hmse_unit_list = None
     rmse_unit_list = None
     try:
-        if not isinstance(test_dataset.unit_list,int):
-            unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
+        if not isinstance(unit_list,int):
+            unit_list = torch.Tensor(unit_list).to(rmse_list.device)
             #print(unit_list)
             unit_num  = max(unit_list.shape)
             unit_num  = len(property_names)
@@ -2575,7 +2576,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
                 unit_list = torch.repeat_interleave(unit_list,int(property_num//unit_num),dim=1)
         else:
             logsys.info(f"unit list is int, ")
-            unit_list= test_dataset.unit_list
+            unit_list= unit_list
         
         rmse_unit_list= (rmse_list*unit_list)
         
