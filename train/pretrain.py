@@ -1120,8 +1120,6 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     else:
         return run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status)
 
-
-
 def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     
     if status == 'train':
@@ -1517,7 +1515,6 @@ def compute_coef(err_record, flag,normlized_type):
     c3 = torch.Tensor(c3_l).to(e1.device).mean()
     return c1,c2,c3
 
-
 def run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     
     if status == 'train':
@@ -1810,8 +1807,6 @@ class NanDetect:
                 scaler._enabled = False
                 model.use_amp = bool(downgrad_use_amp.item()) and model.use_amp
         return skip
-
-
 
 #########################################
 ######### fourcast forward step #########
@@ -2452,8 +2447,6 @@ def run_one_fourcast_iter_multi_branch(model, batch, idxes, fourcastresult,datas
         fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],rmse_maps)]
     return fourcastresult,extra_info
 
-
-
 def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do_error_propagration_monitor=False,order = None):
     model.eval()
     logsys.eval()
@@ -2528,8 +2521,6 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do
     if save_prediction_final_step is not None:torch.save(save_prediction_final_step,os.path.join(logsys.ckpt_root,'save_prediction_final_step')) 
     fourcastresult['snap_index'] = snap_index
     return fourcastresult
-
-
 
 def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature'],return_value = None):
     prefix_pool={
