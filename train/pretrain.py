@@ -1902,36 +1902,35 @@ def collect_fourcast_result(fourcastresult,test_dataset,consume=False,force=Fals
             unit_list = unit_list[pred_channel_for_next_stamp]
         
         accu_list = [p['accu'].cpu() for p in fourcastresult.values() if 'accu' in p]
-        if len(accu_list)==0:return None
-        accu_list = torch.stack(accu_list).numpy()   
-        
-        total_num = len(accu_list)
-        accu_list = accu_list.mean(0)# (fourcast_num,property_num)
-        real_times = [(predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit for predict_time in range(len(accu_list))]
-        #accu_table = save_and_log_table(accu_list,logsys, prefix+'accu_table', property_names, real_times)    
+        if not len(accu_list)==0:
+            accu_list = torch.stack(accu_list).numpy()   
+            total_num = len(accu_list)
+            accu_list = accu_list.mean(0)# (fourcast_num,property_num)
+            real_times = [(predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit for predict_time in range(len(accu_list))]
+            #accu_table = save_and_log_table(accu_list,logsys, prefix+'accu_table', property_names, real_times)    
 
-        ## <============= RMSE ===============>
-        rmse_list = torch.stack([p['rmse'].cpu() for p in fourcastresult.values() if 'rmse' in p]).mean(0)# (fourcast_num,property_num)
-        #rmse_table= save_and_log_table(rmse_list,logsys, prefix+'rmse_table', property_names, real_times)       
+            ## <============= RMSE ===============>
+            rmse_list = torch.stack([p['rmse'].cpu() for p in fourcastresult.values() if 'rmse' in p]).mean(0)# (fourcast_num,property_num)
+            #rmse_table= save_and_log_table(rmse_list,logsys, prefix+'rmse_table', property_names, real_times)       
 
-        if not isinstance(unit_list,int):
-            unit_list = torch.Tensor(unit_list).to(rmse_list.device)
-            #print(unit_list)
-            unit_num  = max(unit_list.shape)
-            unit_num  = len(property_names)
-            unit_list = unit_list.reshape(1,unit_num)
-            property_num = len(property_names)
-            if property_num > unit_num:
-                assert property_num%unit_num == 0
-                unit_list = torch.repeat_interleave(unit_list,int(property_num//unit_num),dim=1)
-        else:
-            logsys.info(f"unit list is int, ")
-            unit_list= unit_list
-        rmse_unit_list= (rmse_list*unit_list)
-        average_metrix = {'accu': accu_list,'rmse':rmse_list,'rmse_unit':rmse_unit_list,'real_times':real_times}
-        torch.save(average_metrix,offline_out)
-        if consume:
-            os.system(f"rm {ROOT}/fourcastresult.gpu_*")
+            if not isinstance(unit_list,int):
+                unit_list = torch.Tensor(unit_list).to(rmse_list.device)
+                #print(unit_list)
+                unit_num  = max(unit_list.shape)
+                unit_num  = len(property_names)
+                unit_list = unit_list.reshape(1,unit_num)
+                property_num = len(property_names)
+                if property_num > unit_num:
+                    assert property_num%unit_num == 0
+                    unit_list = torch.repeat_interleave(unit_list,int(property_num//unit_num),dim=1)
+            else:
+                #logsys.info(f"unit list is int, ")
+                unit_list= unit_list
+            rmse_unit_list= (rmse_list*unit_list)
+            average_metrix = {'accu': accu_list,'rmse':rmse_list,'rmse_unit':rmse_unit_list,'real_times':real_times}
+            torch.save(average_metrix,offline_out)
+            if consume:
+                os.system(f"rm {ROOT}/fourcastresult.gpu_*")
     
     return torch.load(offline_out)
 
@@ -1953,7 +1952,7 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
             rmse_unit_list = result['rmse_unit']
             real_times = result['real_times']
             row += [[time_stamp,epoch]+value_list for time_stamp, value_list in zip(real_times,rmse_unit_list.tolist())]
-
+        
     #logsys.add_table(prefix+'_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     logsys.add_table('multi_epoch_fourcast_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     
