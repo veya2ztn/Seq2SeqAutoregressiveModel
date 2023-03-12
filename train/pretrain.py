@@ -1894,9 +1894,13 @@ def collect_fourcast_result(fourcastresult,test_dataset,consume=False,force=Fals
                     else:
                         fourcastresult[key] = val # overwrite
         property_names = test_dataset.vnames
+        unit_list = test_dataset.unit_list
         if hasattr(test_dataset,"pred_channel_for_next_stamp"):
-            property_names = [property_names[t] for t in test_dataset.pred_channel_for_next_stamp]
-            test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp]
+            offset = 2 if 'CK' in test_dataset.__class__.__name__ else 0
+            pred_channel_for_next_stamp = np.array(test_dataset.pred_channel_for_next_stamp) - offset
+            property_names = [property_names[t] for t in (pred_channel_for_next_stamp) ] # do not allow padding constant at begining.
+            unit_list = unit_list[pred_channel_for_next_stamp]
+        
         accu_list = [p['accu'].cpu() for p in fourcastresult.values() if 'accu' in p]
         if len(accu_list)==0:return None
         accu_list = torch.stack(accu_list).numpy()   
@@ -1910,8 +1914,8 @@ def collect_fourcast_result(fourcastresult,test_dataset,consume=False,force=Fals
         rmse_list = torch.stack([p['rmse'].cpu() for p in fourcastresult.values() if 'rmse' in p]).mean(0)# (fourcast_num,property_num)
         #rmse_table= save_and_log_table(rmse_list,logsys, prefix+'rmse_table', property_names, real_times)       
 
-        if not isinstance(test_dataset.unit_list,int):
-            unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
+        if not isinstance(unit_list,int):
+            unit_list = torch.Tensor(unit_list).to(rmse_list.device)
             #print(unit_list)
             unit_num  = max(unit_list.shape)
             unit_num  = len(property_names)
@@ -1922,7 +1926,7 @@ def collect_fourcast_result(fourcastresult,test_dataset,consume=False,force=Fals
                 unit_list = torch.repeat_interleave(unit_list,int(property_num//unit_num),dim=1)
         else:
             logsys.info(f"unit list is int, ")
-            unit_list= test_dataset.unit_list
+            unit_list= unit_list
         rmse_unit_list= (rmse_list*unit_list)
         average_metrix = {'accu': accu_list,'rmse':rmse_list,'rmse_unit':rmse_unit_list,'real_times':real_times}
         torch.save(average_metrix,offline_out)
@@ -1936,7 +1940,8 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
     origin_ckpt_path = logsys.ckpt_root
     row=[]
     property_names = test_dataset.vnames
-    for epoch, fourcastresult in enumerate(fourcastresult_path_list):
+    for fourcastresult in fourcastresult_path_list:
+        epoch = int(fourcastresult.split("_")[-1])
         assert isinstance(fourcastresult,str)
         prefix = os.path.split(fourcastresult)[-1]
         #logsys.ckpt_root = fourcastresult
