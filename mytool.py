@@ -319,9 +319,6 @@ def create_multi_fourcast_table(ckpt_path,force=False):
     info_pool_list = create_multi_epoch_inference(result_path_list, logsys,test_dataset,force=force)
     logsys.close()
 
-
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('parse tf.event file to wandb', add_help=False)
     parser.add_argument('--paths',type=str,default="")

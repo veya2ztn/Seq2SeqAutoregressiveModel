@@ -810,6 +810,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
                     error   = ((tensor1-tensor2)**2+1e-2).log().mean()# <---face fatal problem in half precesion due to too small value 
                 elif _type == 'quantity_real_log5':
                     error   = ((tensor1-tensor2)**2+1e-5).log().mean()# <---face fatal problem in half precesion due to too small value
+                
                 elif _type == 'quantity_real_log3':
                     error   = ((tensor1-tensor2)**2+1e-3).log().mean()# <---face fatal problem in half precesion due to too small value 
                     # 1e-2 better than 1e-5. 
@@ -3321,6 +3322,7 @@ def parser_compute_graph(compute_graph_set):
         'fwd2_D_Rog'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log"], [0,2,2,1.0, "quantity_real_log"]]),
         'fwd2_D_Rog5'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log5"], [0,2,2,1.0, "quantity_real_log5"]]),
         'fwd2_D_Rog3'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log3"], [0,2,2,1.0, "quantity_real_log3"]]),
+        'fwd2_D_Rog2'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log2"], [0,2,2,1.0, "quantity_real_log2"]]),
         'fwd2_P'   :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "quantity"]
