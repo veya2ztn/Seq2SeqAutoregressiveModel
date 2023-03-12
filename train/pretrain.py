@@ -1952,7 +1952,21 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
             rmse_unit_list = result['rmse_unit']
             real_times = result['real_times']
             row += [[time_stamp,epoch]+value_list for time_stamp, value_list in zip(real_times,rmse_unit_list.tolist())]
-        
+            
+            Z500 = rmse_unit_list[real_times.index(120)][property_names.index('500hPa_geopotential')]
+            logsys.record('5DZ500', Z500, epoch, epoch_flag='epoch')
+            T850 = rmse_unit_list[real_times.index(120)][property_names.index('850hPa_temperature')]
+            logsys.record('5DT850', T850, epoch, epoch_flag='epoch')
+
+            Z500 = rmse_unit_list[real_times.index(72)][property_names.index('500hPa_geopotential')]
+            logsys.record('3DZ500', Z500, epoch, epoch_flag='epoch')
+            T850 = rmse_unit_list[real_times.index(72)][property_names.index('850hPa_temperature')]
+            logsys.record('3DT850', T850, epoch, epoch_flag='epoch')
+
+            Z500 = rmse_unit_list[real_times.index(24)][property_names.index('500hPa_geopotential')]
+            logsys.record('1DZ500', Z500, epoch, epoch_flag='epoch')
+            T850 = rmse_unit_list[real_times.index(24)][property_names.index('850hPa_temperature')]
+            logsys.record('1DT850', T850, epoch, epoch_flag='epoch')
     #logsys.add_table(prefix+'_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     logsys.add_table('multi_epoch_fourcast_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     
