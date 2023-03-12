@@ -342,6 +342,10 @@ if __name__ == "__main__":
         while level>0:
             new_path = []
             for root_path in now_path:
+                if os.path.isfile(root_path):continue
+                if len(os.listdir(root_path))==0:
+                    os.system(f"rm -r {root_path}")
+                    continue
                 for sub_name in os.listdir(root_path):
                     sub_path =  os.path.join(root_path,sub_name)
                     if os.path.isfile(sub_path):continue
