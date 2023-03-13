@@ -783,6 +783,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
                     error   = ((tensor1-tensor2)**2+1e-2).log().mean()# <---face fatal problem in half precesion due to too small value 
                 elif _type == 'quantity_real_log5':
                     error   = ((tensor1-tensor2)**2+1e-5).log().mean()# <---face fatal problem in half precesion due to too small value
+                
                 elif _type == 'quantity_real_log3':
                     error   = ((tensor1-tensor2)**2+1e-3).log().mean()# <---face fatal problem in half precesion due to too small value 
                     # 1e-2 better than 1e-5. 
@@ -1091,8 +1092,6 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
         return run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status)
     else:
         return run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status)
-
-
 
 def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     
@@ -1491,7 +1490,6 @@ def compute_coef(err_record, flag,normlized_type):
     c3 = torch.Tensor(c3_l).to(e1.device).mean()
     return c1,c2,c3
 
-
 def run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     
     if status == 'train':
@@ -1785,8 +1783,6 @@ class NanDetect:
                 model.use_amp = bool(downgrad_use_amp.item()) and model.use_amp
         return skip
 
-
-
 #########################################
 ######### fourcast forward step #########
 #########################################
@@ -1877,36 +1873,35 @@ def collect_fourcast_result(fourcastresult,test_dataset,consume=False,force=Fals
             unit_list = unit_list[pred_channel_for_next_stamp]
         
         accu_list = [p['accu'].cpu() for p in fourcastresult.values() if 'accu' in p]
-        if len(accu_list)==0:return None
-        accu_list = torch.stack(accu_list).numpy()   
-        
-        total_num = len(accu_list)
-        accu_list = accu_list.mean(0)# (fourcast_num,property_num)
-        real_times = [(predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit for predict_time in range(len(accu_list))]
-        #accu_table = save_and_log_table(accu_list,logsys, prefix+'accu_table', property_names, real_times)    
+        if not len(accu_list)==0:
+            accu_list = torch.stack(accu_list).numpy()   
+            total_num = len(accu_list)
+            accu_list = accu_list.mean(0)# (fourcast_num,property_num)
+            real_times = [(predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit for predict_time in range(len(accu_list))]
+            #accu_table = save_and_log_table(accu_list,logsys, prefix+'accu_table', property_names, real_times)    
 
-        ## <============= RMSE ===============>
-        rmse_list = torch.stack([p['rmse'].cpu() for p in fourcastresult.values() if 'rmse' in p]).mean(0)# (fourcast_num,property_num)
-        #rmse_table= save_and_log_table(rmse_list,logsys, prefix+'rmse_table', property_names, real_times)       
+            ## <============= RMSE ===============>
+            rmse_list = torch.stack([p['rmse'].cpu() for p in fourcastresult.values() if 'rmse' in p]).mean(0)# (fourcast_num,property_num)
+            #rmse_table= save_and_log_table(rmse_list,logsys, prefix+'rmse_table', property_names, real_times)       
 
-        if not isinstance(unit_list,int):
-            unit_list = torch.Tensor(unit_list).to(rmse_list.device)
-            #print(unit_list)
-            unit_num  = max(unit_list.shape)
-            unit_num  = len(property_names)
-            unit_list = unit_list.reshape(1,unit_num)
-            property_num = len(property_names)
-            if property_num > unit_num:
-                assert property_num%unit_num == 0
-                unit_list = torch.repeat_interleave(unit_list,int(property_num//unit_num),dim=1)
-        else:
-            logsys.info(f"unit list is int, ")
-            unit_list= unit_list
-        rmse_unit_list= (rmse_list*unit_list)
-        average_metrix = {'accu': accu_list,'rmse':rmse_list,'rmse_unit':rmse_unit_list,'real_times':real_times}
-        torch.save(average_metrix,offline_out)
-        if consume:
-            os.system(f"rm {ROOT}/fourcastresult.gpu_*")
+            if not isinstance(unit_list,int):
+                unit_list = torch.Tensor(unit_list).to(rmse_list.device)
+                #print(unit_list)
+                unit_num  = max(unit_list.shape)
+                unit_num  = len(property_names)
+                unit_list = unit_list.reshape(1,unit_num)
+                property_num = len(property_names)
+                if property_num > unit_num:
+                    assert property_num%unit_num == 0
+                    unit_list = torch.repeat_interleave(unit_list,int(property_num//unit_num),dim=1)
+            else:
+                #logsys.info(f"unit list is int, ")
+                unit_list= unit_list
+            rmse_unit_list= (rmse_list*unit_list)
+            average_metrix = {'accu': accu_list,'rmse':rmse_list,'rmse_unit':rmse_unit_list,'real_times':real_times}
+            torch.save(average_metrix,offline_out)
+            if consume:
+                os.system(f"rm {ROOT}/fourcastresult.gpu_*")
     
     return torch.load(offline_out)
 
@@ -1928,7 +1923,21 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
             rmse_unit_list = result['rmse_unit']
             real_times = result['real_times']
             row += [[time_stamp,epoch]+value_list for time_stamp, value_list in zip(real_times,rmse_unit_list.tolist())]
+            
+            Z500 = rmse_unit_list[real_times.index(120)][property_names.index('500hPa_geopotential')]
+            logsys.record('5DZ500', Z500, epoch, epoch_flag='epoch')
+            T850 = rmse_unit_list[real_times.index(120)][property_names.index('850hPa_temperature')]
+            logsys.record('5DT850', T850, epoch, epoch_flag='epoch')
 
+            Z500 = rmse_unit_list[real_times.index(72)][property_names.index('500hPa_geopotential')]
+            logsys.record('3DZ500', Z500, epoch, epoch_flag='epoch')
+            T850 = rmse_unit_list[real_times.index(72)][property_names.index('850hPa_temperature')]
+            logsys.record('3DT850', T850, epoch, epoch_flag='epoch')
+
+            Z500 = rmse_unit_list[real_times.index(24)][property_names.index('500hPa_geopotential')]
+            logsys.record('1DZ500', Z500, epoch, epoch_flag='epoch')
+            T850 = rmse_unit_list[real_times.index(24)][property_names.index('850hPa_temperature')]
+            logsys.record('1DT850', T850, epoch, epoch_flag='epoch')
     #logsys.add_table(prefix+'_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     logsys.add_table('multi_epoch_fourcast_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     
@@ -2413,8 +2422,6 @@ def run_one_fourcast_iter_multi_branch(model, batch, idxes, fourcastresult,datas
         fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],rmse_maps)]
     return fourcastresult,extra_info
 
-
-
 def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do_error_propagration_monitor=False,order = None):
     model.eval()
     logsys.eval()
@@ -2489,8 +2496,6 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do
     if save_prediction_final_step is not None:torch.save(save_prediction_final_step,os.path.join(logsys.ckpt_root,'save_prediction_final_step')) 
     fourcastresult['snap_index'] = snap_index
     return fourcastresult
-
-
 
 def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature'],return_value = None):
     prefix_pool={
@@ -3283,6 +3288,7 @@ def parser_compute_graph(compute_graph_set):
         'fwd2_D_Rog'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log"], [0,2,2,1.0, "quantity_real_log"]]),
         'fwd2_D_Rog5'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log5"], [0,2,2,1.0, "quantity_real_log5"]]),
         'fwd2_D_Rog3'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log3"], [0,2,2,1.0, "quantity_real_log3"]]),
+        'fwd2_D_Rog2'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log2"], [0,2,2,1.0, "quantity_real_log2"]]),
         'fwd2_P'   :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "quantity"]
