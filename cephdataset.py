@@ -757,7 +757,7 @@ class WeathBench(BaseDataset):
         LaLotude = np.stack([latitude[y],longitude[x]])/180*np.pi
         LaLotudeVector = np.stack([np.cos(LaLotude[1])*np.cos(LaLotude[0]),np.cos(LaLotude[1])*np.sin(LaLotude[0]),np.sin(LaLotude[1])],2)
         return LaLotude,LaLotudeVector
-
+ 
 class WeathBench71(WeathBench):
     default_root='datasets/weatherbench'
     _component_list= ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+ # u component of wind and the 10m u wind
