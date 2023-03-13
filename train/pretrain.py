@@ -634,82 +634,55 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
     c1,  c2,  c3 = model.c1, model.c2, model.c3
     
     
-    if 'deltalog' in mode:
-        error_record = {}
-        fixed_activate_error_coef = [[0, 1, 1], [0, 2, 2], [0, 3, 3]]
-        for (level_1, level_2, stamp) in fixed_activate_error_coef:
-                tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
-                tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
-                error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2)
-        e1 = torch.log(error_record[0,1,1] + 1)
-        e2 = torch.log(error_record[0,2,2] - error_record[0,1,1] + 1)
-        e3 = torch.log(error_record[0,3,3] - error_record[0,2,2] + 1)
-
-        iter_info_pool[f"{status}_c1"] = c1
-        iter_info_pool[f"{status}_c2"] = c2
-        iter_info_pool[f"{status}_c3"] = c3
-        iter_info_pool[f"{status}_e1"] = e1
-        iter_info_pool[f"{status}_e2"] = e2
-        iter_info_pool[f"{status}_e3"] = e3
-        loss = c1*e1 + c2*e2 + c3*e3 
-        diff = (e1 + e2 + e3)/3
-    elif 'logoffset' in mode:
-        error_record = {}
-        fixed_activate_error_coef = [[0, 1, 1], [0, 2, 2], [0, 3, 3]]
-        for (level_1, level_2, stamp) in fixed_activate_error_coef:
-                tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
-                tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
-                error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2)
-        offset = 0.01 #<--- this is a hyperparameter
-        e1 = torch.log(error_record[0,1,1] + offset)
-        e2 = torch.log(error_record[0,2,2] + offset)
-        e3 = torch.log(error_record[0,3,3] + offset)
-        iter_info_pool[f"{status}_c1"] = c1
-        iter_info_pool[f"{status}_c2"] = c2
-        iter_info_pool[f"{status}_c3"] = c3
-        iter_info_pool[f"{status}_e1"] = e1
-        iter_info_pool[f"{status}_e2"] = e2
-        iter_info_pool[f"{status}_e3"] = e3
-        loss = c1*e1 + c2*e2 + c3*e3 
-        diff = (e1 + e2 + e3)/3
-    elif 'normal' in mode or 'per_sample' in mode: 
-        error_record = {}
-        fixed_activate_error_coef = [[0,1,1],[0,2,2],[0,3,3]]
-        for (level_1, level_2, stamp) in fixed_activate_error_coef:
-                tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
-                tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
-                error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2)
-        e1 = error_record[0,1,1]
-        e2 = error_record[0,2,2]
-        e3 = error_record[0,3,3]
-        iter_info_pool[f"{status}_c1"] = c1
-        iter_info_pool[f"{status}_c2"] = c2
-        iter_info_pool[f"{status}_c3"] = c3
-        iter_info_pool[f"{status}_e1"] = e1
-        iter_info_pool[f"{status}_e2"] = e2
-        iter_info_pool[f"{status}_e3"] = e3
-        loss = c1*e1 + c2*e2 + c3*e3 
-        diff = (e1 + e2 + e3)/3
-    elif 'per_feature' in mode: # need apply error coef per feature
+    
+    if 'per_feature' in mode: # need apply error coef per feature
         error_record = {}
         fixed_activate_error_coef = [[0,1,1],[0,2,2],[0,3,3]]
         for (level_1, level_2, stamp) in fixed_activate_error_coef:
                 tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
                 tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
                 error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2,dim=(0,2,3))
+                #in training mode, c1 c2 c3 is also feature-wised
         e1 = error_record[0,1,1]
         e2 = error_record[0,2,2]
         e3 = error_record[0,3,3]
-        iter_info_pool[f"{status}_c1"] = c1.mean() if isinstance(c1,torch.Tensor) else c1#(110)
-        iter_info_pool[f"{status}_c2"] = c2.mean() if isinstance(c2,torch.Tensor) else c2#(110)
-        iter_info_pool[f"{status}_c3"] = c3.mean() if isinstance(c3,torch.Tensor) else c3#(110)
-        iter_info_pool[f"{status}_e1"] = e1.mean() if isinstance(e1,torch.Tensor) else e1#(110)
-        iter_info_pool[f"{status}_e2"] = e2.mean() if isinstance(e2,torch.Tensor) else e2#(110)
-        iter_info_pool[f"{status}_e3"] = e3.mean() if isinstance(e3,torch.Tensor) else e3#(110)
-        loss = (c1*e1 + c2*e2 + c3*e3).mean()
-        diff = ((e1 + e2 + e3)/3).mean()
-    
-    
+        c1 = c1.mean() if isinstance(c1,torch.Tensor) else c1#(110)
+        c2 = c2.mean() if isinstance(c2,torch.Tensor) else c2#(110)
+        c3 = c3.mean() if isinstance(c3,torch.Tensor) else c3#(110)
+        e1 = e1.mean() if isinstance(e1,torch.Tensor) else e1#(110)
+        e2 = e2.mean() if isinstance(e2,torch.Tensor) else e2#(110)
+        e3 = e3.mean() if isinstance(e3,torch.Tensor) else e3#(110)
+        
+    else:
+        error_record = {}
+        fixed_activate_error_coef = [[0, 1, 1], [0, 2, 2], [0, 3, 3]]
+        for (level_1, level_2, stamp) in fixed_activate_error_coef:
+                tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
+                tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
+                error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2)
+        if 'deltalog' in mode:
+            e1 = torch.log(error_record[0,1,1] + 1)
+            e2 = torch.log(error_record[0,2,2] - error_record[0,1,1] + 1)
+            e3 = torch.log(error_record[0,3,3] - error_record[0,2,2] + 1)
+        elif 'logoffset' in mode:
+            offset = 0.01 #<--- this is a hyperparameter
+            e1 = torch.log(error_record[0,1,1] + offset)
+            e2 = torch.log(error_record[0,2,2] + offset)
+            e3 = torch.log(error_record[0,3,3] + offset)
+        else: 
+            e1 = error_record[0,1,1]
+            e2 = error_record[0,2,2]
+            e3 = error_record[0,3,3]
+
+
+    iter_info_pool[f"{status}_c1"] = c1
+    iter_info_pool[f"{status}_c2"] = c2
+    iter_info_pool[f"{status}_c3"] = c3
+    iter_info_pool[f"{status}_e1"] = e1
+    iter_info_pool[f"{status}_e2"] = e2
+    iter_info_pool[f"{status}_e3"] = e3
+    loss = c1*e1 + c2*e2 + c3*e3 
+    diff = (e1 + e2 + e3)/3
     return loss, diff,iter_info_pool
 
 from criterions.high_order_loss_coef import calculate_coef,calculate_deltalog_coef,normlized_coef_type2,normlized_coef_type3,normlized_coef_type0,normlized_coef_type_bonded
@@ -810,6 +783,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
                     error   = ((tensor1-tensor2)**2+1e-2).log().mean()# <---face fatal problem in half precesion due to too small value 
                 elif _type == 'quantity_real_log5':
                     error   = ((tensor1-tensor2)**2+1e-5).log().mean()# <---face fatal problem in half precesion due to too small value
+                
                 elif _type == 'quantity_real_log3':
                     error   = ((tensor1-tensor2)**2+1e-3).log().mean()# <---face fatal problem in half precesion due to too small value 
                     # 1e-2 better than 1e-5. 
@@ -1380,7 +1354,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                 for key in model.err_record.keys():
                     if hasattr(model, 'module')  :
                         dist.barrier()
-                        dist.reduce(model.err_record[key], 0)
+                        dist.all_reduce(model.err_record[key])
                     model.err_record[key] = model.err_record[key][None]
                 c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
                 if not hasattr(model,'clist_buffer'):model.clist_buffer={'c1':[],'c2':[],'c3':[]}
@@ -1441,8 +1415,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             train_cost = []
             rest_cost = []
             inter_b.lwrite(outstring, end="\r")
-        #if step > 10:break
-        
+        #if step>10:break
 
 
     if hasattr(model,'module') and status == 'valid':
@@ -1461,22 +1434,25 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                 model.err_record[key] = torch.cat(model.err_record[key]).mean(0)
                 if hasattr(model, 'module')  :
                     dist.barrier()
-                    dist.reduce(model.err_record[key], 0)
+                    dist.all_reduce(model.err_record[key])
                 model.err_record[key] = model.err_record[key]
             c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
         elif 'per_sample' in model.directly_esitimate_longterm_error:
             for key in model.err_record.keys():
                 model.err_record[key] = torch.cat(model.err_record[key])# (B,)
             c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
+            #print(f"===> before <=== gpu:{device} c1={c1:.4f} c2={c2:.4f} c3={c3:.4f}")
             if hasattr(model, 'module'):
                 for x in [c1, c2, c3]:
                     dist.barrier()
-                    dist.reduce(x, 0)
+                    dist.all_reduce(x)
+            #print(f"===> after <=== gpu:{device} c1={c1:.4f} c2={c2:.4f} c3={c3:.4f}")
         else:
             raise NotImplementedError
         model.c1 = c1;model.c2 = c2;model.c3 = c3
         model.err_record = {}
         #print(c1,c2,c3)
+        #raise
 
     loss_val = total_diff/ total_num
     loss_val = loss_val.item()
@@ -3290,6 +3266,7 @@ def parser_compute_graph(compute_graph_set):
 
     
     if compute_graph_set is None:return None,None
+    if compute_graph_set =="":return None,None
     compute_graph_set_pool={
         'fwd3_D'   :([[1],[2],[3]], [[0,1,1,0.33, "quantity"], 
                          [0,2,2,0.33, "quantity"], 
@@ -3317,6 +3294,7 @@ def parser_compute_graph(compute_graph_set):
         'fwd2_D_Rog'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log"], [0,2,2,1.0, "quantity_real_log"]]),
         'fwd2_D_Rog5'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log5"], [0,2,2,1.0, "quantity_real_log5"]]),
         'fwd2_D_Rog3'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log3"], [0,2,2,1.0, "quantity_real_log3"]]),
+        'fwd2_D_Rog2'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log2"], [0,2,2,1.0, "quantity_real_log2"]]),
         'fwd2_P'   :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "quantity"]
