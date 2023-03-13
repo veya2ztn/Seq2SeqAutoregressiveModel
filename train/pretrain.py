@@ -3261,6 +3261,7 @@ def parser_compute_graph(compute_graph_set):
 
     
     if compute_graph_set is None:return None,None
+    if compute_graph_set =="":return None,None
     compute_graph_set_pool={
         'fwd3_D'   :([[1],[2],[3]], [[0,1,1,0.33, "quantity"], 
                          [0,2,2,0.33, "quantity"], 
