@@ -2071,6 +2071,7 @@ def run_one_fourcast_iter_single_branch(model, batch, idxes, fourcastresult,data
     rmse_maps = []
     hmse_series=[]
     mse_serise= []
+    predict_time_series = []
     extra_info = {}
     time_step_1_mode=False
     batch_variance_line_pred = [] 
@@ -2154,6 +2155,7 @@ def run_one_fourcast_iter_single_branch(model, batch, idxes, fourcastresult,data
                 snap_line.append([time, get_tensor_value(ltmv_pred,snap_index, time=time),'pred'])
                 snap_line.append([time, get_tensor_value(ltmv_true,snap_index, time=time),'true'])
             
+            predict_time_series.append((j+1)*dataset.time_intervel*dataset.time_unit)
             statistic_dim = tuple(range(2,len(ltmv_true.shape))) # always assume (B,P,Z,W,H)
             batch_variance_line_pred.append(ltmv_pred.std(dim=statistic_dim).detach().cpu())
             batch_variance_line_true.append(ltmv_true.std(dim=statistic_dim).detach().cpu())
@@ -2167,7 +2169,7 @@ def run_one_fourcast_iter_single_branch(model, batch, idxes, fourcastresult,data
             hmse_value = compute_rmse(ltmv_pred[...,8:24,:], ltmv_true[...,8:24,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
             hmse_series.append(hmse_value.detach().cpu())
         #torch.cuda.empty_cache()
-
+    predict_time_series = torch.LongTensor(predict_time_series)#(fourcast_num)
     mse_serise  = torch.stack(mse_serise,1)
     accu_series = torch.stack(accu_series,1) # (B,fourcast_num,property_num)
     rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,property_num)
@@ -2528,6 +2530,9 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
     }
     prefix = prefix_pool[test_dataset.time_reverse_flag]
 
+    if hasattr(test_dataset,'multi_branch_order') and "step" in test_dataset.multi_branch_order:
+        test_dataset.time_intervel = int(test_dataset.multi_branch_order.split("_")[-1])
+
     if isinstance(fourcastresult,str):
         # then it is the fourcastresult path
         ROOT= fourcastresult
@@ -2736,8 +2741,7 @@ def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True,get_value
         logsys.info(f"load fourcastresult at {fourcastresult_path}")
         fourcastresult = torch.load(fourcastresult_path)
 
-    if args.multi_branch_order and "step" in args.multi_branch_order:
-        test_dataset.time_intervel = int(args.multi_branch_order.split("_")[-1])
+    
     if do_table:
         if not args.distributed:
             create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
@@ -2989,7 +2993,8 @@ def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
     test_dataset = dataset_type(split=split, with_idx=True,dataset_tensor=test_dataset_tensor,record_load_tensor=test_record_load,**dataset_kargs)
     if args.wrapper_model and hasattr(eval(args.wrapper_model),'pred_channel_for_next_stamp'):
         test_dataset.pred_channel_for_next_stamp = eval(args.wrapper_model).pred_channel_for_next_stamp
-    
+    if args.multi_branch_order is not None:
+        test_dataset.multi_branch_order = args.multi_branch_order
     assert hasattr(test_dataset,'clim_tensor')
     test_datasampler  = DistributedSampler(test_dataset,  shuffle=False) if args.distributed else None
     test_dataloader   = DataLoader(test_dataset, args.valid_batch_size, sampler=test_datasampler, num_workers=args.num_workers, pin_memory=False)
@@ -3769,11 +3774,11 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     if args.mode=='fourcast':
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
         run_fourcast(args, model,logsys,test_dataloader)
-        return 1
+        
     elif args.mode=='fourcast_for_snap_nodal_loss':
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
         run_nodalosssnap(args, model,logsys,test_dataloader)
-        return 1
+        
     else:
 
         train_dataset, val_dataset, train_dataloader,val_dataloader = get_train_and_valid_dataset(args,
