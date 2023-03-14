@@ -2214,7 +2214,7 @@ def run_one_fourcast_iter_with_history(model, start, batch, idxes, fourcastresul
         fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse}
     return fourcastresult,extra_info
 
-def compute_multibranch_route(order='do_small_first' ,max_time_step = 121,divide_num=[24, 6, 3, 1]):
+def compute_multibranch_route(order='do_small_first' ,max_time_step = 150,divide_num=[24, 6, 3, 1]):
     order_table={
         'do_small_first' : [3,2,1,0],
         'do_large_first' : [0,1,2,3]
