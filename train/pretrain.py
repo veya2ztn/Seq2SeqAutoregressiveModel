@@ -1479,6 +1479,8 @@ def compute_coef(err_record, flag,normlized_type):
     for _e1,_a0,_a1,_e1,_e2,_e3 in zip(e1,a0,a1,e1,e2,e3):
         _e1,_e2,_e3 = float(_e1), float(_e2), float(_e3)
         _a0,_a1   = float(_a0), float(_a1)
+        if _a0 > 0.9:continue
+        if _a1 > 0.9:continue
         c1,c2,c3 = calculate_coef(_e1,_a0,_a1,rank=int(flag.split('_')[-1]))
         #print(f"e1:{_e1:.4f} e2:{_e2:.4f} e3:{_e3:.4f} c1:{c1:.4f} c2:{c2:.4f} c3:{c3:.4f}")
         c1,c2,c3 = normlized_type(c1,c2,c3,_e1,_e2,_e3)

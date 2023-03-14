@@ -308,8 +308,8 @@ def calculate_coef(e1,alpha0,alpha1,rank=4):
         Notice, we use CPU calculate
     """
     p = (1 - alpha1)
-    q = (1/(1 - alpha0 +1e-5 ))
-    e3= e1*(1 +  alpha1*(1 + alpha0))
+    q = (1/(1 - alpha0)) # make sure alpha0 < 1 
+    e3= e1*(1 +  alpha1*(1 + alpha0)) 
     e2= e1*(1 + alpha0)
     e1= e1
     dp_matrix, dp_divide_times = pq_coef[rank]["dp"]
@@ -325,8 +325,8 @@ def calculate_coef(e1,alpha0,alpha1,rank=4):
     de  = np.einsum("i,ij,j->",p_pows[:len(de_matrix)], np.array(de_matrix), q_pows[:len(de_matrix[0])])/np.power(q,de_divide_times)
     #print(dp,dq,de)
     de3 =  -(1/e2)*dp
-    de2 = alpha1/e2*dp + 1/(e1*(1-alpha0+1e-5)**2)*dq
-    de  = 1/e2*dp - ((1/e1+alpha0/e1)/(1 - alpha0 +1e-5)**2)*dq + de
+    de2 = alpha1/e2*dp + 1/(e1*(1-alpha0)**2)*dq
+    de  = 1/e2*dp - ((1/e1+alpha0/e1)/(1 - alpha0 )**2)*dq + de
     return de, de2, de3
 
 def calculate_deltalog_coef(c1,c2,c3,e1,e2,e3):
