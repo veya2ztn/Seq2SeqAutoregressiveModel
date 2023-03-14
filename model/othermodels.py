@@ -184,6 +184,7 @@ try:
                     depths=[4, 4, 4],
                     num_heads=[6, 6, 6],
                     Weather_T=1, use_pos_embed=False)
+        
         def encode(self, x):
             assert len(self.net.layers)>1
             # x: [B, C, H, W]
@@ -199,6 +200,7 @@ try:
             for layer in self.net.layers[:-1]:
                 x = layer(x)
             return x
+        
         def decode(self,x):
             assert len(self.net.layers)>1
             x = self.net.layers[-1](x)
@@ -256,6 +258,98 @@ try:
             assert isinstance(branch_flag,int)
             return self.decode(self.backbone.encode(x), branch_flag)
     
+    class LgNet_MultiHead(nn.Module):
+        '''
+            use it as wrapper model.
+            base branch is 6;
+        '''
+        branch1_weight_path  = "checkpoints/WeathBench32x64/LgNet_Head/ts_2_finetune-2D706N_per_1_step/03_10_19_52_46121-seed_73001/pretrain_latest.pt"
+        branch3_weight_path  = "checkpoints/WeathBench32x64/LgNet_Head/ts_2_finetune-2D706N_per_24_step/03_10_19_38_58203-seed_73001/pretrain_latest.pt"
+        branch24_weight_path = "checkpoints/WeathBench32x64/LgNet_Head/ts_2_finetune-2D706N_per_3_step/03_11_00_09_47151-seed_73001/pretrain_latest.pt"
+        def __init__(self, args, backbone):
+            super().__init__()
+            self.backbone = backbone
+            rearrange_layer= Rearrange("b h w (p1 p2 c_out) -> b c_out (h p1) (w p2)",p1=self.backbone.net.patch_size[-2],
+                                                    p2=self.backbone.net.patch_size[-1],
+                                                    h=self.backbone.net.img_size[0] // self.backbone.net.patch_size[-2],
+                                                    w=self.backbone.net.img_size[1] // self.backbone.net.patch_size[-1],)
+            self.branch1  = nn.Sequential(copy.deepcopy(self.backbone.net.layers[-1]),copy.deepcopy(self.backbone.net.final),rearrange_layer)
+            layer_weight, final_weight = self.distiall_head_weight(self.branch1_weight_path)
+            self.branch1[0].load_state_dict(layer_weight)
+            self.branch1[1].load_state_dict(final_weight)
+
+            self.branch24  = nn.Sequential(copy.deepcopy(self.backbone.net.layers[-1]),copy.deepcopy(self.backbone.net.final),rearrange_layer)
+            layer_weight, final_weight = self.distiall_head_weight(self.branch24_weight_path)
+            self.branch24[0].load_state_dict(layer_weight)
+            self.branch24[1].load_state_dict(final_weight)
+
+            self.branch3 = nn.Sequential(copy.deepcopy(self.backbone.net.layers[-1]),copy.deepcopy(self.backbone.net.final),rearrange_layer)
+            layer_weight, final_weight = self.distiall_head_weight(self.branch3_weight_path)
+            self.branch3[0].load_state_dict(layer_weight)
+            self.branch3[1].load_state_dict(final_weight)
+
+            # self.branch6  = nn.Sequential(copy.deepcopy(self.backbone.net.layers[-1]), copy.deepcopy(self.backbone.net.final), rearrange_layer)
+            # layer_weight, final_weight = self.distiall_head_weight("checkpoints/WeathBench32x64/LgNet_Head/ts_2_finetune-2D706N_per_24_step")
+            # self.branch1[0].load_state_dict(layer_weight)
+            # self.branch1[1].load_state_dict(final_weight)
+
+        @staticmethod
+        def distiall_head_weight(ckpt):
+            ckpt = torch.load(ckpt)
+            model_state_dict = ckpt['model']
+            if "loragrashcastdglsym" in model_state_dict:
+                model_state_dict = model_state_dict["loragrashcastdglsym"]
+            if "lgnet" in model_state_dict:
+                model_state_dict = model_state_dict["lgnet"]
+
+
+            layer_dict = {}
+            for key,val in model_state_dict.items():
+                if "layers.2" in key:
+                    pass
+                else:continue
+                key = key.replace("module.","").replace("_orig_mod.","")
+                key = key.replace("backbone.net.layers.2.","")
+                layer_dict[key] = val
+
+            final_dict = {}
+            for key,val in model_state_dict.items():
+                if "final" in key:
+                    pass
+                else:continue
+                key = key.replace("module.","").replace("_orig_mod.","")
+                key = key.replace("backbone.net.final.","")
+                final_dict[key] = val
+            return layer_dict , final_dict
+
+        def decode(self, x, branch_flag):
+
+            if branch_flag == 6:
+                return self.backbone.decode(x)
+            elif branch_flag == 1:
+                return self.branch1(x)
+            elif branch_flag == 3:
+                return self.branch3(x)
+            elif branch_flag == 24:
+                return self.branch24(x)
+            else:
+                raise NotImplementedError
+
+        def forward(self, x, branch_flag):
+            assert isinstance(branch_flag, int)
+            return self.decode(self.backbone.encode(x), branch_flag)
+
+    class LgNet_MultiHead_F(LgNet_MultiHead):
+        '''
+            use it as wrapper model.
+            base branch is 6;
+        '''
+        branch1_weight_path = "checkpoints/WeathBench32x64/LgNet_Head/ts_3_finetune-2D706N_per_1_step/03_11_20_50_45793-seed_73001/pretrain_latest.pt"
+        branch24_weight_path = "checkpoints/WeathBench32x64/LgNet_Head/ts_3_finetune-2D706N_per_24_step/03_11_04_21_49028-seed_73001/pretrain_latest.pt"
+        branch3_weight_path = "checkpoints/WeathBench32x64/LgNet_Head/ts_3_finetune-2D706N_per_3_step/03_11_19_51_49155-seed_73001/pretrain_latest.pt"
+
+       
+
     class LgNet_Head(CK_LgNet):
         '''
             use it as wrapper model.

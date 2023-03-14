@@ -1,3 +1,9 @@
+from colossalai.utils import is_using_pp
+from colossalai.pipeline.pipelinable import PipelinableContext
+from colossalai.logging import get_dist_logger
+from colossalai.context import ParallelMode
+from titans.model.vit.vit import _create_vit_model
+from colossalai.trainer import Trainer, hooks
 import os
 import torch
 import torch.distributed as dist
@@ -64,7 +70,7 @@ def get_the_args(ckpt_path):
     args.SAVE_PATH = "debug"
     return args
 
-def train_weather_forecast():
+def train_weather_forecast_colo():
 
     parser = colossalai.get_default_parser()
     parser.add_argument('--resume_from', default=False, action='store_true')
@@ -98,6 +104,7 @@ def train_weather_forecast():
     atom_args.distributed = False 
     with ColoInitContext(device=get_current_device()):
         model = build_model(atom_args)
+    
     init_spec_func(model, gpc.config.TP_TYPE)
 
     world_size = torch.distributed.get_world_size()
@@ -156,5 +163,121 @@ def train_weather_forecast():
         lr_scheduler.step()
 
 
+class DummyDataloader():
+
+    def __init__(self, length, batch_size):
+        self.length = length
+        self.batch_size = batch_size
+
+    def generate(self):
+        data = torch.rand(self.batch_size, 68, 32, 64)
+        label = torch.randint(low=0, high=10, size=(self.batch_size,))
+        return data, label
+
+    def __iter__(self):
+        self.step = 0
+        return self
+
+    def __next__(self):
+        if self.step < self.length:
+            self.step += 1
+            return self.generate()
+        else:
+            raise StopIteration
+
+    def __len__(self):
+        return self.length
+
+def train_weather_forecast():
+    # launch from torch
+    parser = colossalai.get_default_parser()
+    args = parser.parse_args()
+    colossalai.launch_from_torch(config=args.config)
+
+    # get logger
+    logger = get_dist_logger()
+    logger.info("initialized distributed environment", ranks=[0])
+
+    if hasattr(gpc.config, 'LOG_PATH'):
+        if gpc.get_global_rank() == 0:
+            log_path = gpc.config.LOG_PATH
+            if not os.path.exists(log_path):
+                os.mkdir(log_path)
+            logger.log_to_file(log_path)
+
+    use_pipeline = is_using_pp()
+
+    
+    atom_args = get_the_args(
+        "checkpoints/WeathBench32x64/CK_LgNet/ts_2_pretrain-2D706N_per_6_step/02_24_09_58_53396-seed_73001")
+    atom_args.use_wandb = "off"
+    atom_args.SAVE_PATH = "debug"
+
+    atom_args = parse_default_args(atom_args)
+    logsys = create_logsys(atom_args)
+    atom_args.distributed = False 
+    if use_pipeline:
+        pipelinable = PipelinableContext()
+        with pipelinable:
+            model = build_model(atom_args)
+        pipelinable.to_layer_list()
+        pipelinable.policy = "uniform"
+        model = pipelinable.partition(1, gpc.pipeline_parallel_size, gpc.get_local_rank(ParallelMode.PIPELINE))
+    else:
+        model = build_model(atom_args)
+    
+
+    # count number of parameters
+    total_numel = 0
+    for p in model.parameters():
+        total_numel += p.numel()
+    if not gpc.is_initialized(ParallelMode.PIPELINE):
+        pipeline_stage = 0
+    else:
+        pipeline_stage = gpc.get_local_rank(ParallelMode.PIPELINE)
+    logger.info(
+        f"number of parameters: {total_numel} on pipeline stage {pipeline_stage}")
+
+    # use synthetic dataset
+    # we train for 10 steps and eval for 5 steps per epoch
+    atom_args.distributed = False
+    #train_dataset, val_dataset, train_dataloader, test_dataloader = get_train_and_valid_dataset(atom_args)
+    train_dataloader = DummyDataloader(
+        length=10, batch_size=gpc.config.BATCH_SIZE)
+    test_dataloader = DummyDataloader(
+        length=5, batch_size=gpc.config.BATCH_SIZE)
+    # create loss function
+    criterion = CrossEntropyLoss(label_smoothing=0.1)
+
+    # create optimizer
+    optimizer = torch.optim.AdamW(model.parameters(), lr=gpc.config.LEARNING_RATE, weight_decay=gpc.config.WEIGHT_DECAY)
+
+    # create lr scheduler
+    lr_scheduler = CosineAnnealingWarmupLR(optimizer=optimizer,
+                                           total_steps=gpc.config.NUM_EPOCHS,
+                                           warmup_steps=gpc.config.WARMUP_EPOCHS)
+
+    # initialize
+    engine, train_dataloader, test_dataloader, _ = colossalai.initialize(model=model,optimizer=optimizer,criterion=criterion,train_dataloader=train_dataloader,
+                                         test_dataloader=test_dataloader)
+
+    logger.info("Engine is built", ranks=[0])
+
+    for epoch in range(gpc.config.NUM_EPOCHS):
+        # training
+        engine.train()
+        data_iter = iter(train_dataloader)
+
+        if gpc.get_global_rank() == 0:
+            description = 'Epoch {} / {}'.format(epoch, gpc.config.NUM_EPOCHS)
+            progress = tqdm(range(len(train_dataloader)), desc=description)
+        else:
+            progress = range(len(train_dataloader))
+        for _ in progress:
+            engine.zero_grad()
+            engine.execute_schedule(data_iter, return_output_label=False)
+            engine.step()
+            lr_scheduler.step()
+    gpc.destroy()
 if __name__ == '__main__':
     train_weather_forecast()
