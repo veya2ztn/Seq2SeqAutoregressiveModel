@@ -448,10 +448,10 @@ def normlized_coef_type_bonded(c1,c2,c3,e1,e2,e3,delta=0.01):
     #print(f"c1:{c1:.4f} c2:{c2:.4f} c3:{c3:.4f} cc2:{cc2:.4f} cc3:{cc3:.4f}")
     # apply normal constrain
     # we will add this offset untial the smallest one is np.sqrt(3)/3
-    # c = np.array([c1,c2,c3])
-    # minimal_index = np.array(c).argmin()
-    # factor = (1 - c[minimal_index])/(np.sqrt(3)/3) - 1
-    factor = 1
+    c = np.array([c1,c2,c3])
+    minimal_index = np.array(c).argmin()
+    factor = (1 - c[minimal_index])/(np.sqrt(3)/3) - 1
+    #factor = 1
     c1+= factor*np.sqrt(3)/3
     c2+= factor*np.sqrt(3)/3
     c3+= factor*np.sqrt(3)/3
