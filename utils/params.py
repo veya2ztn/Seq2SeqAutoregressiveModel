@@ -58,7 +58,7 @@ def get_args_parser():
     parser.add_argument('--compute_graph_set', type=str, default=None)
     parser.add_argument('--torch_compile', type=int, default=0)
     parser.add_argument('--multi_branch_order', type=str, default=None)
-    
+    parser.add_argument('--force_do_first_fourcast', type=int, default=0)
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
                         #choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC','NaiveConvModel2D']
