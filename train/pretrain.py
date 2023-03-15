@@ -2957,8 +2957,12 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
     val_dataloader    = DataLoader(val_dataset  , args.valid_batch_size, sampler=val_datasampler,   num_workers=args.num_workers, pin_memory=True, drop_last=False)
     return   train_dataset,   val_dataset, train_dataloader, val_dataloader
 
+
+fourcast_default_step ={
+    6: 20, 12: 10, 24:10
+}
 def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
-    time_step = args.time_step if "fourcast" in args.mode else 5*24//6 + args.time_step
+    time_step = args.time_step if "fourcast" in args.mode else fourcast_default_step[args.time_intervel] + args.time_step
     dataset_kargs = copy.deepcopy(args.dataset_kargs)
     dataset_kargs['time_step'] = time_step
     if dataset_kargs['time_reverse_flag'] in ['only_forward','random_forward_backward']:
