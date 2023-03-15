@@ -3778,7 +3778,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         for epoch in master_bar:
             
             if epoch < start_epoch:continue
-            if (args.fourcast_during_train and epoch==0 and args.pretrain_weight): # do fourcast once at begining
+            if (args.fourcast_during_train and epoch==0 and (args.pretrain_weight or args.force_do_first_fourcast) ): # do fourcast once at begining
                 Z500_now, test_dataloader = run_fourcast_during_training(args, epoch-1, logsys, model, test_dataloader)  # will
                 if Z500_now > 0:logsys.record('Z500', Z500_now, epoch-1, epoch_flag='epoch') #<---only rank 0 tensor create Z500
             if args.valid_every_epoch and (not args.more_epoch_train) and epoch == 0 and not args.skip_first_valid and args.mode != 'pretrain':
