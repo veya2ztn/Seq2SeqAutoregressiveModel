@@ -1479,6 +1479,8 @@ def compute_coef(err_record, flag,normlized_type):
     for _e1,_a0,_a1,_e1,_e2,_e3 in zip(e1,a0,a1,e1,e2,e3):
         _e1,_e2,_e3 = float(_e1), float(_e2), float(_e3)
         _a0,_a1   = float(_a0), float(_a1)
+        if _a0 > 0.9:continue
+        if _a1 > 0.9:continue
         c1,c2,c3 = calculate_coef(_e1,_a0,_a1,rank=int(flag.split('_')[-1]))
         #print(f"e1:{_e1:.4f} e2:{_e2:.4f} e3:{_e3:.4f} c1:{c1:.4f} c2:{c2:.4f} c3:{c3:.4f}")
         c1,c2,c3 = normlized_type(c1,c2,c3,_e1,_e2,_e3)
@@ -3780,7 +3782,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         for epoch in master_bar:
             
             if epoch < start_epoch:continue
-            if (args.fourcast_during_train and epoch==0 and args.pretrain_weight): # do fourcast once at begining
+            if (args.fourcast_during_train and epoch==0 and (args.pretrain_weight or args.force_do_first_fourcast) ): # do fourcast once at begining
                 Z500_now, test_dataloader = run_fourcast_during_training(args, epoch-1, logsys, model, test_dataloader)  # will
                 if Z500_now > 0:logsys.record('Z500', Z500_now, epoch-1, epoch_flag='epoch') #<---only rank 0 tensor create Z500
             if args.valid_every_epoch and (not args.more_epoch_train) and epoch == 0 and not args.skip_first_valid and args.mode != 'pretrain':
