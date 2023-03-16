@@ -1230,13 +1230,16 @@ class WeathBench64x128(WeathBench71):
     use_offline_data = False
     time_unit=1
     years_split={'train':range(1979, 2016),
-           'valid':range(2016, 2018),
-           'test':range(2018,2019),
-           'ftest':range(1979,1980),
+            'subtrain':range(2014, 2016),
+            #'subtrain':range(2017, 2018),
+            'valid':range(2016, 2018),
+            'test':range(2018,2019),
+            'ftest':range(1979,1980),
             'all': range(1979, 2022),
             'debug':range(1979,1980)}
     datatimelist_pool={'train':np.arange(np.datetime64("1979-01-01")+np.timedelta64(7, "h"), np.datetime64("2016-01-01"), np.timedelta64(1, "h")),
               'valid':np.arange(np.datetime64("2016-01-01"), np.datetime64("2018-01-01"), np.timedelta64(1, "h")),
+             'subtrain': np.arange(np.datetime64("2017-01-01"), np.datetime64("2018-01-01"), np.timedelta64(1, "h")),
              'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(1, "h")),
              'ftest':np.arange(np.datetime64("1979-01-02"), np.datetime64("1980-01-01"), np.timedelta64(1, "h"))}
     def __init__(self,**kargs):
@@ -1266,12 +1269,19 @@ class WeathBench64x128(WeathBench71):
             '2D68K': (self._component_list68 ,'gauss_norm'  , self.mean_std[:,self._component_list68].reshape(2,68,1,1), identity, identity ),
             '2D68N': (self._component_list68 ,'gauss_norm'  , self.mean_std[:,self._component_list68].reshape(2,68,1,1), identity, identity ),
             '2D70V': (_list ,'gauss_norm'   , vector_scalar_mean[:,_list].reshape(2,70,1,1), identity, identity ),
-            '2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
-            '2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
-            '3D70N': (_list ,'gauss_norm_3D', self.mean_std[:,_list].reshape(2,5,14,1,1), identity, identity ),
+            #'2D70N': (_list ,'gauss_norm'   , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
+            #'2D70U': (_list ,'unit_norm'    , self.mean_std[:,_list].reshape(2,70,1,1), identity, identity ),
+            #'3D70N': (_list ,'gauss_norm_3D', self.mean_std[:,_list].reshape(2,5,14,1,1), identity, identity ),
         }
         return config_pool
 
+    def generate_runtime_data(self,idx,reversed_part=False):
+        odata=self.load_otensor(idx) #<-- we do normlization in load_otensor
+        assert not reversed_part
+        data = odata
+        eg = torch if isinstance(data,torch.Tensor) else np
+        return data
+    
     def get_item(self,idx,reversed_part=False):
         data = self.generate_runtime_data(idx,reversed_part=reversed_part)
         if self.add_LunaSolarDirectly:
@@ -1292,6 +1302,21 @@ class WeathBench64x128(WeathBench71):
         
         return data
 
+    def load_otensor(self, idx):
+        if (self.record_load_tensor is None) or (not self.record_load_tensor[idx]):
+            year, hour = self.single_data_path_list[idx]
+            url = f"{self.root}/{year}/{year}-{hour:04d}.npy"
+            # let's do feature pick here, to save memory.
+            odata = self.load_numpy_from_url(url)[self.channel_choice]
+            odata = (odata - self.mean)/self.std
+            if self.record_load_tensor is not None:
+                self.record_load_tensor[idx] = 1
+                self.dataset_tensor[idx] = torch.Tensor(odata)
+        if self.record_load_tensor is not None:
+            return self.dataset_tensor[idx]
+        else:
+            return odata
+        
 class WeathBench64x128CK(WeathBench64x128):
     
     def config_pool_initial(self):
@@ -1303,14 +1328,55 @@ class WeathBench64x128CK(WeathBench64x128):
         }
         self.constant_index = [0,2]
         return config_pool
+    
     def get_item(self,idx,reversed_part=False):
-        year, hour = self.single_data_path_list[idx]
-        url  = f"{self.root}/{year}/{year}-{hour:04d}.npy"
-        odata = self.load_numpy_from_url(url)
-        data = odata[self.channel_choice]
-        data = (data - self.mean)/self.std
+        odata = self.load_otensor(idx)
+        data = odata #[self.channel_choice] we do channel pick in self.load_otensor
+
         cons = self.constants[self.constant_index]
         return np.concatenate([cons,data])
+
+
+class WeathBench128x256(WeathBench64x128):
+    default_root='datasets/weatherbench128x256'
+
+class WeathBench64x128CK(WeathBench64x128CK):
+    default_root='datasets/weatherbench128x256'
+
+import copy
+class WeathBenchUpSize_64_to_128:
+    def __init__(self, dataset_tensor_1=None,record_load_tensor_1=None,dataset_tensor_2=None,record_load_tensor_2=None,**kargs):
+        assert kargs['root']
+        newkargs = copy.deepcopy(kargs)
+        newkargs['split']='subtrain'
+        newkargs['root'] = kargs['root'].replace('32x64','64x128').replace('128x256','64x128')
+        
+        self.dataset_64x128 = WeathBench64x128CK(dataset_tensor=dataset_tensor_1,record_load_tensor=record_load_tensor_1,**newkargs)
+        newkargs['root'] = kargs['root'].replace('32x64','128x256').replace('64x128','128x256')
+        self.dataset_128x256 = WeathBench64x128CK(dataset_tensor=dataset_tensor_2,record_load_tensor=record_load_tensor_2,**newkargs)
+        self.use_offline_data = False
+    def __getitem__(self,idx):            
+        return self.dataset_64x128.get_item(idx), self.dataset_128x256.get_item(idx)
+    def __len__(self):
+        return len(self.dataset_64x128)
+
+    @staticmethod
+    def create_offline_dataset_templete(split='train', years=None, root=None, do_in_class=False, **kargs):
+        # when calling, use 'train' represent  64x128 branch
+        # when calling, use 'valid' represent 128x256 branch
+        if do_in_class:return None, None
+        years = WeathBench64x128.years_split['subtrain']
+        batches = len(WeathBench64x128.init_file_list(years))
+        if split == 'train':
+            return torch.empty(batches, 69, 64, 128), torch.zeros(batches)
+        elif split == 'valid':
+            return torch.empty(batches, 69, 128, 256), torch.zeros(batches)
+        else:
+            raise
+
+    
+
+    
 class WeathBench7066Self(WeathBench7066):
     # use for property relation check
     def __init__(self,**kargs):
