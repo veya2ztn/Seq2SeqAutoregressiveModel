@@ -36,7 +36,8 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
             if "lgnet" in model_state_dict:
                 model_state_dict = model_state_dict["lgnet"]
 
-            model_keys = list(model.state_dict().keys())
+            old_state_dict = model.state_dict()
+            model_keys = list(old_state_dict.keys())
             new_state_dict = {}
             for key,val in model_state_dict.items():
                 key = key.replace("module.","").replace("_orig_mod.","")
@@ -46,9 +47,9 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
                     key = key.replace("net.","backbone.net.")
                 new_state_dict[key] = val
             for key in model_keys:
-                if 'expand' in key and key not in new_state_dict:new_state_dict[key] = torch.LongTensor([1])
-                if 'repeat' in key and key not in new_state_dict:new_state_dict[key] = torch.LongTensor([1])
-
+                if '.expand' in key and key not in new_state_dict:new_state_dict[key] = old_state_dict[key]
+                if '.repeat' in key and key not in new_state_dict:new_state_dict[key] = old_state_dict[key]
+                if '.scale'  in key and key not in new_state_dict:new_state_dict[key] = old_state_dict[key]
             model_state_dict = new_state_dict
             
             if 'max_logvar' in model_state_dict:del model_state_dict['max_logvar']
