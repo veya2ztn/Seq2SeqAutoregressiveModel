@@ -3610,7 +3610,7 @@ def build_optimizer(args,model):
     elif args.opt == 'tiger':
         from custom_optimizer import Tiger
         optimizer = Tiger([{'params': [p for name, p in model.named_parameters() if 'bias' in name ],'type':'tensor_adding'},
-                   {'params': [p for name, p in model.named_parameters() if 'bias' not in name ],'type':'tensor_contraction'}\
+                           {'params': [p for name, p in model.named_parameters() if 'bias' not in name ],'type':'tensor_contraction'}\
                   ],lr =args.lr)
     else:
         raise NotImplementedError
