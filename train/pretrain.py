@@ -69,7 +69,7 @@ ep_for_mode={'pretrain':80,'finetune':50,'fourcast':50}
 bs_for_mode={'pretrain':4,'finetune':3,'fourcast':3}
 as_for_mode={'pretrain':8,'finetune':16,'fourcast':16}
 ts_for_mode={'pretrain':2,'finetune':3,'fourcast':36}
-
+#torch.autograd.set_detect_anomaly(True)
 train_set={
     'large': ((720, 1440), 8, 20, 20, ERA5CephDataset,{}),
     'small': ( (32,   64), 8, 20, 20, ERA5CephSmallDataset,{}),
@@ -3607,6 +3607,11 @@ def build_optimizer(args,model):
     elif args.opt == 'lion':
         from lion_pytorch import Lion
         optimizer       = Lion(model.parameters(), lr=args.lr,use_triton = False)
+    elif args.opt == 'adamwbycase':
+        from custom_optimizer import AdamWByCase
+        optimizer = AdamWByCase([{'params': [p for name, p in model.named_parameters() if 'bias' in name ],    'type':'tensor_adding'},
+                                 {'params': [p for name, p in model.named_parameters() if 'bias' not in name ],'type':'tensor_contraction'}\
+                          ], lr=args.lr, betas=(0.9, 0.95))
     elif args.opt == 'tiger':
         from custom_optimizer import Tiger
         optimizer = Tiger([{'params': [p for name, p in model.named_parameters() if 'bias' in name ],    'type':'tensor_adding'},
