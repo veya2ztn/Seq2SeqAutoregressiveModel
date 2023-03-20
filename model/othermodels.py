@@ -143,11 +143,17 @@ class CK_LgNet(BaseModel):
     def forward(self, x):
         return self.backbone(x)
 
-class OnceGrowUp_CK_LgNet(CK_LgNet):
+class FullGrowUp_CK_LgNet(CK_LgNet):
     def __init__(self, *args, **kargs):
         kargs["grow_up_expand"] = 2
         super().__init__(*args, **kargs)
+
+class HalfGrowUp_CK_LgNet(CK_LgNet):
+    def __init__(self, *args, **kargs):
+        kargs["grow_up_expand"] = 12
+        super().__init__(*args, **kargs)
         
+
 from networks.LGCrossNet import LGNetCross
 class CK_LgNet_Cross(BaseModel):
     def __init__(self,*args,**kargs):
