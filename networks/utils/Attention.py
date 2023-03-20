@@ -466,8 +466,6 @@ class Swin_attn(nn.Module):
         return x
 
 
-
-import numpy as np 
 import numpy as np 
 class SD_attn(nn.Module):
     def __init__(self, dim, window_size, num_heads, 
