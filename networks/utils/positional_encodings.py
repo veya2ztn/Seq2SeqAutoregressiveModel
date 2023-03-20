@@ -231,7 +231,8 @@ class Summer(nn.Module):
 class rope2(nn.Module):
     def __init__(self, shape, dim, repeat=1) -> None:
         super().__init__()
-        self.register_buffer('repeat', torch.LongTensor([repeat]))
+        #self.register_buffer('repeat', torch.LongTensor([repeat]))
+        self.repeat = repeat
         assert dim % repeat == 0
         dim = dim//repeat
 

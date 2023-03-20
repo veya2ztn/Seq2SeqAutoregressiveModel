@@ -492,10 +492,11 @@ class SD_attn(nn.Module):
         self.dim               = dim
         self.num_heads         = num_heads
         head_dim               = dim // num_heads 
-        #self.scale             = (head_dim// expand) ** -0.5 
+        
         # <-- make sure the scale same when grow up
         #### <--- its better regist it as a buffer.
-        self.register_buffer('scale', torch.Tensor([(head_dim// expand) ** -0.5]))
+        self.scale             = (head_dim// expand) ** -0.5 
+        #self.register_buffer('scale', torch.Tensor([(head_dim// expand) ** -0.5]))
         self.dilated_size      = dilated_size[-len(window_size):]
         self.window_size       = window_size
         self.shift_size        = shift_size
@@ -519,7 +520,8 @@ class SD_attn(nn.Module):
         self.qkv               = nn.Linear(input_dim, inner_dim * 3, bias=qkv_bias)
         self.proj              = nn.Linear(inner_dim, output_dim)
         #### --------------------------------------------------
-        self.register_buffer('expand',torch.LongTensor([expand]))
+        self.expand = expand
+        #self.register_buffer('expand',torch.LongTensor([expand]))
         
     def grow_up_to(self,new_dim,only_inner=True):
         """
