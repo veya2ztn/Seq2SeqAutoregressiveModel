@@ -231,7 +231,7 @@ class LGNet(nn.Module):
                             window_size=window_size, drop_rate=drop_rate, attn_drop_rate=attn_drop_rate,
                             drop_path_rate=drop_path, use_checkpoint=use_checkpoint, 
                           use_pos_embed=use_pos_embed, expand=expand)
-  
+   
     def forward(self, data, **kwargs):
         out = self.net(data)
 
