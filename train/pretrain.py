@@ -3186,7 +3186,7 @@ def parse_default_args(args):
         "dropout_rate":args.dropout_rate,
         "conv_simple":args.conv_simple,
         "graphflag":args.graphflag,
-    
+        "use_pos_embed":args.use_pos_embed,
         "agg_way":args.agg_way
     }
     args.model_kargs = model_kargs

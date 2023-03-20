@@ -137,7 +137,8 @@ class CK_LgNet(BaseModel):
                                 window_size=(4, 8),
                                 depths=[4, 4, 4],
                                 num_heads=[6, 6, 6],
-                                Weather_T=1, use_pos_embed=False,
+                                Weather_T=1, 
+                                use_pos_embed=kargs.get("use_pos_embed", 0),
                                 expand=kargs.get("grow_up_expand", 1))
 
     def forward(self, x):
@@ -184,6 +185,21 @@ class CK_LgNet_138(BaseModel):
                         Weather_T=1,use_pos_embed=True)
     def forward(self,x):
         return self.backbone(x)[:,:69]
+
+class CK_LgNet_69(BaseModel):
+    def __init__(self,*args,**kargs):
+        super().__init__()
+        print("this is pre-set model, we disable all config")
+        self.backbone = LGNet(img_size=kargs.get("img_size",(32,64)),patch_size= [1, 1],
+                        in_chans= 71,
+                        out_chans= 69,
+                        embed_dim=kargs.get("embed_dim", 1152),
+                        window_size= (4,8),
+                        depths= [4, 4, 4],
+                        num_heads= [6, 6, 6],
+                        Weather_T=1,use_pos_embed=True)
+    def forward(self,x):
+        return self.backbone(x)
 
 from einops import rearrange    
 class DecodeEncodeLgNet(LGNet):

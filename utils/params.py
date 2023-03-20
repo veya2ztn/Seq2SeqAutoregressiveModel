@@ -44,6 +44,7 @@ def get_args_parser():
     parser.add_argument('--gmod_coef',type=str,default=None)
     parser.add_argument('--gdamp',type=int,default=0)
     parser.add_argument('--gdeval',type=int,default=0)
+    parser.add_argument('--use_pos_embed',type=int,default=0)
     
     parser.add_argument('--do_iter_log', type=int, default=1)
     parser.add_argument('--disable_progress_bar',type=int,default=0)
