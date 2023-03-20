@@ -485,7 +485,7 @@ class SD_attn(nn.Module):
         #self.scale             = (head_dim// expand) ** -0.5 
         # <-- make sure the scale same when grow up
         #### <--- its better regist it as a buffer.
-        self.register_buffer('scale', (head_dim// expand) ** -0.5)
+        self.register_buffer('scale', torch.Tensor([(head_dim// expand) ** -0.5]))
         self.dilated_size      = dilated_size[-len(window_size):]
         self.window_size       = window_size
         self.shift_size        = shift_size
@@ -624,7 +624,9 @@ class SD_attn(nn.Module):
         
         
         new_state_dict["expand"]  = new_state_dict["position_enc.repeat"]  = torch.LongTensor([expand])
-        for key in new_state_dict.keys():new_state_dict[key] = new_state_dict[key].to(device)
+        new_state_dict["scale"]  = old_state_dict["scale"]
+        for key in new_state_dict.keys():
+            new_state_dict[key] = new_state_dict[key].to(device)
         new_attn_layer.load_state_dict(new_state_dict)
         
         return new_attn_layer
