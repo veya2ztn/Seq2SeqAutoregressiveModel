@@ -481,8 +481,11 @@ class SD_attn(nn.Module):
         dim = dim if build_from_inside else dim*expand
         self.dim               = dim
         self.num_heads         = num_heads
-        head_dim               = dim // num_heads
-        self.scale             = head_dim ** -0.5
+        head_dim               = dim // num_heads 
+        #self.scale             = (head_dim// expand) ** -0.5 
+        # <-- make sure the scale same when grow up
+        #### <--- its better regist it as a buffer.
+        self.register_buffer('scale', (head_dim// expand) ** -0.5)
         self.dilated_size      = dilated_size[-len(window_size):]
         self.window_size       = window_size
         self.shift_size        = shift_size
