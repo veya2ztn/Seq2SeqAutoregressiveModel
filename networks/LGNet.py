@@ -205,7 +205,7 @@ class Layer(nn.Module):
     
         return x
 
-class LG_net(nn.Module):
+class LG_net(nn.Module):    
 
     def __init__(self, img_size=[32, 64], patch_size=(1, 1, 1), in_chans=3, out_chans=20,
                  embed_dim=768, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),

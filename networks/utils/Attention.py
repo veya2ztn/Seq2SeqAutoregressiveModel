@@ -635,8 +635,8 @@ class SD_attn(nn.Module):
             new_state_dict['qkv.bias']   = torch.cat([q_bias  , k_bias  , v_bias  ])
         
         
-        new_state_dict["expand"]  = new_state_dict["position_enc.repeat"]  = torch.LongTensor([expand])
-        new_state_dict["scale"]  = old_state_dict["scale"]
+        #new_state_dict["expand"]  = new_state_dict["position_enc.repeat"]  = torch.LongTensor([expand])
+        #new_state_dict["scale"]  = old_state_dict["scale"]
         for key in new_state_dict.keys():
             new_state_dict[key] = new_state_dict[key].to(device)
         new_attn_layer.load_state_dict(new_state_dict)
