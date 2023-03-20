@@ -193,19 +193,76 @@ class PatchEmbed(nn.Module):
 
 
 class Mlp(nn.Module):
-    """ MLP as used in Vision Transformer, MLP-Mixer and related networks
+    """ 
+        MLP as used in Vision Transformer, MLP-Mixer and related networks
     """
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
 
-        self.fc1 = nn.Linear(in_features, hidden_features)
-        self.act = act_layer()
+        self.in_features = in_features 
+        self.hd_features = hidden_features 
+        self.ot_features = out_features 
+        self.drop_rate   = drop
+        self.act_layer   = act_layer   
+
+        self.fc1   = nn.Linear(in_features, hidden_features)
+        self.act   = act_layer()
         self.drop1 = nn.Dropout(drop)
-        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.fc2   = nn.Linear(hidden_features, out_features)
         self.drop2 = nn.Dropout(drop)
 
+    def grow_up_to(self, expand, only_inner=True):
+        """
+         notice the nonlinear function is pixel-wised, and the matrix matmul can do along
+         block-wise. Thus, it is easy to double/triplt the parameter.
+         ```
+             layer1 = Mlp(4)
+             layer2 = layer1.grow_up_to(8)
+             a = torch.randn(1,4)
+             torch.dist(layer1(a),layer2(a))
+             layer1 = Mlp(4)
+             layer2 = layer1.grow_up_to(8,only_inner=False)
+             a = torch.randn(1,4)
+             torch.dist(layer1(a),layer2(torch.cat([a]*2,-1))[...,:4])
+         ```
+        """
+        #assert self.in_features == self.ot_features == self.hd_features 
+        # now we only allow same dimension expansition
+        #assert new_dim % self.in_features == 0
+        #expand = new_dim//self.in_features
+        in_features = self.in_features if only_inner else self.in_features*expand
+        hd_features = self.hd_features*expand
+        ot_features = self.ot_features if only_inner else self.ot_features*expand
+        print(f"growing Mlp from ({self.in_features}-{self.hd_features}-{self.ot_features}) to ({in_features}-{hd_features}-{ot_features})")
+
+        drop_rate   = self.drop_rate
+        act_layer   = self.act_layer
+        old_state_dict = self.state_dict()
+        new_state_dict = {}
+        
+        new_state_dict['fc1.weight']= torch.cat([old_state_dict['fc1.weight']]*expand)
+        #(32_hidden,32_input) -> (64_hidden,32_input)
+        new_state_dict['fc1.bias']   = torch.cat([old_state_dict['fc1.bias']]*expand)
+        #(32_hidden)          -> (64_hidden)
+        new_state_dict['fc2.weight']= torch.cat([old_state_dict['fc2.weight']]*expand,-1)/expand
+        #(32_output,32_hidden)-> (32_output,64_hidden)
+        new_state_dict['fc2.bias']   = old_state_dict['fc2.bias']
+        #(32_output)
+        if not only_inner:
+            new_state_dict['fc1.weight']= torch.cat([new_state_dict['fc1.weight']]*expand,-1)/expand
+            # (64_hidden,32_input) -> (64_hidden,64_input)
+            new_state_dict['fc1.bias']  = new_state_dict['fc1.bias']
+            # (64_hidden) -> (64_hidden)
+            new_state_dict['fc2.weight']= torch.cat([new_state_dict['fc2.weight']]*expand)
+            #(32_output,64_hidden)-> (64_output,64_hidden)
+            new_state_dict['fc2.bias']  = torch.cat([old_state_dict['fc2.bias']]*expand)
+            #(32_output) -> (64_output)
+        new_layer = Mlp(in_features, hidden_features=hd_features, out_features=ot_features, act_layer=act_layer, drop=drop_rate)
+        new_layer.load_state_dict(new_state_dict)
+        return new_layer
+    
     def forward(self, x):
         x = self.fc1(x)
         x = self.act(x)
@@ -213,7 +270,6 @@ class Mlp(nn.Module):
         x = self.fc2(x)
         x = self.drop2(x)
         return x
-
 
 class SElayer(nn.Module):
     def __init__(self, dim, reduction=4) -> None:

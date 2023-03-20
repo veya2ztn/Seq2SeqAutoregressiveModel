@@ -472,13 +472,23 @@ class SD_attn(nn.Module):
            qkv_bias=True, attn_drop=0., proj_drop=0., 
            shift_size=[0, 0, 0], dilated_size=[1,1,1],
            relative_position_embedding_layer=None, expand=1,
-           build_from_inside=False,
+           build_from_inside=False, #<--this option discarded
            shink_input_output=False) -> None:
         super().__init__()
-        if expand > 10:
+        if expand > 10: # for example, use expand = 12 ( shink_input_output and expand=2 )
             expand = expand - 10
-            shink_input_output = True
-        dim = dim if build_from_inside else dim*expand
+            shink_input_output = True 
+            # this mode we still set embed_dim as 128 but the inner dimension will double
+        if shink_input_output:
+            self.inner_dim  = inner_dim  = dim*expand
+            self.input_dim  = input_dim  = dim 
+            self.output_dim = output_dim = dim 
+            dim = inner_dim 
+        else:
+            self.inner_dim  = inner_dim  = dim
+            self.input_dim  = input_dim  = dim 
+            self.output_dim = output_dim = dim 
+            dim = inner_dim 
         self.dim               = dim
         self.num_heads         = num_heads
         head_dim               = dim // num_heads 
@@ -505,9 +515,7 @@ class SD_attn(nn.Module):
         #### --------------------------------------------------
         
         #### ------  the only weight here ---------------------
-        self.input_dim  = input_dim   = dim//expand if shink_input_output else dim
-        self.inner_dim  = inner_dim   = dim
-        self.output_dim = output_dim  = dim//expand if shink_input_output else dim
+        
         self.qkv               = nn.Linear(input_dim, inner_dim * 3, bias=qkv_bias)
         self.proj              = nn.Linear(inner_dim, output_dim)
         #### --------------------------------------------------
@@ -530,7 +538,9 @@ class SD_attn(nn.Module):
         
         assert new_dim%self.dim == 0
         expand = new_dim//self.dim
-        new_attn_layer = SD_attn(new_dim, self.window_size, self.num_heads, 
+        # notice when activate only_inner method, we only grow up inner dimension
+        # thus the input/output dim should divide expand
+        new_attn_layer = SD_attn(self.dim if only_inner else new_dim, self.window_size, self.num_heads, 
                                  qkv_bias = self.qkv_bias, 
                                  attn_drop= self.attn_drop_rate, 
                                  proj_drop= self.proj_drop_rate, 

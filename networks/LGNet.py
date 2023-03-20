@@ -10,7 +10,98 @@ from networks.utils.utils import Mlp
 from einops import rearrange
 #from fairscale.nn.checkpoint.checkpoint_activations import checkpoint_wrapper
 
+from networks.utils.Attention import SD_attn
+from networks.utils.utils import Mlp
+from networks.utils.utils import PatchEmbed
 
+
+def grow_up_layernorm(child, expand):
+    old_dim = child.normalized_shape[0]
+    target_dim = expand*old_dim
+    print(f"growing LayerNorm from ({old_dim},) to ({target_dim},)")
+    new_norm = nn.LayerNorm(target_dim, child.eps, child.elementwise_affine)
+    old_state_dict = child.state_dict()
+    weight = old_state_dict['weight']
+    bias = old_state_dict['bias']
+    new_state_dict = {'weight': torch.cat(
+        [weight]*expand), 'bias': torch.cat([bias]*expand)}
+    new_norm.load_state_dict(new_state_dict)
+    return new_norm
+
+
+def grow_up_patch_embed(child, expand):
+    target_dim = child.embed_dim*expand
+    print(f"growing PatchEmbed from ({child.embed_dim},) to ({target_dim},)")
+    assert not hasattr(child.norm, 'weight')
+    new_norm = PatchEmbed(patch_size=child.patch_size,
+                          in_c=child.in_chans, embed_dim=target_dim, norm_layer=None)
+    old_state_dict = child.state_dict()
+    weight = old_state_dict['proj.weight']
+    bias = old_state_dict['proj.bias']
+    new_state_dict = {'proj.weight': torch.cat([weight]*expand),
+                      'proj.bias': torch.cat([bias]*expand)}
+    new_norm.load_state_dict(new_state_dict)
+    return new_norm
+
+
+def grow_up_SingleLinear(child, expand):
+    target_dim = child.in_features*expand
+    print(
+        f"growing final Linear from ({child.in_features},{child.out_features}) to ({target_dim},{child.out_features})")
+    assert child.bias is None
+    new_norm = nn.Linear(target_dim, child.out_features, bias=False)
+    old_state_dict = child.state_dict()
+    weight = old_state_dict['weight']
+    new_state_dict = {'weight': torch.cat([weight]*expand, -1)/expand  # (68,192)->(68,192*2)
+                      }
+    new_norm.load_state_dict(new_state_dict)
+    return new_norm
+
+from networks.utils.Attention import SD_attn
+def SD_attn_grow_up_inner_recursively(module: nn.Module, target_dim: int) -> None:
+    for name, child in module.named_children():
+        if isinstance(child, SD_attn):
+            setattr(module, name, child.grow_up_to(target_dim, only_inner=True))
+        else:
+            SD_attn_grow_up_inner_recursively(child, target_dim)
+
+def LGnet_grow_up_full_recursively(module: nn.Module, expand: int, offset=0) -> None:
+    """
+    ```
+        data_kargs= {'img_size': (32, 64),'patch_size': 2, 'patch_range': 5, 'in_chans': 68, 'out_chans': 68,
+        'fno_blocks': 4, 'embed_dim': 48, 'depth': 12, 'debug_mode': 0, 'double_skip': False,
+        'fno_bias': False, 'fno_softshrink': 0.0, 'history_length': 1, 'reduce_Field_coef': False,
+        'modes': (17, 33, 6), 'mode_select': 'normal', 'physics_num': 4, 'pred_len': 1,
+        'n_heads': 8, 
+                    'label_len': 3, 'canonical_fft': 1, 'unique_up_sample_channel': 0,
+        'share_memory': 1, 'dropout_rate': 0, 'conv_simple': 1, 'graphflag': 'mesh5', 'agg_way': 'mean'}
+        model = CK_LgNet(**data_kargs)
+
+        model1 = copy.deepcopy(model)
+        model2 = copy.deepcopy(model)
+        SD_attn_grow_up_full_recursively(model2,2)
+        a = torch.randn(1,68,32,64).cuda()
+        torch.dist(model1(a),
+                model2(a),
+                )
+    ```
+    """
+    for name, child in module.named_children():
+        print(" "*offset, end="")
+        if isinstance(child, SD_attn):
+            target_dim = expand*child.dim
+            setattr(module, name, child.grow_up_to(
+                target_dim, only_inner=False))
+        elif isinstance(child, nn.LayerNorm):
+            setattr(module, name, grow_up_layernorm(child, expand))
+        elif isinstance(child, Mlp):
+            setattr(module, name, child.grow_up_to(expand, only_inner=False))
+        elif isinstance(child, PatchEmbed):
+            setattr(module, name, grow_up_patch_embed(child, expand))
+        elif isinstance(child, nn.Linear):
+            setattr(module, name, grow_up_SingleLinear(child, expand))
+        else:
+            LGnet_grow_up_full_recursively(child, expand, offset=offset+1)
 
 class Layer(nn.Module):
     def __init__(self, dim, depth, window_size, 
@@ -206,8 +297,8 @@ class LG_net(nn.Module):
             "b h w (p1 p2 c_out) -> b c_out (h p1) (w p2)",
             p1=self.patch_size[-2],
             p2=self.patch_size[-1],
-            h=self.img_size[0] // self.patch_size[-2],
-            w=self.img_size[1] // self.patch_size[-1],
+            h =self.img_size[0] // self.patch_size[-2],
+            w =self.img_size[1] // self.patch_size[-1],
         )
 
         # if len(self.window_size) == 3:
@@ -234,7 +325,6 @@ class LGNet(nn.Module):
    
     def forward(self, data, **kwargs):
         out = self.net(data)
-
         return out
 
 
