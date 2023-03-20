@@ -3609,9 +3609,9 @@ def build_optimizer(args,model):
         optimizer       = Lion(model.parameters(), lr=args.lr,use_triton = False)
     elif args.opt == 'tiger':
         from custom_optimizer import Tiger
-        optimizer = Tiger([{'params': [p for name, p in model.named_parameters() if 'bias' in name ],'type':'tensor_adding'},
+        optimizer = Tiger([{'params': [p for name, p in model.named_parameters() if 'bias' in name ],    'type':'tensor_adding'},
                            {'params': [p for name, p in model.named_parameters() if 'bias' not in name ],'type':'tensor_contraction'}\
-                  ],lr =args.lr)
+                          ],lr =args.lr)
     else:
         raise NotImplementedError
     GDMod_type  = args.GDMod_type
