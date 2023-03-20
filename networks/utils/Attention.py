@@ -467,52 +467,193 @@ class Swin_attn(nn.Module):
 
 
 
-
+import numpy as np 
+import numpy as np 
 class SD_attn(nn.Module):
-    def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0., proj_drop=0., shift_size=[0, 0, 0], dilated_size=[1,1,1],
-                 relative_position_embedding_layer=None) -> None:
+    def __init__(self, dim, window_size, num_heads, 
+           qkv_bias=True, attn_drop=0., proj_drop=0., 
+           shift_size=[0, 0, 0], dilated_size=[1,1,1],
+           relative_position_embedding_layer=None, expand=1,
+           build_from_inside=False,
+           shink_input_output=False) -> None:
         super().__init__()
-        self.dim = dim
-        self.num_heads = num_heads
-        head_dim = dim // num_heads
-        self.scale = head_dim ** -0.5
+        if expand > 10:
+            expand = expand - 10
+            shink_input_output = True
+        dim = dim if build_from_inside else dim*expand
+        self.dim               = dim
+        self.num_heads         = num_heads
+        head_dim               = dim // num_heads
+        self.scale             = head_dim ** -0.5
+        self.dilated_size      = dilated_size[-len(window_size):]
+        self.window_size       = window_size
+        self.shift_size        = shift_size
+        self.qkv_bias          = qkv_bias
+        self.total_window_size = [window_size[i] * dilated_size[i] for i in range(len(window_size))]       
+        self.attn_drop_rate    = attn_drop
+        self.proj_drop_rate    = proj_drop
+        self.attn_drop         = nn.Dropout(attn_drop)
+        self.proj_drop         = nn.Dropout(proj_drop)
+        self.softmax           = nn.Softmax(dim=-1)
         
-        self.dilated_size = dilated_size[-len(window_size):]
-        self.window_size = window_size
-        self.shift_size = shift_size
-        self.total_window_size = [window_size[i] * dilated_size[i] for i in range(len(window_size))]
         
-
-
-        if len(self.window_size) == 2:
-            self.rope_quad = rope2(self.window_size, head_dim)
-        elif len(self.window_size) == 3:
-            self.rope_quad = rope3(self.window_size, head_dim)
-       
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
-
-        self.softmax = nn.Softmax(dim=-1)
-
-        if len(window_size) == 2:
-            self.position_enc = rope2(window_size, head_dim)
-        elif len(window_size) == 3:
-            self.position_enc = rope3(window_size, head_dim)
+        #### 2D rotaty position emebediing ##################
+        assert len(window_size) == 2
+        self.position_enc = rope2(window_size, head_dim, repeat = expand)
         self.relative_position_embedding_layer = None
-        if relative_position_embedding_layer:
-            #print(relative_position_embedding_layer)
-            if 'two' in relative_position_embedding_layer:
-                self.relative_position_embedding_layer = Rotaty2DEmbedding(
-                    embed_dim=head_dim//2, w=self.window_size[0], h=self.window_size[1])
-                
-            elif 'forth' in relative_position_embedding_layer :
-                self.relative_position_embedding_layer = Rotaty2DEmbeddingForth(
-                    embed_dim=head_dim//4, w=self.window_size[0], h=self.window_size[1])
+        #### --------------------------------------------------
+        
+        #### ------  the only weight here ---------------------
+        self.input_dim  = input_dim   = dim//expand if shink_input_output else dim
+        self.inner_dim  = inner_dim   = dim
+        self.output_dim = output_dim  = dim//expand if shink_input_output else dim
+        self.qkv               = nn.Linear(input_dim, inner_dim * 3, bias=qkv_bias)
+        self.proj              = nn.Linear(inner_dim, output_dim)
+        #### --------------------------------------------------
+        self.register_buffer('expand',torch.LongTensor([expand]))
+        
+    def grow_up_to(self,new_dim,only_inner=True):
+        """
+            this module is basicly doing such thing 
+                -2048-[q]-128-[k]-2048-[v]-128-[p]-128-
+            we just need grow up Q,K,V,P by inject two orthogonal matrix
+                -2048-[q]-128-[M]-256-[Mt]-128-[k]-2048-[v]-128-[W]-256-[Wt]-128-[p]-128-
+            then absorbe them into the new weight.
+                -2048-[Q]-256-[K]-2048-[V]-256-[P]-128-
+            -------------------------------------------------------------
+            this is the inner grow_up version. 
+            To extend the input version and output version, should notice:
+            - to keep the same result in before-grow-up mode, the input should be 
+            
+        """
+        
+        assert new_dim%self.dim == 0
+        expand = new_dim//self.dim
+        new_attn_layer = SD_attn(new_dim, self.window_size, self.num_heads, 
+                                 qkv_bias = self.qkv_bias, 
+                                 attn_drop= self.attn_drop_rate, 
+                                 proj_drop= self.proj_drop_rate, 
+                                 shift_size    = self.shift_size, 
+                                 dilated_size  = self.dilated_size,
+                                 expand=expand,build_from_inside=True,shink_input_output=only_inner)
+        print(f"growing SD_attn of {self.window_size} from ({self.input_dim}-{self.inner_dim}-{self.output_dim}) to ({new_attn_layer.input_dim}-{new_attn_layer.inner_dim}-{new_attn_layer.output_dim})")
+        new_attn_layer.scale  = self.scale
+        old_state_dict = self.state_dict()
+        new_state_dict = {}
+        
+       
+        ### ===> we firstly duel with the orthogonal matrix between v and p <===
+        """
+        notice we split `num_heads` head 
+        
+        at last layer: x = layer.proj(x)
+        its equal to x = torch.einsum("kj,bwhj->bwhk",layer.proj.weight, x ) +   layer.proj.bias
+        by insert the orthogonal matrix, we get 
+        == equal => x = torch.einsum("ij,ki,bwhj->bwhk",dense_w1, layer.proj.weight, x ) +   layer.proj.bias
+                                   #(768,1536) (768,768) (B,W,H,1536) -> (B,W,H,768)
+        ===> x = torch.einsum("kj,bwhj->bwhk",                                  # (768,1536),(B,W,H,1536)-> (B,W,H,768)
+                         torch.einsum("ij,ki->kj", dense_w1,layer.proj.weight), # (768,1536) (768,768)-> (768,1536)
+                         x ) +                                                  
+                         layer.proj.bias           # notice the bias do not need change
+        """
+        device = old_state_dict['proj.bias'].device
+        w1 = []
+        for i in range(self.num_heads):
+            w = torch.empty(self.dim//self.num_heads, new_dim//self.num_heads)
+            torch.nn.init.orthogonal_(w)
+            w1.append(w)
+        w1 = torch.stack(w1) #(6,128,256)
+        dense_w1 = torch.diag_embed(w1.permute(1,2,0)).permute(2,0,3,1)
+        dense_w1 = dense_w1.reshape(self.dim, new_dim).to(device)
+        
+        proj_weight = torch.einsum("ij,ki->kj", dense_w1, old_state_dict['proj.weight'])
+        proj_bias   = old_state_dict['proj.bias']
+        if not only_inner:
+            proj_weight = torch.cat([proj_weight,proj_weight])# (768_output,1536_inner)-> (1536_output,1536_inner)
+            proj_bias   = torch.cat([proj_bias  ,proj_bias  ])    # (768_output)->(1536_output)
+        # (768_input, 1536_inner), (768_output,768_input) -> (768_output,1536_inner)
+        new_state_dict['proj.weight']  = proj_weight
+        new_state_dict['proj.bias']  = proj_bias
+        
+        ### ===> we secondly duel with the orthogonal matrix between q and k <===
+        """
+        notice we have a rotaty position embedding, which equally matmul a block-rotation matrix after get q and v
+        ==> q_r = ( W_q*x + bias)@R
+        ==> k_r = ( W_k*x + bias)@R
+        we draw conclution here, for detail drivation, see document.
+        Conclution:
+            when activate this postion embediing, we must use duplicate \theta list and the orthogonal matrix should be also block-rotation.
+        """
+        ## lets constract the orthogonal matrix
+        w2 = []
+        for i in range(self.num_heads):
+            matrix_blocks = []
+            for _ in range(expand):matrix_blocks.append(self.position_enc.create_random_transformer_matrix())#[(128,256)]
+            #for _ in range(expand):matrix_blocks.append(torch.eye(self.dim//self.num_heads))#[(128,256)]
+            matrix_blocks = torch.cat(matrix_blocks,-1)/np.sqrt(expand) ## (128, 128x2) 
+            w2.append(matrix_blocks)
+        w2 = torch.stack(w2) #(6,128,256)
+        dense_w2 = torch.diag_embed(w2.permute(1,2,0)).permute(2,0,3,1)
+        dense_w2 = dense_w2.reshape(self.dim,new_dim).to(device)#(6*128,6*256)
 
-            else:
-                raise 
+        #print(dense_w2.shape)
+        #### TODO: use matrix matmul is a very low-efficient method since the w2 is a quite sparse matrix.
+        q_weight, k_weight, v_weight= old_state_dict['qkv.weight'].split([self.dim,self.dim,self.dim])
+        # transfer q , use dense_w2
+        q_weight= torch.einsum("jk,ji->ki", dense_w2, q_weight) # (768_inner, 1536_inner), (768_inner,768_input) -> (1536_inner,768_input)
+        q_weight= torch.cat([q_weight,q_weight],-1)/2 if not only_inner else q_weight # (1536_inner,768_input) -> (1536_inner,1536_input)
+        # transfer k, use dense_w2
+        k_weight= torch.einsum("jk,ji->ki", dense_w2, k_weight) # (768_inner, 1536_inner), (768_inner,768_input) -> (1536_inner,768_input)
+        k_weight= torch.cat([k_weight,k_weight],-1)/2 if not only_inner else k_weight # (1536_inner,768_input) -> (1536_inner,1536_input)
+        # transfer v, use dense_w1
+        v_weight= torch.einsum("jk,ji->ki", dense_w1, v_weight) # (768_inner, 1536_inner), (768_inner,768_input) -> (1536_inner,768_input)
+        v_weight= torch.cat([v_weight,v_weight],-1)/2 if not only_inner else v_weight # (1536_inner,768_input) -> (1536_inner,1536_input)
+        
+        new_state_dict['qkv.weight'] = torch.cat([q_weight, k_weight, v_weight])
+        
+        if "qkv.bias" in old_state_dict:
+            q_bias  , k_bias  ,v_bias   =   old_state_dict['qkv.bias'].split([self.dim,self.dim,self.dim])
+            # transfer q , use dense_w2
+            q_bias  = torch.einsum("jk,j ->k",  dense_w2, q_bias)   # (768_inner, 1536_inner), (768_inner) -> (1536_inner) 
+            # transfer k, use dense_w2
+            k_bias  = torch.einsum("jk,j ->k",  dense_w2, k_bias)   # (768_inner, 1536_inner), (768_inner) -> (1536_inner) 
+            # transfer v, use dense_w1
+            v_bias  = torch.einsum("jk,j ->k",  dense_w1, v_bias)   # (768_inner, 1536_inner), (768_inner) -> (1536_inner) 
+            new_state_dict['qkv.bias']   = torch.cat([q_bias  , k_bias  , v_bias  ])
+        
+        
+        new_state_dict["expand"]  = new_state_dict["position_enc.repeat"]  = torch.LongTensor([expand])
+        for key in new_state_dict.keys():new_state_dict[key] = new_state_dict[key].to(device)
+        new_attn_layer.load_state_dict(new_state_dict)
+        
+        return new_attn_layer
+    
+    def grow_up_outside(self,new_dim):
+        expand = self.expand.item()
+        new_attn_layer = SD_attn(new_dim, self.window_size, self.num_heads, 
+                                 qkv_bias = self.qkv_bias, 
+                                 attn_drop= self.attn_drop_rate, 
+                                 proj_drop= self.proj_drop_rate, 
+                                 shift_size    = self.shift_size, 
+                                 dilated_size  = self.dilated_size,
+                                 expand=expand,build_from_inside=True)
+        new_attn_layer.scale  = self.scale
+        old_state_dict = self.state_dict()
+        new_state_dict = {}
+        device = old_state_dict['proj.bias'].device
+        q_weight, k_weight, v_weight= old_state_dict['qkv.weight'].split([self.dim,self.dim,self.dim])
+        q_weight= torch.cat([q_weight,q_weight],-1)/2 # (1536_inner,768_input) -> (1536_inner,1536_input)
+        k_weight= torch.cat([k_weight,k_weight],-1)/2 # (1536_inner,768_input) -> (1536_inner,1536_input)
+        v_weight= torch.cat([v_weight,v_weight],-1)/2 # (1536_inner,768_input) -> (1536_inner,1536_input)
+        new_state_dict['qkv.weight']  = torch.cat([q_weight, k_weight, v_weight])# (1536_inner *3, 1536_input)
+        new_state_dict['qkv.bias']    = old_state_dict['qkv.bias']               # (1536_inner)
+        new_state_dict['proj.weight'] = torch.cat([old_state_dict['proj.weight'],old_state_dict['proj.weight']],0)# (768_output,1536_inner)-> (1536_output,1536_inner)
+        new_state_dict['proj.bias']   = torch.cat([old_state_dict['proj.bias'],old_state_dict['proj.bias']])# (768_output)->(1536_output)
+        new_state_dict["expand"]  = new_state_dict["position_enc.repeat"]  = torch.LongTensor([expand])
+        for key in new_state_dict.keys():new_state_dict[key] = new_state_dict[key].to(device)
+        new_attn_layer.load_state_dict(new_state_dict)
+        return new_attn_layer
+
     def create_mask(self, x):
         # calculate attention mask for SW-MSA
         # 保证Hp和Wp是window_size的整数倍
@@ -576,8 +717,7 @@ class SD_attn(nn.Module):
         attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)  # [nW, 1, Mh*Mw] - [nW, Mh*Mw, 1]
         # [nW, Mh*Mw, Mh*Mw]
         attn_mask = attn_mask.masked_fill(attn_mask != 0, -torch.inf).masked_fill(attn_mask == 0, float(0.0))
-        return attn_mask
-
+        return attn_mask   
     
     def forward(self, x):
         """
@@ -622,26 +762,13 @@ class SD_attn(nn.Module):
             x_windows = window_partition(x_windows, self.dilated_size).reshape(B, -1, 
                                         self.dilated_size[0]*self.dilated_size[1], C).permute(
                                         0, 2, 1, 3).reshape(B*self.dilated_size[0]*self.dilated_size[1], -1, C)
-        B_, N, C = x_windows.shape
-
-        
-        qkv = self.qkv(x_windows).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        B_, N, _ = x_windows.shape
+        qkv = self.qkv(x_windows)
+        qkv = qkv.reshape(B_, N, 3, self.num_heads, self.inner_dim // self.num_heads).permute(2, 0, 3, 1, 4)
         # [batch_size*num_windows, num_heads, Mh*Mw, embed_dim_per_head]
         q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple)
-        
-        q = self.position_enc(q.reshape(-1, *self.window_size, C // self.num_heads)).reshape(B_, self.num_heads, -1, C // self.num_heads) # B,head,L,D
-        k = self.position_enc(k.reshape(-1, *self.window_size, C // self.num_heads)).reshape(B_, self.num_heads, -1, C // self.num_heads) # B,head,L,D
-        # print(q.shape)
-        # print(k.shape)
-
-        if self.relative_position_embedding_layer is not None:
-            q = self.relative_position_embedding_layer(q)
-            k = self.relative_position_embedding_layer(k)
-        # print(q.shape)
-        # print(k.shape)
-        # print("===================")
-        # transpose: -> [batch_size*num_windows, num_heads, embed_dim_per_head, Mh*Mw]
-        # @: multiply -> [batch_size*num_windows, num_heads, Mh*Mw, Mh*Mw]
+        q = self.position_enc(q.reshape(-1, *self.window_size, self.inner_dim // self.num_heads)).reshape(B_, self.num_heads, -1, self.inner_dim // self.num_heads) # B,head,L,D
+        k = self.position_enc(k.reshape(-1, *self.window_size, self.inner_dim // self.num_heads)).reshape(B_, self.num_heads, -1, self.inner_dim // self.num_heads) # B,head,L,D
         q = q * self.scale
         attn = (q @ k.transpose(-2, -1))
 
@@ -662,15 +789,13 @@ class SD_attn(nn.Module):
         # @: multiply -> [batch_size*num_windows, num_heads, Mh*Mw, embed_dim_per_head]
         # transpose: -> [batch_size*num_windows, Mh*Mw, num_heads, embed_dim_per_head]
         # reshape: -> [batch_size*num_windows, Mh*Mw, total_embed_dim]
-        attn_windows = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        attn_windows = (attn @ v).transpose(1, 2).reshape(B_, N, self.inner_dim)
 
         if len(self.window_size) == 3:
-            attn_windows = attn_windows.reshape(B, -1, N, C).permute(0, 2, 1, 3).reshape(
-                                            -1, self.dilated_size[0]*self.dilated_size[1]*self.dilated_size[2], C)
+            attn_windows = attn_windows.reshape(B, -1, N, self.inner_dim).permute(0, 2, 1, 3).reshape(-1, self.dilated_size[0]*self.dilated_size[1]*self.dilated_size[2], self.inner_dim)
             attn_windows = window_reverse(attn_windows, self.dilated_size, *self.total_window_size)
         elif len(self.window_size) == 2:
-            attn_windows = attn_windows.reshape(B, -1, N, C).permute(0, 2, 1, 3).reshape(
-                                            -1, self.dilated_size[0]*self.dilated_size[1], C)
+            attn_windows = attn_windows.reshape(B, -1, N, self.inner_dim).permute(0, 2, 1, 3).reshape(-1, self.dilated_size[0]*self.dilated_size[1], self.inner_dim)
             attn_windows = window_reverse(attn_windows, self.dilated_size, 1, *self.total_window_size)
             
         shifted_x = window_reverse(attn_windows, self.total_window_size, T, H, W)
@@ -686,8 +811,7 @@ class SD_attn(nn.Module):
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
-
-
+    
 class SD_attn_Cross(nn.Module):
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0., proj_drop=0., shift_size=[0, 0, 0], dilated_size=[1,1,1]) -> None:
         super().__init__()

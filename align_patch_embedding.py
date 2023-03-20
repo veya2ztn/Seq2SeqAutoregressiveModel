@@ -366,17 +366,12 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
                              epoch_total=args.epochs, eval_mode=False)
         logsys.record(
             'learning rate', optimizer.param_groups[0]['lr'], epoch, epoch_flag='epoch')
-        train_loss = run_one_epoch(epoch, start_step, model, criterion,
+        val_loss = train_loss = run_one_epoch(epoch, start_step, model, criterion,
                                    train_dataloader, optimizer, loss_scaler, logsys, 'train')
         freeze_learning_rate = (args.scheduler_min_lr and optimizer.param_groups[0]['lr'] < args.scheduler_min_lr) and (
             args.scheduler_inital_epochs and epoch > args.scheduler_inital_epochs)
         if (not args.more_epoch_train) and (lr_scheduler is not None) and not freeze_learning_rate:
             lr_scheduler.step(epoch)
-        if args.valid_every_epoch and ((epoch % args.valid_every_epoch == 0) or (epoch == args.epochs - 1)):
-            fast_set_model_epoch(model, epoch=epoch,
-                                 epoch_total=args.epochs, eval_mode=True)
-            val_loss = run_one_epoch(epoch, start_step, model, criterion,
-                                     val_dataloader, optimizer, loss_scaler, logsys, 'valid')
 
         logsys.metric_dict.update({'valid_loss': val_loss}, epoch)
         logsys.banner_show(epoch, args.SAVE_PATH, train_losses=[train_loss])
@@ -387,23 +382,21 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
             logsys.record('valid', val_loss, epoch, epoch_flag='epoch')
             if val_loss < min_loss:
                 min_loss = val_loss
-                if epoch > args.epochs//10:
-                    logsys.info(f"saving best model ....", show=False)
-                    save_model(model, path=now_best_path, only_model=True)
-                    logsys.info(f"done;", show=False)
+                logsys.info(f"saving best model ....", show=False)
+                save_model(model, path=now_best_path, only_model=True)
+                logsys.info(f"done;", show=False)
                 # if last_best_path is not None:os.system(f"rm {last_best_path}")
                 # last_best_path= now_best_path
                 logsys.info(f"The best accu is {val_loss}", show=False)
             logsys.record('best_loss', min_loss, epoch, epoch_flag='epoch')
             update_experiment_info(experiment_hub_path, epoch, args)
             if ((epoch >= args.save_warm_up) and (epoch % args.save_every_epoch == 0)) or (epoch == args.epochs-1) or (epoch in args.epoch_save_list):
+                
                 logsys.info(f"saving latest model ....", show=False)
-                save_model(model, epoch=epoch+1, step=0, optimizer=optimizer, lr_scheduler=lr_scheduler,
-                           loss_scaler=loss_scaler, min_loss=min_loss, path=latest_ckpt_p)
+                save_model(model, epoch=epoch+1, step=0, optimizer=optimizer, lr_scheduler=lr_scheduler,loss_scaler=loss_scaler, min_loss=min_loss, path=latest_ckpt_p)
                 logsys.info(f"done ....", show=False)
                 if epoch in args.epoch_save_list:
-                    save_model(
-                        model, path=f'{latest_ckpt_p}-epoch{epoch}', only_model=True)
+                    save_model(model, path=f'{latest_ckpt_p}-epoch{epoch}', only_model=True)
                     # os.system(f'cp {latest_ckpt_p} {latest_ckpt_p}-epoch{epoch}')
     # and not args.distributed:
     if os.path.exists(now_best_path) and args.do_final_fourcast:

@@ -227,13 +227,19 @@ class Summer(nn.Module):
 
 #2d旋转式位置编码
 
+
 class rope2(nn.Module):
-    def __init__(self, shape, dim) -> None:
+    def __init__(self, shape, dim, repeat=1) -> None:
         super().__init__()
-        
+        self.register_buffer('repeat', torch.LongTensor([repeat]))
+        assert dim % repeat == 0
+        dim = dim//repeat
+
+        self.dim = dim
         coords_0 = torch.arange(shape[0])
         coords_1 = torch.arange(shape[1])
-        coords = torch.stack(torch.meshgrid([coords_0, coords_1], indexing="ij")).reshape(2, -1)
+        coords = torch.stack(torch.meshgrid(
+            [coords_0, coords_1], indexing="ij")).reshape(2, -1)
 
         half_size = dim // 2
         self.dim1_size = half_size // 2
@@ -243,31 +249,97 @@ class rope2(nn.Module):
         inv_freq1 = 10000 ** -freq_seq1
         inv_freq2 = 10000 ** -freq_seq2
 
-        sinusoid1 = coords[0].unsqueeze(-1) * inv_freq1    
-        sinusoid2 = coords[1].unsqueeze(-1) * inv_freq2     
+        sinusoid1 = coords[0].unsqueeze(-1) * inv_freq1
+        sinusoid2 = coords[1].unsqueeze(-1) * inv_freq2
 
         self.sin1 = torch.sin(sinusoid1).reshape(*shape, sinusoid1.shape[-1])
         self.cos1 = torch.cos(sinusoid1).reshape(*shape, sinusoid1.shape[-1])
         self.sin2 = torch.sin(sinusoid2).reshape(*shape, sinusoid2.shape[-1])
         self.cos2 = torch.cos(sinusoid2).reshape(*shape, sinusoid2.shape[-1])
 
+    def transformer_matrix(self):
+        """
+            layer = rope2((32,64),128)
+            x = torch.randn(1,32,64,128)
+            y = layer(x)
+            out = torch.einsum('whij,bwhj->bwhi',W,x)
+            torch.dist(out,y)
+        """
+        return self.create_full_matrix(self.cos1, self.sin1, self.cos2, self.sin2)
 
-    def forward(self, x):
+    def create_random_transformer_matrix(self):
+        """
+            create a random block diagnal rotation matrix like (4x32, 4x32) = (128, 128 )
+            
+            Test this function follow
+            ```
+                def get_norm(x):return torch.einsum('blijd,blmnd->blijmn',x,x)
+                def get_attn(a,b):return torch.einsum('blijd,blmnd->blijmn',a,b)
+                layer1 = layer_1.position_enc
+                layer2 = layer_2.position_enc
 
-        self.sin1 = self.sin1.to(x.device)
-        self.cos1 = self.cos1.to(x.device)
-        self.sin2 = self.sin2.to(x.device)
-        self.cos2 = self.cos2.to(x.device)
+                a = torch.randn(1,1,2,2,4)
+                c = torch.randn(1,1,2,2,4)
+                matrix_blocks = []
+                expand = 2
+                for _ in range(expand):matrix_blocks.append(layer1.create_random_transformer_matrix())
+                #for _ in range(expand):matrix_blocks.append(torch.eye(4))
+                matrix_blocks = torch.cat(matrix_blocks,-1)/np.sqrt(2) ## (128, 128x2) 
+                #b = torch.cat([a@layer1.create_random_transformer_matrix(),a@layer1.create_random_transformer_matrix()],-1)/np.sqrt(2)
+                b = a@matrix_blocks
+                d = c@matrix_blocks
+                print(b.shape)
+                print(torch.dist(get_attn(a,c),get_attn(b,d)))
 
-        x11, x21, x12, x22 = x.split([self.dim1_size, self.dim2_size, \
-                         self.dim1_size, self.dim2_size], dim=-1)
-        
-        res = torch.cat([x11 * self.cos1 - x12 * self.sin1, 
-                 x21 * self.cos2 - x22 * self.sin2, \
-                 x12 * self.cos1 + x11 * self.sin1, 
-                 x22 * self.cos2 + x21 * self.sin2], dim=-1)
+                a2 = layer1(a)
+                c2 = layer1(c)
+                b2 = layer2(b)
+                d2 = layer2(d)
+                print(torch.dist(get_attn(a2,c2),get_attn(b2[...,:4],d2[...,:4])))
+                print(torch.dist(get_attn(a2,c2),get_attn(b2,d2)))
+            ```
+        """
+        sinusoid1 = torch.randn(self.dim1_size)
+        sinusoid2 = torch.randn(self.dim1_size)
+        sin1 = torch.sin(sinusoid1)
+        cos1 = torch.cos(sinusoid1)
+        sin2 = torch.sin(sinusoid2)
+        cos2 = torch.cos(sinusoid2)
+        return self.create_full_matrix(cos1, sin1, cos2, sin2)
 
+    @staticmethod
+    def create_full_matrix(cos1, sin1, cos2, sin2):
+        cos1 = torch.diag_embed(cos1)
+        sin1 = torch.diag_embed(sin1)
+        cos2 = torch.diag_embed(cos2)
+        sin2 = torch.diag_embed(sin2)
+        zeros = torch.zeros_like(cos1)
+        W = torch.cat([torch.cat([+cos1, zeros, -sin1, zeros], -1),
+                       torch.cat([zeros, +cos2, zeros, -sin2], -1),
+                       torch.cat([+sin1, zeros, +cos1, zeros], -1),
+                       torch.cat([zeros, +sin2, zeros, +cos2], -1),
+                       ],
+                      -2)
+        return W
+
+    def forward(self, _input):
+        self.sin1 = self.sin1.to(_input.device)
+        self.cos1 = self.cos1.to(_input.device)
+        self.sin2 = self.sin2.to(_input.device)
+        self.cos2 = self.cos2.to(_input.device)
+        chunks = _input.split([self.dim]*self.repeat, dim=-1)
+        res = []
+        for x in chunks:
+            x11, x21, x12, x22 = x.split(
+                [self.dim1_size, self.dim2_size, self.dim1_size, self.dim2_size], dim=-1)
+
+            res.append(torch.cat([x11 * self.cos1 - x12 * self.sin1,
+                                  x21 * self.cos2 - x22 * self.sin2,
+                                  x12 * self.cos1 + x11 * self.sin1,
+                                  x22 * self.cos2 + x21 * self.sin2], dim=-1))
+        res = torch.cat(res, dim=-1)
         return res
+
 
 #3D旋转式位置编码
 

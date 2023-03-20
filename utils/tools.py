@@ -29,7 +29,8 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
         ckpt = torch.load(path, map_location='cpu')
 
         if only_model:
-            model_state_dict = ckpt['model']
+            
+            model_state_dict = ckpt['model'] if 'model' in ckpt else ckpt
             if "loragrashcastdglsym" in model_state_dict:
                 model_state_dict = model_state_dict["loragrashcastdglsym"]
             if "lgnet" in model_state_dict:
@@ -44,6 +45,10 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
                 if "backbone.net." not in key and np.any(['backbone.net.' in k for k in model_keys]):
                     key = key.replace("net.","backbone.net.")
                 new_state_dict[key] = val
+            for key in model_keys:
+                if 'expand' in key and key not in new_state_dict:new_state_dict[key] = torch.LongTensor([1])
+                if 'repeat' in key and key not in new_state_dict:new_state_dict[key] = torch.LongTensor([1])
+
             model_state_dict = new_state_dict
             
             if 'max_logvar' in model_state_dict:del model_state_dict['max_logvar']

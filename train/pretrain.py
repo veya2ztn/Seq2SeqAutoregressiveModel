@@ -753,6 +753,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
                 # to do next forward prediction. Thus we limit in t < L 
             # notice when activate pred_channel_for_next_stamp, the unpredicted part should be filled by the part from next stamp 
             # but the loss should be calculate only on the predicted part.
+            # In theory, the padded constant will not effect the bask-prapagration. <-- when do average, the padded part will provide a extra length to divide. for example, from 3 element average to 4 element average
             end = now_level_batch[:,target_stamp].flatten(0,1)
         else:
             end = None
@@ -3818,8 +3819,8 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                     #last_best_path= now_best_path
                     logsys.info(f"The best accu is {val_loss}", show=False)
                 if Z500_now < Z500_best:
-                    min_Z500 = Z500_now
-                    if epoch > args.epochs//10:
+                    Z500_best = Z500_now
+                    if epoch >= 0: #args.epochs//10:
                         logsys.info(f"saving best Z500 model ....",show=False)
                         save_model(model, path=now_Z500_path, only_model=True)
                         logsys.info(f"done;",show=False)

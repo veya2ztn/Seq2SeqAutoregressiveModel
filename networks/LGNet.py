@@ -17,7 +17,7 @@ class Layer(nn.Module):
                 num_heads=1, mlp_ratio=4., qkv_bias=True, 
                 drop=0., attn_drop=0., drop_path=0., 
                 norm_layer=nn.LayerNorm, layer_type="convnet_block",
-                use_checkpoint=False) -> None:
+                use_checkpoint=False,expand=1) -> None:
         super().__init__()
         self.dim = dim
         self.depth = depth
@@ -45,7 +45,7 @@ class Layer(nn.Module):
                         drop=drop,
                         attn_drop=attn_drop,
                         drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                        norm_layer=norm_layer,
+                    norm_layer=norm_layer, expand=expand
                     )
             elif layer_type == "swin_block":
                 block = Windowattn_block(
@@ -58,7 +58,7 @@ class Layer(nn.Module):
                     attn_drop=attn_drop,
                     drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                     norm_layer=norm_layer,
-                    shift_size=[0,0] if i%2==0 else [i//2 for i in window_size]
+                    shift_size=[0,0] if i%2==0 else [i//2 for i in window_size],expand=expand
                 )
             if use_checkpoint:
                 block = checkpoint_wrapper(block, offload_to_cpu=True)
@@ -120,7 +120,8 @@ class LG_net(nn.Module):
                  embed_dim=768, depths=(2, 2, 6, 2), num_heads=(3, 6, 12, 24),
                  window_size=(2, 4, 8), mlp_ratio=4., qkv_bias=True,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
-                 norm_layer=partial(nn.LayerNorm, eps=1e-6), patch_norm=False,use_checkpoint=False,use_pos_embed=True):
+                 norm_layer=partial(nn.LayerNorm, eps=1e-6), patch_norm=False,use_checkpoint=False,
+                 use_pos_embed=True,expand=1):
         super().__init__()
 
         self.num_layers = len(depths)
@@ -157,7 +158,7 @@ class LG_net(nn.Module):
                      drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                      norm_layer=norm_layer,
                      layer_type="window_block" if i_layer==0 else "swin_block",
-                     use_checkpoint=use_checkpoint
+                     use_checkpoint=use_checkpoint,expand=expand
                                 )
             self.layers.append(layers)
 
@@ -223,12 +224,13 @@ class LG_net(nn.Module):
 class LGNet(nn.Module): 
     def __init__(self, img_size=[32, 64], patch_size=(1, 1, 1), in_chans=20, out_chans=20, embed_dim=768, window_size=[4, 8], depths=[2, 2, 6, 2],
                  num_heads=[3, 6, 12, 24], Weather_T=16, drop_rate=0., attn_drop_rate=0., drop_path=0., use_checkpoint=False, 
-                 use_pos_embed=True) -> None:
+                 use_pos_embed=True,expand=1) -> None:
         super().__init__()
         self.net = LG_net(img_size=img_size, patch_size=patch_size, in_chans=in_chans, out_chans=out_chans,
                             embed_dim=embed_dim, depths=depths, num_heads=num_heads,
                             window_size=window_size, drop_rate=drop_rate, attn_drop_rate=attn_drop_rate,
-                            drop_path_rate=drop_path, use_checkpoint=use_checkpoint, use_pos_embed=use_pos_embed)
+                            drop_path_rate=drop_path, use_checkpoint=use_checkpoint, 
+                          use_pos_embed=use_pos_embed, expand=expand)
   
     def forward(self, data, **kwargs):
         out = self.net(data)

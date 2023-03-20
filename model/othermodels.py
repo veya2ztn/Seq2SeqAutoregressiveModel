@@ -137,11 +137,17 @@ class CK_LgNet(BaseModel):
                                 window_size=(4, 8),
                                 depths=[4, 4, 4],
                                 num_heads=[6, 6, 6],
-                                Weather_T=1, use_pos_embed=False)
+                                Weather_T=1, use_pos_embed=False,
+                                expand=kargs.get("grow_up_expand", 1))
 
     def forward(self, x):
         return self.backbone(x)
 
+class OnceGrowUp_CK_LgNet(CK_LgNet):
+    def __init__(self, *args, **kargs):
+        kargs["grow_up_expand"] = 2
+        super().__init__(*args, **kargs)
+        
 from networks.LGCrossNet import LGNetCross
 class CK_LgNet_Cross(BaseModel):
     def __init__(self,*args,**kargs):

@@ -18,7 +18,8 @@ class PatchEmbedAlignModel(BaseModel):
             patch_size=high_level_patch_size, in_c=in_chans, embed_dim=embed_dim, norm_layer=norm_layer)
     def forward(self, x1, x2):
         # x: [B, C, H, W]
-        x1, T, H, W = self.low_level_patch_embed(x1)  # x:[B, H*W, C]
+        with torch.no_grad():
+            x1, T, H, W = self.low_level_patch_embed(x1)  # x:[B, H*W, C]
         x2, T, H, W = self.high_level_patch_embed(x2)  # x:[B, H*W, C]
         return x1, x2 
 
@@ -35,3 +36,7 @@ class PatchAlign_64_to_128(PatchEmbedAlignModel):
         high_level_patch_embed_weight = {'proj.weight':pretrain_weight['module.net.patch_embed.proj.weight'].repeat(1,1,2,2)/4,
                           'proj.bias': pretrain_weight['module.net.patch_embed.proj.bias']}
         self.high_level_patch_embed.load_state_dict(high_level_patch_embed_weight)
+    
+    def set_epoch(self,epoch=None,epoch_total=None,eval_mode=False):
+        for p in self.low_level_patch_embed.parameters():p.requires_grad=False
+
