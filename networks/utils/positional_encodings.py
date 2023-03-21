@@ -300,8 +300,8 @@ class rope2(nn.Module):
                 print(torch.dist(get_attn(a2,c2),get_attn(b2,d2)))
             ```
         """
-        sinusoid1 = torch.randn(self.dim1_size)
-        sinusoid2 = torch.randn(self.dim1_size)
+        sinusoid1 = torch.rand(self.dim1_size)*2*np.pi - np.pi
+        sinusoid2 = torch.rand(self.dim1_size)*2*np.pi - np.pi
         sin1 = torch.sin(sinusoid1)
         cos1 = torch.cos(sinusoid1)
         sin2 = torch.sin(sinusoid2)
