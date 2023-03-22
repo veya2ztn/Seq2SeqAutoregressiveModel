@@ -1161,8 +1161,11 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
         #if len(batch)==1:batch = batch[0] # for Field -> Field_Dt dataset
         data_cost.append(time.time() - now);now = time.time()
         if status == 'train':
-            if hasattr(model,'set_step'):model.set_step(step=step,epoch=epoch)
-            if hasattr(model,'module') and hasattr(model.module,'set_step'):model.module.set_step(step=step,epoch=epoch)
+            if hasattr(model, 'set_step'):
+                model.set_step(step=step, epoch=epoch, step_total=batches)
+            if hasattr(model, 'module') and hasattr(model.module, 'set_step'):
+                model.module.set_step(
+                    step=step, epoch=epoch, step_total=batches)
             # if model.train_mode =='pretrain':
             #     time_truncate = max(min(epoch//3,data_loader.dataset.time_step),2)
             #     batch=batch[:model.history_length -1 + time_truncate]
