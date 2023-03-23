@@ -3848,6 +3848,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if not isinstance(args.do_final_fourcast,str):args.do_final_fourcast = 'backbone.best.pt'
             now_best_path = SAVE_PATH / args.do_final_fourcast ##<--this is not safe, but fine.
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
+            args.mode = 'fourcast'
             start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=now_best_path, only_model=True,loc = 'cuda:{}'.format(args.gpu))
             run_fourcast(args, model,logsys)
             
