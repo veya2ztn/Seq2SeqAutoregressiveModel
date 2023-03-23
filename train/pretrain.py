@@ -1161,8 +1161,11 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
         #if len(batch)==1:batch = batch[0] # for Field -> Field_Dt dataset
         data_cost.append(time.time() - now);now = time.time()
         if status == 'train':
-            if hasattr(model,'set_step'):model.set_step(step=step,epoch=epoch)
-            if hasattr(model,'module') and hasattr(model.module,'set_step'):model.module.set_step(step=step,epoch=epoch)
+            if hasattr(model, 'set_step'):
+                model.set_step(step=step, epoch=epoch, step_total=batches)
+            if hasattr(model, 'module') and hasattr(model.module, 'set_step'):
+                model.module.set_step(
+                    step=step, epoch=epoch, step_total=batches)
             # if model.train_mode =='pretrain':
             #     time_truncate = max(min(epoch//3,data_loader.dataset.time_step),2)
             #     batch=batch[:model.history_length -1 + time_truncate]
@@ -3521,7 +3524,7 @@ def build_model(args):
     if local_rank == 0:
         param_sum, buffer_sum, all_size = getModelSize(model)
         logsys.info(f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
-    if args.pretrain_weight and args.torch_compile and not args.continue_train:
+    if args.pretrain_weight and (torch.__version__[0] == "2" and args.torch_compile) and not args.continue_train:
         only_model = ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train)
         assert only_model
         load_model(model,path=args.pretrain_weight,only_model= only_model ,loc = 'cpu',strict=bool(args.load_model_strict))

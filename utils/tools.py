@@ -36,16 +36,19 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
                 model_state_dict = model_state_dict["loragrashcastdglsym"]
             if "lgnet" in model_state_dict:
                 model_state_dict = model_state_dict["lgnet"]
-
+            
             old_state_dict = model.state_dict()
             model_keys = list(old_state_dict.keys())
             new_state_dict = {}
             for key, val in model_state_dict.items():
                 if '.expand' in key or '.repeat' in key or '.scale' in key:
                     continue
-                key = key.replace("module.", "").replace("_orig_mod.", "")
+                if "module." in key and np.all(['module.' not in k for k in model_keys]):
+                    key = key.replace("module.", "")
+                if "_orig_mod." in key and np.all(['_orig_mod.' not in k for k in model_keys]):
+                    key = key.replace("_orig_mod.", "")
                 if "backbone.net." in key and np.all(['backbone.net.' not in k for k in model_keys]):
-                    key = key.replace("backbone.net.", "net.")
+                    key = key.replace("backbone.net.", "net.")  
                 if "backbone.backbone.net." in key and np.all(['backbone.backbone.net.' not in k for k in model_keys]):
                     key = key.replace(
                         "backbone.backbone.net.", "backbone.net.")

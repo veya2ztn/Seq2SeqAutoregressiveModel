@@ -235,7 +235,8 @@ class Mlp(nn.Module):
         in_features = self.in_features if only_inner else self.in_features*expand
         hd_features = self.hd_features*expand
         ot_features = self.ot_features if only_inner else self.ot_features*expand
-        print(f"growing Mlp from ({self.in_features}-{self.hd_features}-{self.ot_features}) to ({in_features}-{hd_features}-{ot_features})")
+        print(f"""growing Mlp from ({self.in_features}-{self.hd_features}-{self.ot_features}) to ({in_features}-{hd_features}-{ot_features}).
+        Notice we duplicate the weight to ensure performance unchange. To further train, please actiavte dropout or add a small random noise to destroy this duplicate symmetry""")
 
         drop_rate   = self.drop_rate
         act_layer   = self.act_layer

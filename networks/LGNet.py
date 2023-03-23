@@ -103,6 +103,18 @@ def LGnet_grow_up_full_recursively(module: nn.Module, expand: int, offset=0) -> 
         else:
             LGnet_grow_up_full_recursively(child, expand, offset=offset+1)
 
+
+def mlp_grow_up_inner_recursively(module: nn.Module, expand: int, offset=0) -> None:
+    for name, child in module.named_children():
+        print(" "*offset, end="")
+        if isinstance(child, SD_attn):
+            pass 
+        elif isinstance(child, Mlp):
+            setattr(module, name, child.grow_up_to(expand, only_inner=True))
+        else:
+            mlp_grow_up_inner_recursively(child, expand, offset=offset+1)
+
+
 class Layer(nn.Module):
     def __init__(self, dim, depth, window_size, 
                 num_heads=1, mlp_ratio=4., qkv_bias=True, 
@@ -315,10 +327,10 @@ class LG_net(nn.Module):
 class LGNet(nn.Module): 
     def __init__(self, img_size=[32, 64], patch_size=(1, 1, 1), in_chans=20, out_chans=20, embed_dim=768, window_size=[4, 8], depths=[2, 2, 6, 2],
                  num_heads=[3, 6, 12, 24], Weather_T=16, drop_rate=0., attn_drop_rate=0., drop_path=0., use_checkpoint=False, 
-                 use_pos_embed=True,expand=1) -> None:
+                 use_pos_embed=True,expand=1,mlp_ratio=4) -> None:
         super().__init__()
         self.net = LG_net(img_size=img_size, patch_size=patch_size, in_chans=in_chans, out_chans=out_chans,
-                            embed_dim=embed_dim, depths=depths, num_heads=num_heads,
+                            embed_dim=embed_dim, depths=depths, num_heads=num_heads,mlp_ratio=mlp_ratio,
                             window_size=window_size, drop_rate=drop_rate, attn_drop_rate=attn_drop_rate,
                             drop_path_rate=drop_path, use_checkpoint=use_checkpoint, 
                           use_pos_embed=use_pos_embed, expand=expand)
