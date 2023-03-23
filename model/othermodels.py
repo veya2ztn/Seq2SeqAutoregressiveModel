@@ -139,7 +139,8 @@ class CK_LgNet(BaseModel):
                                 num_heads=[6, 6, 6],
                                 Weather_T=1, 
                                 use_pos_embed=kargs.get("use_pos_embed", 0),
-                                expand=kargs.get("grow_up_expand", 1))
+                                expand=kargs.get("grow_up_expand", 1),
+                                mlp_ratio=kargs.get("mlp_ratio", 4))
 
     def forward(self, x):
         return self.backbone(x)
@@ -154,7 +155,27 @@ class HalfGrowUp_CK_LgNet(CK_LgNet):
         kargs["grow_up_expand"] = 12
         super().__init__(*args, **kargs)
         
+from networks.utils.utils import Mlp
+def set_dropout(module: nn.Module, p: float) -> None:
+    for name, child in module.named_children():
+        if isinstance(child, Mlp):
+            child.drop1.p = p
+        else:
+            set_dropout(child, p)
+import numpy as np
+class MLP2GrowUp_CK_LgNet(CK_LgNet):
+    def __init__(self, *args, **kargs):
+        kargs["mlp_ratio"] = 8
+        super().__init__(*args, **kargs)
+    
+    def set_epoch(self, epoch=None, epoch_total=None, eval_mode=False):
+        set_dropout(self.backbone,0)
 
+    def set_step(self, step=None, epoch=None, step_total=None, eval_mode=False):
+        if epoch == 0:
+            step_total = 100
+            p = 0.3*np.exp(- step/step_total) if step<step_total else 0
+            set_dropout(self.backbone,p)
 from networks.LGCrossNet import LGNetCross
 class CK_LgNet_Cross(BaseModel):
     def __init__(self,*args,**kargs):
