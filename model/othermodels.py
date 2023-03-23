@@ -173,7 +173,8 @@ class MLP2GrowUp_CK_LgNet(CK_LgNet):
 
     def set_step(self, step=None, epoch=None, step_total=None, eval_mode=False):
         if epoch == 0:
-            p = 0.3*np.exp(- step/step_total*100)
+            step_total = 100
+            p = 0.3*np.exp(- step/step_total) if step<step_total else 0
             set_dropout(self.backbone,p)
 from networks.LGCrossNet import LGNetCross
 class CK_LgNet_Cross(BaseModel):
