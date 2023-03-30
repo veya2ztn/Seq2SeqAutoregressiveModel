@@ -44,6 +44,7 @@ def get_args_parser():
     parser.add_argument('--gmod_coef',type=str,default=None)
     parser.add_argument('--gdamp',type=int,default=0)
     parser.add_argument('--gdeval',type=int,default=0)
+    parser.add_argument('--use_pos_embed',type=int,default=0)
     
     parser.add_argument('--do_iter_log', type=int, default=1)
     parser.add_argument('--disable_progress_bar',type=int,default=0)
@@ -58,7 +59,7 @@ def get_args_parser():
     parser.add_argument('--compute_graph_set', type=str, default=None)
     parser.add_argument('--torch_compile', type=int, default=0)
     parser.add_argument('--multi_branch_order', type=str, default=None)
-    
+    parser.add_argument('--force_do_first_fourcast', type=int, default=0)
     # Model parameters
     parser.add_argument('--model_type', default='AFNONet', type=str, help='Name of model to train',
                         #choices=['AFNONet','FEDformer','FEDformer1D','AFNONetJC','NaiveConvModel2D']
@@ -133,7 +134,7 @@ def get_args_parser():
     'WeathBench71','ERA5Tiny12_47_96_Normal','ERA5CephDataset','WeathBench68pixelnorm','WeathBench69SolarLunaMask',
     'WeathBench7066deseasonal','WeathBench7066PatchDataset','ERA5CephSmallPatchDataset',
     'WeathBench7066Self','ERA5CephSmallDataset','ERA5Tiny12_47_96','WeathBench7066',
-    'WeathBench7066DeltaDataset','WeathBench55withoutH','WeathBench64x128CK','WeathBench32x64MultibranchRandom','WeathBench64x128','WeathBench32x64Dailynorm','WeathBench32x64','WeathBench32x64SPnorm','SpeedTestDataset32x64','WeathBench32x64CK','SpeedTestDataset64x128'])
+    'WeathBench7066DeltaDataset','WeathBench55withoutH','WeathBench64x128CK','WeathBenchUpSize_64_to_128','WeathBench32x64MultibranchRandom','WeathBench64x128','WeathBench32x64Dailynorm','WeathBench32x64','WeathBench32x64SPnorm','SpeedTestDataset32x64','WeathBench32x64CK','SpeedTestDataset64x128'])
     parser.add_argument('--dataset_flag', default="", type=str)
     parser.add_argument('--time_reverse_flag', default='only_forward', type=str)
     parser.add_argument('--time_intervel', type=int, default=1)

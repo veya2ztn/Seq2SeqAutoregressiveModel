@@ -308,8 +308,8 @@ def calculate_coef(e1,alpha0,alpha1,rank=4):
         Notice, we use CPU calculate
     """
     p = (1 - alpha1)
-    q = (1/(1 - alpha0))
-    e3= e1*(1 +  alpha1*(1 + alpha0))
+    q = (1/(1 - alpha0)) # make sure alpha0 < 1 
+    e3= e1*(1 +  alpha1*(1 + alpha0)) 
     e2= e1*(1 + alpha0)
     e1= e1
     dp_matrix, dp_divide_times = pq_coef[rank]["dp"]
@@ -326,7 +326,7 @@ def calculate_coef(e1,alpha0,alpha1,rank=4):
     #print(dp,dq,de)
     de3 =  -(1/e2)*dp
     de2 = alpha1/e2*dp + 1/(e1*(1-alpha0)**2)*dq
-    de  = 1/e2*dp - ((1/e1+alpha0/e1)/(1-alpha0)**2)*dq + de
+    de  = 1/e2*dp - ((1/e1+alpha0/e1)/(1 - alpha0 )**2)*dq + de
     return de, de2, de3
 
 def calculate_deltalog_coef(c1,c2,c3,e1,e2,e3):
@@ -447,9 +447,14 @@ def normlized_coef_type_bonded(c1,c2,c3,e1,e2,e3,delta=0.01):
     c3 = c3 + e3/(e3+delta)*cc3
     #print(f"c1:{c1:.4f} c2:{c2:.4f} c3:{c3:.4f} cc2:{cc2:.4f} cc3:{cc3:.4f}")
     # apply normal constrain
-    c1+= np.sqrt(3)/3
-    c2+= np.sqrt(3)/3
-    c3+= np.sqrt(3)/3
+    # we will add this offset untial the smallest one is np.sqrt(3)/3
+    c = np.array([c1,c2,c3])
+    minimal_index = np.array(c).argmin()
+    factor = (1 - c[minimal_index])/(np.sqrt(3)/3) - 1
+    #factor = 1
+    c1+= factor*np.sqrt(3)/3
+    c2+= factor*np.sqrt(3)/3
+    c3+= factor*np.sqrt(3)/3
     N = np.sqrt(c1**2 + c2**2 + c3**2)
     c1 = c1/N
     c2 = c2/N
