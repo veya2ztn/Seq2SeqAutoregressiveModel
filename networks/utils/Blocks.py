@@ -54,7 +54,7 @@ class Windowattn_block(nn.Module):
                 qkv_bias=True, drop=0., attn_drop=0., drop_path=0., 
                 act_layer=nn.GELU, norm_layer=nn.LayerNorm,
                 attn_type="windowattn", pre_norm=True, 
-                relative_position_embedding_layer=None,
+                relative_position_embedding_layer=None,expand=1,
                 **kwargs):
         super().__init__()
         self.dim = dim
@@ -76,7 +76,7 @@ class Windowattn_block(nn.Module):
             self.attn = SD_attn(
                 dim, window_size=self.window_size, num_heads=num_heads, qkv_bias=qkv_bias,
                 attn_drop=attn_drop, proj_drop=drop, shift_size=shift_size, dilated_size=dilated_size,
-                relative_position_embedding_layer=relative_position_embedding_layer)
+                relative_position_embedding_layer=relative_position_embedding_layer, expand=expand)
             
         elif attn_type == "convattn":
             self.attn = Conv_attn(dim, window_size, num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop)

@@ -2,7 +2,7 @@ import torch,time
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
-
+# 
 class BaseModel(nn.Module):
 
     def set_epoch(self,epoch,epoch_total,**kargs):

@@ -69,7 +69,7 @@ ep_for_mode={'pretrain':80,'finetune':50,'fourcast':50}
 bs_for_mode={'pretrain':4,'finetune':3,'fourcast':3}
 as_for_mode={'pretrain':8,'finetune':16,'fourcast':16}
 ts_for_mode={'pretrain':2,'finetune':3,'fourcast':36}
-
+#torch.autograd.set_detect_anomaly(True)
 train_set={
     'large': ((720, 1440), 8, 20, 20, ERA5CephDataset,{}),
     'small': ( (32,   64), 8, 20, 20, ERA5CephSmallDataset,{}),
@@ -634,82 +634,55 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
     c1,  c2,  c3 = model.c1, model.c2, model.c3
     
     
-    if 'deltalog' in mode:
-        error_record = {}
-        fixed_activate_error_coef = [[0, 1, 1], [0, 2, 2], [0, 3, 3]]
-        for (level_1, level_2, stamp) in fixed_activate_error_coef:
-                tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
-                tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
-                error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2)
-        e1 = torch.log(error_record[0,1,1] + 1)
-        e2 = torch.log(error_record[0,2,2] - error_record[0,1,1] + 1)
-        e3 = torch.log(error_record[0,3,3] - error_record[0,2,2] + 1)
-
-        iter_info_pool[f"{status}_c1"] = c1
-        iter_info_pool[f"{status}_c2"] = c2
-        iter_info_pool[f"{status}_c3"] = c3
-        iter_info_pool[f"{status}_e1"] = e1
-        iter_info_pool[f"{status}_e2"] = e2
-        iter_info_pool[f"{status}_e3"] = e3
-        loss = c1*e1 + c2*e2 + c3*e3 
-        diff = (e1 + e2 + e3)/3
-    elif 'logoffset' in mode:
-        error_record = {}
-        fixed_activate_error_coef = [[0, 1, 1], [0, 2, 2], [0, 3, 3]]
-        for (level_1, level_2, stamp) in fixed_activate_error_coef:
-                tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
-                tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
-                error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2)
-        offset = 0.01 #<--- this is a hyperparameter
-        e1 = torch.log(error_record[0,1,1] + offset)
-        e2 = torch.log(error_record[0,2,2] + offset)
-        e3 = torch.log(error_record[0,3,3] + offset)
-        iter_info_pool[f"{status}_c1"] = c1
-        iter_info_pool[f"{status}_c2"] = c2
-        iter_info_pool[f"{status}_c3"] = c3
-        iter_info_pool[f"{status}_e1"] = e1
-        iter_info_pool[f"{status}_e2"] = e2
-        iter_info_pool[f"{status}_e3"] = e3
-        loss = c1*e1 + c2*e2 + c3*e3 
-        diff = (e1 + e2 + e3)/3
-    elif 'normal' in mode or 'per_sample' in mode: 
-        error_record = {}
-        fixed_activate_error_coef = [[0,1,1],[0,2,2],[0,3,3]]
-        for (level_1, level_2, stamp) in fixed_activate_error_coef:
-                tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
-                tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
-                error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2)
-        e1 = error_record[0,1,1]
-        e2 = error_record[0,2,2]
-        e3 = error_record[0,3,3]
-        iter_info_pool[f"{status}_c1"] = c1
-        iter_info_pool[f"{status}_c2"] = c2
-        iter_info_pool[f"{status}_c3"] = c3
-        iter_info_pool[f"{status}_e1"] = e1
-        iter_info_pool[f"{status}_e2"] = e2
-        iter_info_pool[f"{status}_e3"] = e3
-        loss = c1*e1 + c2*e2 + c3*e3 
-        diff = (e1 + e2 + e3)/3
-    elif 'per_feature' in mode: # need apply error coef per feature
+    
+    if 'per_feature' in mode: # need apply error coef per feature
         error_record = {}
         fixed_activate_error_coef = [[0,1,1],[0,2,2],[0,3,3]]
         for (level_1, level_2, stamp) in fixed_activate_error_coef:
                 tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
                 tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
                 error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2,dim=(0,2,3))
+                #in training mode, c1 c2 c3 is also feature-wised
         e1 = error_record[0,1,1]
         e2 = error_record[0,2,2]
         e3 = error_record[0,3,3]
-        iter_info_pool[f"{status}_c1"] = c1.mean() if isinstance(c1,torch.Tensor) else c1#(110)
-        iter_info_pool[f"{status}_c2"] = c2.mean() if isinstance(c2,torch.Tensor) else c2#(110)
-        iter_info_pool[f"{status}_c3"] = c3.mean() if isinstance(c3,torch.Tensor) else c3#(110)
-        iter_info_pool[f"{status}_e1"] = e1.mean() if isinstance(e1,torch.Tensor) else e1#(110)
-        iter_info_pool[f"{status}_e2"] = e2.mean() if isinstance(e2,torch.Tensor) else e2#(110)
-        iter_info_pool[f"{status}_e3"] = e3.mean() if isinstance(e3,torch.Tensor) else e3#(110)
-        loss = (c1*e1 + c2*e2 + c3*e3).mean()
-        diff = ((e1 + e2 + e3)/3).mean()
-    
-    
+        c1 = c1.mean() if isinstance(c1,torch.Tensor) else c1#(110)
+        c2 = c2.mean() if isinstance(c2,torch.Tensor) else c2#(110)
+        c3 = c3.mean() if isinstance(c3,torch.Tensor) else c3#(110)
+        e1 = e1.mean() if isinstance(e1,torch.Tensor) else e1#(110)
+        e2 = e2.mean() if isinstance(e2,torch.Tensor) else e2#(110)
+        e3 = e3.mean() if isinstance(e3,torch.Tensor) else e3#(110)
+        
+    else:
+        error_record = {}
+        fixed_activate_error_coef = [[0, 1, 1], [0, 2, 2], [0, 3, 3]]
+        for (level_1, level_2, stamp) in fixed_activate_error_coef:
+                tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
+                tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
+                error_record[level_1,level_2,stamp] = torch.mean((tensor1-tensor2)**2)
+        if 'deltalog' in mode:
+            e1 = torch.log(error_record[0,1,1] + 1)
+            e2 = torch.log(error_record[0,2,2] - error_record[0,1,1] + 1)
+            e3 = torch.log(error_record[0,3,3] - error_record[0,2,2] + 1)
+        elif 'logoffset' in mode:
+            offset = 0.01 #<--- this is a hyperparameter
+            e1 = torch.log(error_record[0,1,1] + offset)
+            e2 = torch.log(error_record[0,2,2] + offset)
+            e3 = torch.log(error_record[0,3,3] + offset)
+        else: 
+            e1 = error_record[0,1,1]
+            e2 = error_record[0,2,2]
+            e3 = error_record[0,3,3]
+
+
+    iter_info_pool[f"{status}_c1"] = c1
+    iter_info_pool[f"{status}_c2"] = c2
+    iter_info_pool[f"{status}_c3"] = c3
+    iter_info_pool[f"{status}_e1"] = e1
+    iter_info_pool[f"{status}_e2"] = e2
+    iter_info_pool[f"{status}_e3"] = e3
+    loss = c1*e1 + c2*e2 + c3*e3 
+    diff = (e1 + e2 + e3)/3
     return loss, diff,iter_info_pool
 
 from criterions.high_order_loss_coef import calculate_coef,calculate_deltalog_coef,normlized_coef_type2,normlized_coef_type3,normlized_coef_type0,normlized_coef_type_bonded
@@ -780,6 +753,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
                 # to do next forward prediction. Thus we limit in t < L 
             # notice when activate pred_channel_for_next_stamp, the unpredicted part should be filled by the part from next stamp 
             # but the loss should be calculate only on the predicted part.
+            # In theory, the padded constant will not effect the bask-prapagration. <-- when do average, the padded part will provide a extra length to divide. for example, from 3 element average to 4 element average
             end = now_level_batch[:,target_stamp].flatten(0,1)
         else:
             end = None
@@ -810,6 +784,7 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
                     error   = ((tensor1-tensor2)**2+1e-2).log().mean()# <---face fatal problem in half precesion due to too small value 
                 elif _type == 'quantity_real_log5':
                     error   = ((tensor1-tensor2)**2+1e-5).log().mean()# <---face fatal problem in half precesion due to too small value
+                
                 elif _type == 'quantity_real_log3':
                     error   = ((tensor1-tensor2)**2+1e-3).log().mean()# <---face fatal problem in half precesion due to too small value 
                     # 1e-2 better than 1e-5. 
@@ -1119,8 +1094,6 @@ def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, l
     else:
         return run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status)
 
-
-
 def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     
     if status == 'train':
@@ -1188,8 +1161,11 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
         #if len(batch)==1:batch = batch[0] # for Field -> Field_Dt dataset
         data_cost.append(time.time() - now);now = time.time()
         if status == 'train':
-            if hasattr(model,'set_step'):model.set_step(step=step,epoch=epoch)
-            if hasattr(model,'module') and hasattr(model.module,'set_step'):model.module.set_step(step=step,epoch=epoch)
+            if hasattr(model, 'set_step'):
+                model.set_step(step=step, epoch=epoch, step_total=batches)
+            if hasattr(model, 'module') and hasattr(model.module, 'set_step'):
+                model.module.set_step(
+                    step=step, epoch=epoch, step_total=batches)
             # if model.train_mode =='pretrain':
             #     time_truncate = max(min(epoch//3,data_loader.dataset.time_step),2)
             #     batch=batch[:model.history_length -1 + time_truncate]
@@ -1382,7 +1358,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                 for key in model.err_record.keys():
                     if hasattr(model, 'module')  :
                         dist.barrier()
-                        dist.reduce(model.err_record[key], 0)
+                        dist.all_reduce(model.err_record[key])
                     model.err_record[key] = model.err_record[key][None]
                 c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
                 if not hasattr(model,'clist_buffer'):model.clist_buffer={'c1':[],'c2':[],'c3':[]}
@@ -1443,8 +1419,7 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
             train_cost = []
             rest_cost = []
             inter_b.lwrite(outstring, end="\r")
-        #if step > 10:break
-        
+        #if step>10:break
 
 
     if hasattr(model,'module') and status == 'valid':
@@ -1463,22 +1438,25 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optim
                 model.err_record[key] = torch.cat(model.err_record[key]).mean(0)
                 if hasattr(model, 'module')  :
                     dist.barrier()
-                    dist.reduce(model.err_record[key], 0)
+                    dist.all_reduce(model.err_record[key])
                 model.err_record[key] = model.err_record[key]
             c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
         elif 'per_sample' in model.directly_esitimate_longterm_error:
             for key in model.err_record.keys():
                 model.err_record[key] = torch.cat(model.err_record[key])# (B,)
             c1,c2,c3 = compute_coef(model.err_record , model.directly_esitimate_longterm_error, normlized_type)
+            #print(f"===> before <=== gpu:{device} c1={c1:.4f} c2={c2:.4f} c3={c3:.4f}")
             if hasattr(model, 'module'):
                 for x in [c1, c2, c3]:
                     dist.barrier()
-                    dist.reduce(x, 0)
+                    dist.all_reduce(x)
+            #print(f"===> after <=== gpu:{device} c1={c1:.4f} c2={c2:.4f} c3={c3:.4f}")
         else:
             raise NotImplementedError
         model.c1 = c1;model.c2 = c2;model.c3 = c3
         model.err_record = {}
         #print(c1,c2,c3)
+        #raise
 
     loss_val = total_diff/ total_num
     loss_val = loss_val.item()
@@ -1505,6 +1483,8 @@ def compute_coef(err_record, flag,normlized_type):
     for _e1,_a0,_a1,_e1,_e2,_e3 in zip(e1,a0,a1,e1,e2,e3):
         _e1,_e2,_e3 = float(_e1), float(_e2), float(_e3)
         _a0,_a1   = float(_a0), float(_a1)
+        if _a0 > 0.9:continue
+        if _a1 > 0.9:continue
         c1,c2,c3 = calculate_coef(_e1,_a0,_a1,rank=int(flag.split('_')[-1]))
         #print(f"e1:{_e1:.4f} e2:{_e2:.4f} e3:{_e3:.4f} c1:{c1:.4f} c2:{c2:.4f} c3:{c3:.4f}")
         c1,c2,c3 = normlized_type(c1,c2,c3,_e1,_e2,_e3)
@@ -1515,7 +1495,6 @@ def compute_coef(err_record, flag,normlized_type):
     c2 = torch.Tensor(c2_l).to(e1.device).mean()
     c3 = torch.Tensor(c3_l).to(e1.device).mean()
     return c1,c2,c3
-
 
 def run_one_epoch_three2two(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
     
@@ -1810,8 +1789,6 @@ class NanDetect:
                 model.use_amp = bool(downgrad_use_amp.item()) and model.use_amp
         return skip
 
-
-
 #########################################
 ######### fourcast forward step #########
 #########################################
@@ -1894,40 +1871,43 @@ def collect_fourcast_result(fourcastresult,test_dataset,consume=False,force=Fals
                     else:
                         fourcastresult[key] = val # overwrite
         property_names = test_dataset.vnames
+        unit_list = test_dataset.unit_list
         if hasattr(test_dataset,"pred_channel_for_next_stamp"):
-            property_names = [property_names[t] for t in test_dataset.pred_channel_for_next_stamp]
-            test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp]
-        accu_list = [p['accu'].cpu() for p in fourcastresult.values() if 'accu' in p]
-        if len(accu_list)==0:return None
-        accu_list = torch.stack(accu_list).numpy()   
+            offset = 2 if 'CK' in test_dataset.__class__.__name__ else 0
+            pred_channel_for_next_stamp = np.array(test_dataset.pred_channel_for_next_stamp) - offset
+            property_names = [property_names[t] for t in (pred_channel_for_next_stamp) ] # do not allow padding constant at begining.
+            unit_list = unit_list[pred_channel_for_next_stamp]
         
-        total_num = len(accu_list)
-        accu_list = accu_list.mean(0)# (fourcast_num,property_num)
-        real_times = [(predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit for predict_time in range(len(accu_list))]
-        #accu_table = save_and_log_table(accu_list,logsys, prefix+'accu_table', property_names, real_times)    
+        accu_list = [p['accu'].cpu() for p in fourcastresult.values() if 'accu' in p]
+        if not len(accu_list)==0:
+            accu_list = torch.stack(accu_list).numpy()   
+            total_num = len(accu_list)
+            accu_list = accu_list.mean(0)# (fourcast_num,property_num)
+            real_times = [(predict_time+1)*test_dataset.time_intervel*test_dataset.time_unit for predict_time in range(len(accu_list))]
+            #accu_table = save_and_log_table(accu_list,logsys, prefix+'accu_table', property_names, real_times)    
 
-        ## <============= RMSE ===============>
-        rmse_list = torch.stack([p['rmse'].cpu() for p in fourcastresult.values() if 'rmse' in p]).mean(0)# (fourcast_num,property_num)
-        #rmse_table= save_and_log_table(rmse_list,logsys, prefix+'rmse_table', property_names, real_times)       
+            ## <============= RMSE ===============>
+            rmse_list = torch.stack([p['rmse'].cpu() for p in fourcastresult.values() if 'rmse' in p]).mean(0)# (fourcast_num,property_num)
+            #rmse_table= save_and_log_table(rmse_list,logsys, prefix+'rmse_table', property_names, real_times)       
 
-        if not isinstance(test_dataset.unit_list,int):
-            unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
-            #print(unit_list)
-            unit_num  = max(unit_list.shape)
-            unit_num  = len(property_names)
-            unit_list = unit_list.reshape(1,unit_num)
-            property_num = len(property_names)
-            if property_num > unit_num:
-                assert property_num%unit_num == 0
-                unit_list = torch.repeat_interleave(unit_list,int(property_num//unit_num),dim=1)
-        else:
-            logsys.info(f"unit list is int, ")
-            unit_list= test_dataset.unit_list
-        rmse_unit_list= (rmse_list*unit_list)
-        average_metrix = {'accu': accu_list,'rmse':rmse_list,'rmse_unit':rmse_unit_list,'real_times':real_times}
-        torch.save(average_metrix,offline_out)
-        if consume:
-            os.system(f"rm {ROOT}/fourcastresult.gpu_*")
+            if not isinstance(unit_list,int):
+                unit_list = torch.Tensor(unit_list).to(rmse_list.device)
+                #print(unit_list)
+                unit_num  = max(unit_list.shape)
+                unit_num  = len(property_names)
+                unit_list = unit_list.reshape(1,unit_num)
+                property_num = len(property_names)
+                if property_num > unit_num:
+                    assert property_num%unit_num == 0
+                    unit_list = torch.repeat_interleave(unit_list,int(property_num//unit_num),dim=1)
+            else:
+                #logsys.info(f"unit list is int, ")
+                unit_list= unit_list
+            rmse_unit_list= (rmse_list*unit_list)
+            average_metrix = {'accu': accu_list,'rmse':rmse_list,'rmse_unit':rmse_unit_list,'real_times':real_times}
+            torch.save(average_metrix,offline_out)
+            if consume:
+                os.system(f"rm {ROOT}/fourcastresult.gpu_*")
     
     return torch.load(offline_out)
 
@@ -1936,7 +1916,8 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
     origin_ckpt_path = logsys.ckpt_root
     row=[]
     property_names = test_dataset.vnames
-    for epoch, fourcastresult in enumerate(fourcastresult_path_list):
+    for fourcastresult in fourcastresult_path_list:
+        epoch = int(fourcastresult.split("_")[-1])
         assert isinstance(fourcastresult,str)
         prefix = os.path.split(fourcastresult)[-1]
         #logsys.ckpt_root = fourcastresult
@@ -1948,7 +1929,21 @@ def create_multi_epoch_inference(fourcastresult_path_list, logsys,test_dataset,c
             rmse_unit_list = result['rmse_unit']
             real_times = result['real_times']
             row += [[time_stamp,epoch]+value_list for time_stamp, value_list in zip(real_times,rmse_unit_list.tolist())]
+            
+            Z500 = rmse_unit_list[real_times.index(120)][property_names.index('500hPa_geopotential')]
+            logsys.record('5DZ500', Z500, epoch, epoch_flag='epoch')
+            T850 = rmse_unit_list[real_times.index(120)][property_names.index('850hPa_temperature')]
+            logsys.record('5DT850', T850, epoch, epoch_flag='epoch')
 
+            Z500 = rmse_unit_list[real_times.index(72)][property_names.index('500hPa_geopotential')]
+            logsys.record('3DZ500', Z500, epoch, epoch_flag='epoch')
+            T850 = rmse_unit_list[real_times.index(72)][property_names.index('850hPa_temperature')]
+            logsys.record('3DT850', T850, epoch, epoch_flag='epoch')
+
+            Z500 = rmse_unit_list[real_times.index(24)][property_names.index('500hPa_geopotential')]
+            logsys.record('1DZ500', Z500, epoch, epoch_flag='epoch')
+            T850 = rmse_unit_list[real_times.index(24)][property_names.index('850hPa_temperature')]
+            logsys.record('1DT850', T850, epoch, epoch_flag='epoch')
     #logsys.add_table(prefix+'_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     logsys.add_table('multi_epoch_fourcast_rmse_unit_list', row , 0, ['fourcast']+['epoch'] + property_names)
     
@@ -2058,6 +2053,7 @@ def run_one_fourcast_iter_single_branch(model, batch, idxes, fourcastresult,data
     rmse_maps = []
     hmse_series=[]
     mse_serise= []
+    predict_time_series = []
     extra_info = {}
     time_step_1_mode=False
     batch_variance_line_pred = [] 
@@ -2141,6 +2137,7 @@ def run_one_fourcast_iter_single_branch(model, batch, idxes, fourcastresult,data
                 snap_line.append([time, get_tensor_value(ltmv_pred,snap_index, time=time),'pred'])
                 snap_line.append([time, get_tensor_value(ltmv_true,snap_index, time=time),'true'])
             
+            predict_time_series.append((j+1)*dataset.time_intervel*dataset.time_unit)
             statistic_dim = tuple(range(2,len(ltmv_true.shape))) # always assume (B,P,Z,W,H)
             batch_variance_line_pred.append(ltmv_pred.std(dim=statistic_dim).detach().cpu())
             batch_variance_line_true.append(ltmv_true.std(dim=statistic_dim).detach().cpu())
@@ -2154,7 +2151,7 @@ def run_one_fourcast_iter_single_branch(model, batch, idxes, fourcastresult,data
             hmse_value = compute_rmse(ltmv_pred[...,8:24,:], ltmv_true[...,8:24,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
             hmse_series.append(hmse_value.detach().cpu())
         #torch.cuda.empty_cache()
-
+    predict_time_series = torch.LongTensor(predict_time_series)#(fourcast_num)
     mse_serise  = torch.stack(mse_serise,1)
     accu_series = torch.stack(accu_series,1) # (B,fourcast_num,property_num)
     rmse_series = torch.stack(rmse_series,1) # (B,fourcast_num,property_num)
@@ -2223,7 +2220,7 @@ def run_one_fourcast_iter_with_history(model, start, batch, idxes, fourcastresul
         fourcastresult[idx.item()] = {'accu':accu,"rmse":rmse}
     return fourcastresult,extra_info
 
-def compute_multibranch_route(order='do_small_first' ,max_time_step = 121,divide_num=[24, 6, 3, 1]):
+def compute_multibranch_route(order='do_small_first' ,max_time_step = 150,divide_num=[24, 6, 3, 1]):
     order_table={
         'do_small_first' : [3,2,1,0],
         'do_large_first' : [0,1,2,3]
@@ -2433,8 +2430,6 @@ def run_one_fourcast_iter_multi_branch(model, batch, idxes, fourcastresult,datas
         fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],rmse_maps)]
     return fourcastresult,extra_info
 
-
-
 def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do_error_propagration_monitor=False,order = None):
     model.eval()
     logsys.eval()
@@ -2510,14 +2505,15 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do
     fourcastresult['snap_index'] = snap_index
     return fourcastresult
 
-
-
 def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_names=['500hPa_geopotential','850hPa_temperature'],return_value = None):
     prefix_pool={
         'only_backward':"time_reverse_",
         'only_forward':""
     }
     prefix = prefix_pool[test_dataset.time_reverse_flag]
+
+    if hasattr(test_dataset,'multi_branch_order') and "step" in test_dataset.multi_branch_order:
+        test_dataset.time_intervel = int(test_dataset.multi_branch_order.split("_")[-1])
 
     if isinstance(fourcastresult,str):
         # then it is the fourcastresult path
@@ -2537,12 +2533,13 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
         
 
     property_names = test_dataset.vnames
+    unit_list = test_dataset.unit_list
     if hasattr(test_dataset,"pred_channel_for_next_stamp"):
         offset = 2 if 'CK' in test_dataset.__class__.__name__ else 0
-        test_dataset.pred_channel_for_next_stamp = np.array(test_dataset.pred_channel_for_next_stamp) -offset
-        
-        property_names = [property_names[t] for t in (test_dataset.pred_channel_for_next_stamp) ] # do not allow padding constant at begining.
-        test_dataset.unit_list = test_dataset.unit_list[test_dataset.pred_channel_for_next_stamp]
+        pred_channel_for_next_stamp = np.array(test_dataset.pred_channel_for_next_stamp) - offset
+        property_names = [property_names[t] for t in (pred_channel_for_next_stamp) ] # do not allow padding constant at begining.
+        unit_list = unit_list[pred_channel_for_next_stamp]
+    
     # if 'UVTP' in args.wrapper_model:
     #     property_names = [property_names[t] for t in eval(args.wrapper_model).pred_channel_for_next_stamp]
     ## <============= ACCU ===============>
@@ -2558,8 +2555,8 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
     hmse_unit_list = None
     rmse_unit_list = None
     try:
-        if not isinstance(test_dataset.unit_list,int):
-            unit_list = torch.Tensor(test_dataset.unit_list).to(rmse_list.device)
+        if not isinstance(unit_list,int):
+            unit_list = torch.Tensor(unit_list).to(rmse_list.device)
             #print(unit_list)
             unit_num  = max(unit_list.shape)
             unit_num  = len(property_names)
@@ -2570,7 +2567,7 @@ def create_fourcast_metric_table(fourcastresult, logsys,test_dataset,collect_nam
                 unit_list = torch.repeat_interleave(unit_list,int(property_num//unit_num),dim=1)
         else:
             logsys.info(f"unit list is int, ")
-            unit_list= test_dataset.unit_list
+            unit_list= unit_list
         
         rmse_unit_list= (rmse_list*unit_list)
         
@@ -2726,8 +2723,7 @@ def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True,get_value
         logsys.info(f"load fourcastresult at {fourcastresult_path}")
         fourcastresult = torch.load(fourcastresult_path)
 
-    if args.multi_branch_order and "step" in args.multi_branch_order:
-        test_dataset.time_intervel = int(args.multi_branch_order.split("_")[-1])
+    
     if do_table:
         if not args.distributed:
             create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
@@ -2967,8 +2963,12 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
     val_dataloader    = DataLoader(val_dataset  , args.valid_batch_size, sampler=val_datasampler,   num_workers=args.num_workers, pin_memory=True, drop_last=False)
     return   train_dataset,   val_dataset, train_dataloader, val_dataloader
 
+
+fourcast_default_step ={
+    6: 20, 12: 10, 24:10
+}
 def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
-    time_step = args.time_step if "fourcast" in args.mode else 5*24//6 + args.time_step
+    time_step = args.time_step if "fourcast" in args.mode else fourcast_default_step[args.time_intervel] + args.time_step
     dataset_kargs = copy.deepcopy(args.dataset_kargs)
     dataset_kargs['time_step'] = time_step
     if dataset_kargs['time_reverse_flag'] in ['only_forward','random_forward_backward']:
@@ -2979,7 +2979,8 @@ def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
     test_dataset = dataset_type(split=split, with_idx=True,dataset_tensor=test_dataset_tensor,record_load_tensor=test_record_load,**dataset_kargs)
     if args.wrapper_model and hasattr(eval(args.wrapper_model),'pred_channel_for_next_stamp'):
         test_dataset.pred_channel_for_next_stamp = eval(args.wrapper_model).pred_channel_for_next_stamp
-    
+    if args.multi_branch_order is not None:
+        test_dataset.multi_branch_order = args.multi_branch_order
     assert hasattr(test_dataset,'clim_tensor')
     test_datasampler  = DistributedSampler(test_dataset,  shuffle=False) if args.distributed else None
     test_dataloader   = DataLoader(test_dataset, args.valid_batch_size, sampler=test_datasampler, num_workers=args.num_workers, pin_memory=False)
@@ -3188,7 +3189,7 @@ def parse_default_args(args):
         "dropout_rate":args.dropout_rate,
         "conv_simple":args.conv_simple,
         "graphflag":args.graphflag,
-    
+        "use_pos_embed":args.use_pos_embed,
         "agg_way":args.agg_way
     }
     args.model_kargs = model_kargs
@@ -3275,6 +3276,7 @@ def parser_compute_graph(compute_graph_set):
 
     
     if compute_graph_set is None:return None,None
+    if compute_graph_set =="":return None,None
     compute_graph_set_pool={
         'fwd3_D'   :([[1],[2],[3]], [[0,1,1,0.33, "quantity"], 
                          [0,2,2,0.33, "quantity"], 
@@ -3302,6 +3304,7 @@ def parser_compute_graph(compute_graph_set):
         'fwd2_D_Rog'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log"], [0,2,2,1.0, "quantity_real_log"]]),
         'fwd2_D_Rog5'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log5"], [0,2,2,1.0, "quantity_real_log5"]]),
         'fwd2_D_Rog3'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log3"], [0,2,2,1.0, "quantity_real_log3"]]),
+        'fwd2_D_Rog2'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log2"], [0,2,2,1.0, "quantity_real_log2"]]),
         'fwd2_P'   :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "quantity"]
@@ -3521,7 +3524,7 @@ def build_model(args):
     if local_rank == 0:
         param_sum, buffer_sum, all_size = getModelSize(model)
         logsys.info(f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
-    if args.pretrain_weight and args.torch_compile and not args.continue_train:
+    if args.pretrain_weight and (torch.__version__[0] == "2" and args.torch_compile) and not args.continue_train:
         only_model = ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train)
         assert only_model
         load_model(model,path=args.pretrain_weight,only_model= only_model ,loc = 'cpu',strict=bool(args.load_model_strict))
@@ -3607,11 +3610,16 @@ def build_optimizer(args,model):
     elif args.opt == 'lion':
         from lion_pytorch import Lion
         optimizer       = Lion(model.parameters(), lr=args.lr,use_triton = False)
+    elif args.opt == 'adamwbycase':
+        from custom_optimizer import AdamWByCase
+        optimizer = AdamWByCase([{'params': [p for name, p in model.named_parameters() if 'bias' in name ],    'type':'tensor_adding'},
+                                 {'params': [p for name, p in model.named_parameters() if 'bias' not in name ],'type':'tensor_contraction'}\
+                          ], lr=args.lr, betas=(0.9, 0.95))
     elif args.opt == 'tiger':
         from custom_optimizer import Tiger
-        optimizer = Tiger([{'params': [p for name, p in model.named_parameters() if 'bias' in name ],'type':'tensor_adding'},
-                   {'params': [p for name, p in model.named_parameters() if 'bias' not in name ],'type':'tensor_contraction'}\
-                  ],lr =args.lr)
+        optimizer = Tiger([{'params': [p for name, p in model.named_parameters() if 'bias' in name ],    'type':'tensor_adding'},
+                           {'params': [p for name, p in model.named_parameters() if 'bias' not in name ],'type':'tensor_contraction'}\
+                          ],lr =args.lr)
     else:
         raise NotImplementedError
     GDMod_type  = args.GDMod_type
@@ -3759,11 +3767,11 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     if args.mode=='fourcast':
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
         run_fourcast(args, model,logsys,test_dataloader)
-        return 1
+        
     elif args.mode=='fourcast_for_snap_nodal_loss':
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
         run_nodalosssnap(args, model,logsys,test_dataloader)
-        return 1
+        
     else:
 
         train_dataset, val_dataset, train_dataloader,val_dataloader = get_train_and_valid_dataset(args,
@@ -3783,7 +3791,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
         for epoch in master_bar:
             
             if epoch < start_epoch:continue
-            if (args.fourcast_during_train and epoch==0 and args.pretrain_weight): # do fourcast once at begining
+            if (args.fourcast_during_train and epoch==0 and (args.pretrain_weight or args.force_do_first_fourcast) ): # do fourcast once at begining
                 Z500_now, test_dataloader = run_fourcast_during_training(args, epoch-1, logsys, model, test_dataloader)  # will
                 if Z500_now > 0:logsys.record('Z500', Z500_now, epoch-1, epoch_flag='epoch') #<---only rank 0 tensor create Z500
             if args.valid_every_epoch and (not args.more_epoch_train) and epoch == 0 and not args.skip_first_valid and args.mode != 'pretrain':
@@ -3819,8 +3827,8 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                     #last_best_path= now_best_path
                     logsys.info(f"The best accu is {val_loss}", show=False)
                 if Z500_now < Z500_best:
-                    min_Z500 = Z500_now
-                    if epoch > args.epochs//10:
+                    Z500_best = Z500_now
+                    if epoch >= 0: #args.epochs//10:
                         logsys.info(f"saving best Z500 model ....",show=False)
                         save_model(model, path=now_Z500_path, only_model=True)
                         logsys.info(f"done;",show=False)
@@ -3843,6 +3851,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             if not isinstance(args.do_final_fourcast,str):args.do_final_fourcast = 'backbone.best.pt'
             now_best_path = SAVE_PATH / args.do_final_fourcast ##<--this is not safe, but fine.
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
+            args.mode = 'fourcast'
             start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=now_best_path, only_model=True,loc = 'cuda:{}'.format(args.gpu))
             run_fourcast(args, model,logsys)
             

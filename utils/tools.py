@@ -20,38 +20,61 @@ def getModelSize(model):
     return param_sum, buffer_sum, all_size
 
 
-def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=None, only_model=False,loc = 'cuda:0',strict=True):
+def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=None, only_model=False, loc='cuda:0', strict=True):
 
     start_epoch, start_step = 0, 0
     min_loss = np.inf
-    if os.path.exists(path) and path != "":
+    if path != "":
+        assert os.path.exists(path) 
         print(f"loading model from {path}...........")
         ckpt = torch.load(path, map_location='cpu')
 
         if only_model:
-            model_state_dict = ckpt['model']
+
+            model_state_dict = ckpt['model'] if 'model' in ckpt else ckpt
             if "loragrashcastdglsym" in model_state_dict:
                 model_state_dict = model_state_dict["loragrashcastdglsym"]
             if "lgnet" in model_state_dict:
                 model_state_dict = model_state_dict["lgnet"]
-
-            model_keys = list(model.state_dict().keys())
-            new_state_dict = {}
-            for key,val in model_state_dict.items():
-                key = key.replace("module.","").replace("_orig_mod.","")
-                if "backbone.net." in key and np.all(['backbone.net.' not in k for k in model_keys]):
-                    key  = key.replace("backbone.net.","net.")
-                if "backbone.net." not in key and np.any(['backbone.net.' in k for k in model_keys]):
-                    key = key.replace("net.","backbone.net.")
-                new_state_dict[key] = val
-            model_state_dict = new_state_dict
             
-            if 'max_logvar' in model_state_dict:del model_state_dict['max_logvar']
-            if 'min_logvar' in model_state_dict:del model_state_dict['min_logvar']
-            model.load_state_dict(model_state_dict,strict=strict)
+            old_state_dict = model.state_dict()
+            model_keys = list(old_state_dict.keys())
+            new_state_dict = {}
+            for key, val in model_state_dict.items():
+                if '.expand' in key or '.repeat' in key or '.scale' in key:
+                    continue
+                if "module." in key and np.all(['module.' not in k for k in model_keys]):
+                    key = key.replace("module.", "")
+                if "_orig_mod." in key and np.all(['_orig_mod.' not in k for k in model_keys]):
+                    key = key.replace("_orig_mod.", "")
+                if "backbone.net." in key and np.all(['backbone.net.' not in k for k in model_keys]):
+                    key = key.replace("backbone.net.", "net.")  
+                if "backbone.backbone.net." in key and np.all(['backbone.backbone.net.' not in k for k in model_keys]):
+                    key = key.replace(
+                        "backbone.backbone.net.", "backbone.net.")
+                if "backbone.net." not in key and np.any(['backbone.net.' in k for k in model_keys]):
+                    key = key.replace("net.", "backbone.net.")
+                if "backbone.backbone.net" not in key and np.any(['backbone.backbone.net.' in k for k in model_keys]):
+                    key = key.replace(
+                        "backbone.net.", "backbone.backbone.net.")
+
+                new_state_dict[key] = val
+
+            # for key in model_keys:
+            #     if '.expand' in key and key not in new_state_dict:new_state_dict[key] = old_state_dict[key]
+            #     if '.repeat' in key and key not in new_state_dict:new_state_dict[key] = old_state_dict[key]
+            #     if '.scale'  in key and key not in new_state_dict:new_state_dict[key] = old_state_dict[key]
+            model_state_dict = new_state_dict
+
+            if 'max_logvar' in model_state_dict:
+                del model_state_dict['max_logvar']
+            if 'min_logvar' in model_state_dict:
+                del model_state_dict['min_logvar']
+            model.load_state_dict(model_state_dict, strict=strict)
             print("loading model weight success...........")
         else:
-            model.load_state_dict(ckpt['model'])
+            model_state_dict = ckpt['model'] if 'model' in ckpt else ckpt
+            model.load_state_dict(model_state_dict)
             print("loading model weight success...........")
             optimizer.load_state_dict(ckpt['optimizer'])
             print("loading optimizer weight success...........")
@@ -60,7 +83,7 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
                 print("loading lr_scheduler weight success...........")
             else:
                 print("loading lr_scheduler weight fail...........")
-            
+
             loss_scaler.load_state_dict(ckpt['loss_scaler'])
             print("loading loss_scaler weight success...........")
             start_epoch = ckpt["epoch"]
