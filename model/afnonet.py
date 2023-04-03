@@ -398,7 +398,8 @@ class AFNONet(BaseModel):
         x = torch.reshape(x, [-1, self.embed_dim, *self.final_shape])
         return x
 
-    def set_step(self,step,epoch):
+    def set_step(self,**kargs):
+        return
         if len(self.reduce_Field_coef)>1:
             if step%2 or step==0:
                 for p in self.parameters():p.requires_grad=True
