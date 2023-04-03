@@ -5,9 +5,9 @@ import torch
 # 
 class BaseModel(nn.Module):
 
-    def set_epoch(self,epoch,epoch_total,**kargs):
+    def set_epoch(self,**kargs):
         pass
-    def set_step(self,step,epoch,**kargs):
+    def set_step(self,**kargs):
         pass
     def get_w_resolution_pad(self,shape):
         w_now   = shape[-2]
