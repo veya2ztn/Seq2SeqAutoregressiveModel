@@ -973,6 +973,14 @@ def run_one_iter_normal(model, batch, criterion, status, gpu, dataset):
         pred_step+=1
         
         if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall and ((not model.consistancy_eval) or (not model.training)): 
+            # the consistancy_alpha work as follow
+            # X0 x1   y2    z3
+            #    
+            #    X1   x2    y3
+            #       (100)  (010)
+            #         X2    x3
+            #              (001)
+            #               X3
             hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list)
             if hasattr(model,"vertical_constrain") and model.vertical_constrain and len(hidden_fourcast_list)>=2:
                 all_hidden_fourcast_list = [ltmv_pred]+hidden_fourcast_list
