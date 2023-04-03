@@ -780,6 +780,8 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
                     error   = torch.mean((tensor1-tensor2)**2)
                 elif _type == 'quantity_log':
                     error   = ((tensor1-tensor2)**2+1).log().mean()
+                elif _type == 'quantity_mean_log':
+                    error   = ((tensor1-tensor2)**2).mean().log()
                 elif _type == 'quantity_real_log':
                     error   = ((tensor1-tensor2)**2+1e-2).log().mean()# <---face fatal problem in half precesion due to too small value 
                 elif _type == 'quantity_real_log5':
@@ -3214,8 +3216,7 @@ def create_logsys(args,save_config=True):
     logsys   = LoggingSystem(local_rank==0 or (not args.distributed),args.SAVE_PATH,seed=args.seed,
                              use_wandb=args.use_wandb,recorder_list=recorder_list,flag=args.mode,
                              disable_progress_bar=args.disable_progress_bar)
-    hparam_dict={'patch_size':args.patch_size , 'lr':args.lr, 'batch_size':args.batch_size,
-                                                   'model':args.model_type}
+    hparam_dict={'patch_size':args.patch_size , 'lr':args.lr, 'batch_size':args.batch_size,'model':args.model_type}
     metric_dict={'best_loss':None}
     dirname = SAVE_PATH
     dirname,name     = os.path.split(dirname)
@@ -3236,7 +3237,7 @@ def create_logsys(args,save_config=True):
                                 job_type= job_type,
                                 name    = name,
                                 wandb_id =wandb_id
-                               )
+                               ) 
     # fix the seed for reproducibility
     # torch.manual_seed(args.seed)
     # np.random.seed(args.seed)
@@ -3281,6 +3282,8 @@ def parser_compute_graph(compute_graph_set):
         'fwd3_D'   :([[1],[2],[3]], [[0,1,1,0.33, "quantity"], 
                          [0,2,2,0.33, "quantity"], 
                          [0,3,3,0.33, "quantity"]]),
+        'fwd3_D_Rog5': ([[1], [2], [3]], [[0, 1, 1, 1.0, "quantity_real_log5"], [0, 2, 2, 1.0, "quantity_real_log5"], [0, 3, 3, 1.0, "quantity_real_log5"]]),
+        'fwd3_D_Mog': ([[1], [2], [3]], [[0, 1, 1, 1.0, "quantity_mean_log"], [0, 2, 2, 1.0, "quantity_mean_log"], [0, 3, 3, 1.0, "quantity_mean_log"]]),
         'fwd2_TA'  :([[1,2,3],[2],[3]], [[0,1,1, 0.25, "quantity"], 
                                          [0,2,2, 0.25, "quantity"],
                                          [1,2,2, 0.25, "alpha"],
@@ -3305,6 +3308,8 @@ def parser_compute_graph(compute_graph_set):
         'fwd2_D_Rog5'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log5"], [0,2,2,1.0, "quantity_real_log5"]]),
         'fwd2_D_Rog3'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log3"], [0,2,2,1.0, "quantity_real_log3"]]),
         'fwd2_D_Rog2'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log2"], [0,2,2,1.0, "quantity_real_log2"]]),
+        'fwd2_D_Mog'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_mean_log"], [0,2,2,1.0, "quantity_mean_log"]]),
+        'fwd1_D_Mog'   :(  [[1]],   [[0,1,1,1.0, "quantity_mean_log"]]),
         'fwd2_P'   :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "quantity"]
