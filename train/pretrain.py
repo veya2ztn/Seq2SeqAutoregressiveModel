@@ -840,67 +840,90 @@ def esitimate_longterm_error(a0,a1, n =10):
     return Bn
 
 
-def once_forward_error_evaluation(model,now_level_batch):
+def once_forward_error_evaluation(model,now_level_batch,snap_mode = False):
     target_level_batch = now_level_batch[:,1:]
+    P,W,H = target_level_batch[0,0].shape
     error_record  = []
     real_res_error_record = []
     appx_res_error_record = []
     real_appx_delta_record  = []
     appx_res_angle_record = []
     real_res_angle_record = []
+
+    if snap_mode:
+        snap_index_w = torch.LongTensor(np.array([18, 17,  1, 15,  6, 27]))
+        snap_index_h = torch.LongTensor(np.array([38, 41, 17, 14, 27, 40]))
+        snap_index_p = torch.LongTensor(np.array([7, 21, 35, 49, 38]))
+        error_record_snap = []
+        real_res_error_record_snap=[]
     real_res_error = appx_res_error = real_appx_delta = first_level_batch = None
     ltmv_preds =  []
     while now_level_batch.shape[1]>1:
-
         B,L = now_level_batch.shape[:2]
         tshp= now_level_batch.shape[2:]
         next_level_batch         = model(now_level_batch[:,:-1].flatten(0,1)).reshape(B,L-1,*tshp)
-
         next_level_error_tensor  = target_level_batch[:,-(L-1):] - next_level_batch 
         next_level_error         = get_tensor_norm(next_level_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P)
-        
+        ltmv_preds.append(next_level_batch[:, 0:1])
+        error_record.append(next_level_error)
+
+        if snap_mode:
+            next_level_error_snap = (next_level_error_tensor[:, :, snap_index_p][:,:,:,snap_index_w][:,:,:,:, snap_index_h]**2).detach().cpu()
+            error_record_snap.append(next_level_error_snap)
         if first_level_batch is None:
             first_level_batch        = next_level_batch
             first_level_error_tensor = next_level_error_tensor
         else:
             real_res_error_tensor = first_level_batch[:,-(L-1):] - next_level_batch
             real_res_error        = get_tensor_norm(real_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
+            if snap_mode:
+                real_res_error_snap = (real_res_error_tensor[:, :, snap_index_p][:, :, :, snap_index_w][:, :, :, :, snap_index_h]**2).detach().cpu()
+                real_res_error_record_snap.append(real_res_error_snap)
             base_error            = first_level_error_tensor[:,-(L-1):]
             real_res_angle        = torch.einsum('btpwh,btpwh->bt',real_res_error_tensor, base_error)/(torch.sum(real_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
-            #real_res_error_alpha  = real_res_error/error_record[-1][:,-(L-1):] #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
-            real_appx_delta       = get_tensor_norm(real_res_error_tensor - appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
             real_res_error_record.append(real_res_error)
-            real_appx_delta_record.append(real_appx_delta)
+            #real_res_error_alpha  = real_res_error/error_record[-1][:,-(L-1):] #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
+            #real_appx_delta       = get_tensor_norm(real_res_error_tensor - appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
+            #real_appx_delta_record.append(real_appx_delta)
             real_res_angle_record.append(real_res_angle)
-        ltmv_preds.append(next_level_batch[:, 0:1])
-        error_record.append(next_level_error)
-        if L>2:
-            tangent_x             = (target_level_batch[:,-(L-2):] + next_level_batch[:,-(L-2):])/2
-            appx_res_error_tensor = calculate_next_level_error_batch(model, tangent_x.flatten(0,1), next_level_error_tensor[:,-(L-2):].flatten(0,1)).reshape(B,L-2,*tshp)
-            base_error = first_level_error_tensor[:,-(L-2):]
-            appx_res_angle        = torch.einsum('btpwh,btpwh->bt',appx_res_error_tensor, base_error)/(torch.sum(appx_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
-            appx_res_error        = get_tensor_norm(appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
-            appx_res_error_record.append(appx_res_error)
-            appx_res_angle_record.append(appx_res_angle)
-            #appx_res_error_alpha  = appx_res_error/error_record[-1][:,-(L-1):]  #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
+        
+            
+            
+        # if L>2:
+        #     tangent_x             = (target_level_batch[:,-(L-2):] + next_level_batch[:,-(L-2):])/2
+        #     appx_res_error_tensor = calculate_next_level_error_batch(model, tangent_x.flatten(0,1), next_level_error_tensor[:,-(L-2):].flatten(0,1)).reshape(B,L-2,*tshp)
+        #     base_error = first_level_error_tensor[:,-(L-2):]
+        #     appx_res_angle        = torch.einsum('btpwh,btpwh->bt',appx_res_error_tensor, base_error)/(torch.sum(appx_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
+        #     appx_res_error        = get_tensor_norm(appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
+        #     appx_res_error_record.append(appx_res_error)
+        #     appx_res_angle_record.append(appx_res_angle)
+        #     #appx_res_error_alpha  = appx_res_error/error_record[-1][:,-(L-1):]  #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
         now_level_batch = next_level_batch
     error_record          = torch.cat(error_record,          1).detach().cpu()
     real_res_error_record = torch.cat(real_res_error_record, 1).detach().cpu()
-    real_appx_delta_record= torch.cat(real_appx_delta_record,1).detach().cpu()
+    #real_appx_delta_record= torch.cat(real_appx_delta_record,1).detach().cpu()
     real_res_angle_record = torch.cat(real_res_angle_record, 1).detach().cpu()
-    appx_res_error_record = torch.cat(appx_res_error_record, 1).detach().cpu()
-    appx_res_angle_record = torch.cat(appx_res_angle_record, 1).detach().cpu()
-
+    # appx_res_error_record = torch.cat(appx_res_error_record, 1).detach().cpu()
+    # appx_res_angle_record = torch.cat(appx_res_angle_record, 1).detach().cpu()
+    if snap_mode:
+        error_record_snap = torch.cat(error_record_snap, 1)
+        real_res_error_record_snap = torch.cat(real_res_error_record_snap, 1)
     ltmv_preds = torch.cat(ltmv_preds,1)
     ltmv_trues = target_level_batch
     error_information={
         "error_record"          :error_record,
         "real_res_error_record" :real_res_error_record,
-        "real_appx_delta_record":real_appx_delta_record,
+        #"real_appx_delta_record":real_appx_delta_record,
         "real_res_angle_record" :real_res_angle_record,
-        "appx_res_error_record" :appx_res_error_record,
-        "appx_res_angle_record" :appx_res_angle_record,
+        # "appx_res_error_record" :appx_res_error_record,
+        # "appx_res_angle_record" :appx_res_angle_record,
     }
+    if snap_mode:
+        error_information['error_record_snap'] = error_record_snap
+        error_information['real_res_error_record_snap'] = real_res_error_record_snap
+        error_information['snap_index_w'] = snap_index_w
+        error_information['snap_index_h'] = snap_index_h
+        error_information['snap_index_p'] = snap_index_p
     return ltmv_preds, ltmv_trues, error_information
 
 def run_one_iter(model, batch, criterion, status, gpu, dataset):
@@ -3318,6 +3341,7 @@ def parser_compute_graph(compute_graph_set):
         'fwd2_D_Rog2'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log2"], [0,2,2,1.0, "quantity_real_log2"]]),
         'fwd2_D_Mog'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_mean_log"], [0,2,2,1.0, "quantity_mean_log"]]),
         'fwd1_D_Mog'   :(  [[1]],   [[0,1,1,1.0, "quantity_mean_log"]]),
+        'fwd1_D_Rog5'   :(  [[1]],   [[0,1,1,1.0, "quantity_real_log5"]]),
         'fwd2_P'   :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "quantity"]
