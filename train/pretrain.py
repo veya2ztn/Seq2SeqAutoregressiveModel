@@ -2964,7 +2964,7 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
     val_dataset   = dataset_type(split="valid" if not args.debug else 'test',dataset_tensor=valid_dataset_tensor,
                                   record_load_tensor=valid_record_load,**args.dataset_kargs)
     
-    train_datasampler = DistributedSampler(train_dataset, shuffle=args.do_train_shuffle) if args.distributed else None
+    train_datasampler = DistributedSampler(train_dataset, shuffle=args.do_train_shuffle, seed=args.seed) if args.distributed else None
     val_datasampler   = DistributedSampler(val_dataset,   shuffle=False) if args.distributed else None
     g = torch.Generator()
     g.manual_seed(args.seed)
@@ -3215,6 +3215,7 @@ def parse_default_args(args):
     if args.output_channel<=13:args.snap_index=None
     if not hasattr(args,'ngpus_per_node'):args.ngpus_per_node=1
     args.real_batch_size = args.batch_size * args.accumulation_steps * args.ngpus_per_node 
+    args.compute_graph = parser_compute_graph(args.compute_graph_set)
     return args
 
 def create_logsys(args,save_config=True):
@@ -3579,12 +3580,12 @@ def build_model(args):
     model.mean_path_length = torch.zeros(1)
     model.wrapper_type = args.wrapper_model
     model.model_type  = args.model_type
-    compute_graph  = parser_compute_graph(args.compute_graph_set)
-    if len(compute_graph)==2:
-        model.activate_stamps,model.activate_error_coef = compute_graph
+    
+    if len(args.compute_graph)==2:
+        model.activate_stamps,model.activate_error_coef = args.compute_graph
         model.directly_esitimate_longterm_error=0
     else:
-        model.activate_stamps,model.activate_error_coef,model.directly_esitimate_longterm_error = compute_graph
+        model.activate_stamps,model.activate_error_coef,model.directly_esitimate_longterm_error = args.compute_graph
         model.err_record = {}
         model.c1 = model.c2 = model.c3 = 1
     model.skip_constant_2D70N = args.skip_constant_2D70N
@@ -3812,6 +3813,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
                 val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             fast_set_model_epoch(model,epoch=epoch,epoch_total=args.epochs,eval_mode=False)
             logsys.record('learning rate',optimizer.param_groups[0]['lr'],epoch, epoch_flag='epoch')
+            if args.distributed: train_dataloader.sampler.set_epoch(epoch) # this shuffle train split each epoch. Otherwise, it keep same order.
             train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
             freeze_learning_rate = (args.scheduler_min_lr and optimizer.param_groups[0]['lr'] < args.scheduler_min_lr)  and (args.scheduler_inital_epochs and epoch > args.scheduler_inital_epochs)
             if (not args.more_epoch_train) and (lr_scheduler is not None) and not freeze_learning_rate:lr_scheduler.step(epoch)
