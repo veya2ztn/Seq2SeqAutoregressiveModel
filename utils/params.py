@@ -184,7 +184,7 @@ def get_args_parser():
     parser.add_argument('--decay-rate', '--dr', type=float, default=0.1, metavar='RATE', help='LR decay rate (default: 0.1)')
     parser.add_argument('--scheduler_inital_epochs', type=int, default=None)
     parser.add_argument('--scheduler_min_lr', type=float, default=None)
-    parser.add_argument('--data_epoch_shuffle', type=0, default=int)
+    parser.add_argument('--data_epoch_shuffle', type=int, default=0)
     
 
 
