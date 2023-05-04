@@ -2998,7 +2998,7 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
 
 
 fourcast_default_step ={
-    6: 20, 12: 10, 24:10
+    1:20,6: 20, 12: 10, 24:10
 }
 def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
     time_step = args.time_step if "fourcast" in args.mode else fourcast_default_step[args.time_intervel] + args.time_step
