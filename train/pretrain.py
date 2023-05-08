@@ -3780,11 +3780,12 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
     logsys.info(f"loading weight from {args.pretrain_weight}")
     # we put pretrain loading here due to we need load optimizer
     if args.torch_compile and args.pretrain_weight and not args.continue_train:
-        start_epoch, start_step, min_loss = 0, 0, 0
+        start_epoch, start_step = 0, 0
         print(f"remind in torch compile mode, any pretrain model should be load before torch.compile and DistributedDataParallel")
     else:
         start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
                         only_model= ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train) ,loc = 'cuda:{}'.format(args.gpu),strict=bool(args.load_model_strict))
+    if not args.continue_train:min_loss = np.inf
     start_epoch = start_epoch if args.continue_train else 0
     logsys.info(f"======> start from epoch:{start_epoch:3d}/{args.epochs:3d}")
     if args.more_epoch_train:
@@ -3892,6 +3893,7 @@ def main_worker(local_rank, ngpus_per_node, args,result_tensor=None,
             now_best_path = SAVE_PATH / args.do_final_fourcast ##<--this is not safe, but fine.
             logsys.info(f"we finish training, then start test on the best checkpoint {now_best_path}")
             args.mode = 'fourcast'
+            args.time_step = 22
             start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=now_best_path, only_model=True,loc = 'cuda:{}'.format(args.gpu))
             run_fourcast(args, model,logsys)
             
