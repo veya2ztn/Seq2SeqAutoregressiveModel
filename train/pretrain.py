@@ -3239,6 +3239,7 @@ def parse_default_args(args):
     if not hasattr(args,'ngpus_per_node'):args.ngpus_per_node=1
     args.real_batch_size = args.batch_size * args.accumulation_steps * args.ngpus_per_node 
     args.compute_graph = parser_compute_graph(args.compute_graph_set)
+    args.torch_compile = (torch.__version__[0]=="2" and args.torch_compile)
     return args
 
 def create_logsys(args,save_config=True):
@@ -3562,6 +3563,8 @@ def build_model(args):
     if local_rank == 0:
         param_sum, buffer_sum, all_size = getModelSize(model)
         logsys.info(f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
+    
+    
     if args.pretrain_weight and (torch.__version__[0] == "2" and args.torch_compile) and not args.continue_train:
         only_model = ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train)
         assert only_model
