@@ -95,7 +95,7 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
     return start_epoch, start_step, min_loss
 
 
-def save_model(model, epoch=0, step=0, optimizer=None, lr_scheduler=None, loss_scaler=None, min_loss=0, path=None, only_model=False):
+def save_model(model, epoch=0, step=0, optimizer=None, lr_scheduler=None, loss_scaler=None, min_loss=np.inf, path=None, only_model=False):
 
     if only_model:
         states = {
