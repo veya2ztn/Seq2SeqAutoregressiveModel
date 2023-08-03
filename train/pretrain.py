@@ -130,9 +130,14 @@ def compute_accu(ltmsv_pred, ltmsv_true):
                        )
     return torch.clamp(fenzi/(fenmu+1e-10),0,10)
 
-def compute_rmse(pred, true, return_map_also=False):
+from torchvision.transforms import GaussianBlur
+def compute_rmse(pred, true, return_map_also=False,smooth_sigma_1=0.1,smooth_sigma_2=2,smooth_times=0):
+
     if len(pred.shape)==5:pred = pred.flatten(1,2)
     if len(true.shape)==5:true = true.flatten(1,2)
+    if smooth_times>0: smother = GaussianBlur(3, sigma=(smooth_sigma_1, smooth_sigma_2))
+    for i in range(smooth_times):
+        pred = smother(pred)
     pred = pred.permute(0,2,3,1)
     true = true.permute(0,2,3,1)
     latweight = generate_latweight(pred.shape[1],pred.device)
@@ -780,8 +785,11 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
                     error   = torch.mean((tensor1-tensor2)**2)
                 elif _type == 'quantity_log':
                     error   = ((tensor1-tensor2)**2+1).log().mean()
-                elif _type == 'quantity_mean_log':
+                elif _type in ['quantity_mean_log','LMSE']:
                     error   = ((tensor1-tensor2)**2).mean().log()
+                elif _type in ['quantity_batch_mean_log','PLMSE']:
+                    indexes = tuple(np.arange(len(tensor1.shape))[1:])
+                    error   = ((tensor1-tensor2)**2).mean(indexes).log().mean()
                 elif _type == 'quantity_real_log':
                     error   = ((tensor1-tensor2)**2+1e-2).log().mean()# <---face fatal problem in half precesion due to too small value 
                 elif _type == 'quantity_real_log5':
@@ -2080,7 +2088,7 @@ def run_one_fourcast_iter_single_branch(model, batch, idxes, fourcastresult,data
                     save_prediction_first_step=None,save_prediction_final_step=None,
                     snap_index=None,do_error_propagration_monitor=False,**kargs):
     
-        
+    smooth_karg = kargs.get('smooth_karg')
     accu_series=[]
     rmse_series=[]
     rmse_maps = []
@@ -2176,12 +2184,12 @@ def run_one_fourcast_iter_single_branch(model, batch, idxes, fourcastresult,data
             batch_variance_line_true.append(ltmv_true.std(dim=statistic_dim).detach().cpu())
             #accu_series.append(compute_accu(ltmv_pred, ltmv_true ).detach().cpu())
             accu_series.append(compute_accu(ltmv_pred - clim.to(ltmv_pred.device), ltmv_true - clim.to(ltmv_pred.device)).detach().cpu())
-            rmse_v,rmse_map = compute_rmse(ltmv_pred , ltmv_true, return_map_also=True)
+            rmse_v,rmse_map = compute_rmse(ltmv_pred , ltmv_true, return_map_also=True,**smooth_karg)
             mse = ((ltmv_pred - ltmv_true)**2).mean(dim=(-1,-2))
             mse_serise.append(mse.detach().cpu())
             rmse_series.append(rmse_v.detach().cpu()) #(B,70)
             rmse_maps.append(rmse_map.detach().cpu()) #(70,32,64)
-            hmse_value = compute_rmse(ltmv_pred[...,8:24,:], ltmv_true[...,8:24,:]) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
+            hmse_value = compute_rmse(ltmv_pred[...,8:24,:], ltmv_true[...,8:24,:],**smooth_karg) if ltmv_pred.shape[-2] == 32 else -torch.ones_like(rmse_v)
             hmse_series.append(hmse_value.detach().cpu())
         #torch.cuda.empty_cache()
     predict_time_series = torch.LongTensor(predict_time_series)#(fourcast_num)
@@ -2463,7 +2471,7 @@ def run_one_fourcast_iter_multi_branch(model, batch, idxes, fourcastresult,datas
         fourcastresult['global_rmse_map'] = [a+b for a,b in zip(fourcastresult['global_rmse_map'],rmse_maps)]
     return fourcastresult,extra_info
 
-def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do_error_propagration_monitor=False,order = None):
+def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do_error_propagration_monitor=False,order = None,smooth_karg={}):
     model.eval()
     logsys.eval()
     status     = 'test'
@@ -2503,7 +2511,7 @@ def fourcast_step(data_loader, model,logsys,random_repeat = 0,snap_index=None,do
                                          save_prediction_first_step=save_prediction_first_step,
                                          save_prediction_final_step=save_prediction_final_step,
                                          snap_index=the_snap_index_in_iter,do_error_propagration_monitor=do_error_propagration_monitor,
-                                         order = order)
+                                         order = order,smooth_karg=smooth_karg)
                 #print(data_loader.dataset.datatimelist_pool[data_loader.dataset.split][0])
                 #property_names = data_loader.dataset.vnames
                 #unit_list = data_loader.dataset.unit_list[2:].squeeze()
@@ -2728,7 +2736,7 @@ def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True,get_value
         test_dataset,  test_dataloader = get_test_dataset(args)
 
     test_dataset = test_dataloader.dataset
-    
+    smooth_karg={'smooth_sigma_1':args.smooth_sigma_1,'smooth_sigma_2':args.smooth_sigma_2,'smooth_times':args.smooth_times}
     order = None
     if args.multi_branch_order is not None:
         divide_num  = list(args.multibranch_select)
@@ -2749,7 +2757,7 @@ def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True,get_value
                                     random_repeat = args.fourcast_randn_initial,
                                     snap_index=args.snap_index,
                                     do_error_propagration_monitor=args.do_error_propagration_monitor,
-                                    order = order )
+                                    order = order,smooth_karg=smooth_karg)
         torch.save(fourcastresult,fourcastresult_path)
         logsys.info(f"save fourcastresult at {fourcastresult_path}")
     else:
@@ -3744,7 +3752,7 @@ def run_fourcast_during_training(args,epoch,logsys,model,test_dataloader):
         pass
     logsys.ckpt_root = new_ckpt
     use_amp = model.use_amp
-    model.use_amp= True
+    #model.use_amp= True ### this should not be changed since some case there has nan
     Z500_now = run_fourcast(args, model,logsys,test_dataloader,do_table=False,get_value=1)
     model.use_amp=use_amp 
     logsys.ckpt_root = origin_ckpt

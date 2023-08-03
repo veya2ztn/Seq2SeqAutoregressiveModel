@@ -17,3 +17,6 @@ wandb*
 sftp*
 *.json
 exp_hub
+run_script/run*
+test*
+*.log

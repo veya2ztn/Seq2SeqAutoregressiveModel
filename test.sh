@@ -1,7 +1,6 @@
-export CUDA_VISIBLE_DEVICES=4,5,6,7;export THEPATH=checkpoints/WeathBench7066/AFNONet/ts_2_pretrain-2D706N_per_1_step/01_06_18_50-seed_73001;\
-python train/pretrain.py -c $THEPATH/config.json --batch_size 16 --time_step 3 --mode finetune --pretrain_weight $THEPATH/backbone.best.pt \
---compute_graph_set fwd2_D_Mog --do_iter_log 2 --save_warm_up 2 --accumulation_steps 1 --use_wandb wandb_runtime
-python train/pretrain.py -c $THEPATH/config.json --batch_size 16 --time_step 4 --mode finetune --pretrain_weight $THEPATH/backbone.best.pt \
---compute_graph_set fwd3_D_Mog --do_iter_log 2 --save_warm_up 2 --accumulation_steps 1 --use_wandb wandb_runtime
-python train/pretrain.py -c $THEPATH/config.json --batch_size 16 --time_step 4 --mode finetune --pretrain_weight $THEPATH/backbone.best.pt \
---compute_graph_set fwd3_D_Rog5 --do_iter_log 2 --save_warm_up 2 --accumulation_steps 1 --use_wandb wandb_runtime
+#!/bin/sh
+#SBATCH -J createmultitb     # 作业在调度系统中的作业名为myFirstJob;
+#SBATCH -o log/%j-createmultitb.out  # 脚本执行的输出将被保存在20210827-%j.out文件下，%j表示作业号;
+#SBATCH -e log/%j-createmultitb.out  # 脚本执行的输出将被保存在20210827-%j.out文件下，%j表示作业号;
+
+python mytool.py --paths checkpoints/WeathBench32x64/ --level 3 --mode createmultitb

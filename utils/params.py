@@ -185,9 +185,9 @@ def get_args_parser():
     parser.add_argument('--scheduler_inital_epochs', type=int, default=None)
     parser.add_argument('--scheduler_min_lr', type=float, default=None)
     parser.add_argument('--data_epoch_shuffle', type=int, default=0)
-    
-
-
+    parser.add_argument('--smooth_sigma_1', type=float, default=0.1)
+    parser.add_argument('--smooth_sigma_2', type=float, default=2)
+    parser.add_argument('--smooth_times', type=int, default=0)
     # Augmentation parameters
     # parser.add_argument('--color-jitter', type=float, default=0.4, metavar='PCT', help='Color jitter factor (default: 0.4)')
     # parser.add_argument('--aa', type=str, default='rand-m9-mstd0.5-inc1', metavar='NAME', help='Use AutoAugment policy. "v0" or "original". "(default: rand-m9-mstd0.5-inc1)'),
