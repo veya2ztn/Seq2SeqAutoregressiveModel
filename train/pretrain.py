@@ -1,5 +1,5 @@
 
-import optuna
+#import optuna
 import os, sys,time,json,copy
 sys.path.append(os.getcwd())
 from gpu_use_setting import *
@@ -1764,13 +1764,13 @@ class NanDetect:
                     bad_weight_name.append(name)
             if bad_check:
                 logsys.info(f"the value is nan in weight:{bad_weight_name}")
-                raise optuna.TrialPruned()
+                raise NotImplementedError #optuna.TrialPruned()
             else:
                 nan_count+=1
                 if nan_count >5 and model.use_amp:downgrad_use_amp += 1
                 if nan_count>10:
                     logsys.info("too many nan happened")
-                    raise optuna.TrialPruned()
+                    raise NotImplementedError# optuna.TrialPruned()
                 logsys.info(f"detect nan, now at {nan_count}/10 warning level, pass....")   
                 skip += 1
             self.good_loss_count = 0
@@ -3347,9 +3347,11 @@ def parser_compute_graph(compute_graph_set):
         'fwd2_D_Log'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_log"], [0,2,2,1.0, "quantity_log"]]),
         'fwd2_D_Rog'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log"], [0,2,2,1.0, "quantity_real_log"]]),
         'fwd2_D_Rog5'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log5"], [0,2,2,1.0, "quantity_real_log5"]]),
+        
         'fwd2_D_Rog3'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log3"], [0,2,2,1.0, "quantity_real_log3"]]),
         'fwd2_D_Rog2'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_real_log2"], [0,2,2,1.0, "quantity_real_log2"]]),
         'fwd2_D_Mog'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_mean_log"], [0,2,2,1.0, "quantity_mean_log"]]),
+        'fwd2_D_Pog'   :(  [[1],[2]],   [[0,1,1,1.0, "quantity_batch_mean_log"], [0,2,2,1.0, "quantity_batch_mean_log"]]),
         'fwd1_D_Mog'   :(  [[1]],   [[0,1,1,1.0, "quantity_mean_log"]]),
         'fwd1_D_Rog5'   :(  [[1]],   [[0,1,1,1.0, "quantity_real_log5"]]),
         'fwd2_P'   :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
@@ -3455,6 +3457,7 @@ def parser_compute_graph(compute_graph_set):
                     [1,3,3, 1, "quantity_log"]
                               ]),
         'fwd3_D_Log'   :(  [[1],[2],[3]],   [[0,1,1,1.0, "quantity_log"], [0,2,2,1.0, "quantity_log"], [0,3,3,1.0, "quantity_log"]]),
+        'fwd3_D_Pog'   :(  [[1],[2],[3]],   [[0,1,1,1.0, "quantity_batch_mean_log"], [0,2,2,1.0, "quantity_batch_mean_log"], [0,3,3,1.0, "quantity_batch_mean_log"]]),
         'fwd2_PA'  :([[1,2],[2]], [[0,1,1, 1.0, "quantity"], 
                                    [0,2,2, 1.0, "quantity"],
                                    [1,2,2, 1.0, "alpha"]
