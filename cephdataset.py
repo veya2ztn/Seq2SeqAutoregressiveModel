@@ -1238,10 +1238,10 @@ class WeathBench64x128(WeathBench71):
             'all': range(1979, 2022),
             'debug':range(1979,1980)}
     datatimelist_pool={'train':np.arange(np.datetime64("1979-01-01")+np.timedelta64(7, "h"), np.datetime64("2016-01-01"), np.timedelta64(1, "h")),
-              'valid':np.arange(np.datetime64("2016-01-01"), np.datetime64("2018-01-01"), np.timedelta64(1, "h")),
-             'subtrain': np.arange(np.datetime64("2017-01-01"), np.datetime64("2018-01-01"), np.timedelta64(1, "h")),
-             'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(1, "h")),
-             'ftest':np.arange(np.datetime64("1979-01-02"), np.datetime64("1980-01-01"), np.timedelta64(1, "h"))}
+                       'valid':np.arange(np.datetime64("2016-01-01"), np.datetime64("2018-01-01"), np.timedelta64(1, "h")),
+                       'subtrain': np.arange(np.datetime64("2017-01-01"), np.datetime64("2018-01-01"), np.timedelta64(1, "h")),
+                       'test':np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(1, "h")),
+                       'ftest':np.arange(np.datetime64("1979-01-02"), np.datetime64("1980-01-01"), np.timedelta64(1, "h"))}
     def __init__(self,**kargs):
         use_offline_data = kargs.get('use_offline_data',0) 
         assert use_offline_data == 0
@@ -1274,6 +1274,9 @@ class WeathBench64x128(WeathBench71):
             #'3D70N': (_list ,'gauss_norm_3D', self.mean_std[:,_list].reshape(2,5,14,1,1), identity, identity ),
         }
         return config_pool
+
+    def __len__(self):
+        return (len(self.single_data_path_list) - self.time_step*self.time_intervel + 1)//2
 
     def generate_runtime_data(self,idx,reversed_part=False):
         odata=self.load_otensor(idx) #<-- we do normlization in load_otensor
