@@ -3,6 +3,57 @@ import torch
 import os
 import math
 
+def distributed_initial(args):
+    import os
+    ngpus = ngpus_per_node = torch.cuda.device_count()
+    args.world_size = -1
+    args.dist_file  = None
+    args.rank       = 0
+    args.dist_backend = "nccl"
+    args.multiprocessing_distributed = ngpus>1
+    args.ngpus_per_node = ngpus_per_node
+    if not hasattr(args,'train_set'):args.train_set='large'
+    ip = os.environ.get("MASTER_ADDR", "127.0.0.1")
+    port = find_free_port()#os.environ.get("MASTER_PORT", f"{find_free_port()}" )
+    args.port = port
+    hosts = int(os.environ.get("WORLD_SIZE", "1"))  # number of nodes
+    rank = int(os.environ.get("RANK", "0"))  # node id
+    gpus = torch.cuda.device_count()  # gpus per node
+    args.dist_url = f"tcp://{ip}:{port}"
+    if args.world_size == -1 and "SLURM_NPROCS" in os.environ:
+        args.world_size = int(os.environ["SLURM_NPROCS"])
+        args.rank       = int(os.environ["SLURM_PROCID"])
+        jobid           = os.environ["SLURM_JOBID"]
+
+        hostfile        = "dist_url." + jobid  + ".txt"
+        if args.dist_file is not None:
+            args.dist_url = "file://{}.{}".format(os.path.realpath(args.dist_file), jobid)
+        elif args.rank == 0:
+            import socket
+            ip = socket.gethostbyname(socket.gethostname())
+            port = find_free_port()
+            args.dist_url = "tcp://{}:{}".format(ip, port)
+            #with open(hostfile, "w") as f:f.write(args.dist_url)
+        else:
+            import os
+            import time
+            while not os.path.exists(hostfile):
+                time.sleep(1)
+            with open(hostfile, "r") as f:
+                args.dist_url = f.read()
+        print("dist-url:{} at PROCID {} / {}".format(args.dist_url, args.rank, args.world_size))
+    else:
+        args.world_size = 1
+    args.distributed = args.world_size > 1 or args.multiprocessing_distributed
+    return args
+
+
+def find_free_port():
+    import socket
+    s = socket.socket()
+    s.bind(('', 0))            # Bind to a free port provided by the host.
+    return s.getsockname()[1]  # Return the port number assigned.
+
 def getModelSize(model):
     param_size = 0
     param_sum = 0
@@ -88,29 +139,31 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
             print("loading loss_scaler weight success...........")
             start_epoch = ckpt["epoch"]
             start_step = ckpt["step"]
-            min_loss = ckpt["min_loss"]
+            min_loss = ckpt["best_valid_loss"]
         print("loading model success...........")
     else:
         print("dont find path, please check, we pass........")
     return start_epoch, start_step, min_loss
 
 
-def save_model(model, epoch=0, step=0, optimizer=None, lr_scheduler=None, loss_scaler=None, min_loss=np.inf, path=None, only_model=False):
+def save_state(epoch=0, step=0, performance=None, model = None, optimizer=None, lr_scheduler=None, loss_scaler=None, min_loss=np.inf, path=None, only_model=False):
+    unwrapper_model = model
+    while hasattr(unwrapper_model,'module'):
+        unwrapper_model = unwrapper_model.module
+    model = unwrapper_model
 
     if only_model:
-        states = {
-            'model': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
-        }
+        states = {'model': model.state_dict(),'epoch': epoch, 'step':  step}
     else:
         states = {
-            'model': model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
-            'optimizer': optimizer.state_dict(),
+            'model': model.state_dict(),
+            'optimizer': optimizer.state_dict() if optimizer is not None else None,
             'lr_scheduler': lr_scheduler.state_dict() if lr_scheduler is not None else None,
-            'loss_scaler': loss_scaler.state_dict(),
+            'loss_scaler': loss_scaler.state_dict() if loss_scaler is not None else None,
             'epoch': epoch,
-            'step': step,
-            'min_loss': min_loss
+            'step':  step,
         }
+    for name, val in performance.items():states[name] = val
     # in case the driver full, we first do save and then mv 
     tmp_path = str(path)+'.tmp'
     torch.save(states, tmp_path)
@@ -224,6 +277,28 @@ def get_sub_sun_point(time):
     sun_lat = math.degrees(sun.dec)
     #print( "sun Lon:",sun_lon, "Lat:",sun_lat)
     return sun_lon,sun_lat    
+
+def get_local_rank():
+    return int(os.environ["LOCAL_RANK"]) if "LOCAL_RANK" in os.environ else 0
+
+
+def update_experiment_info(experiment_hub_path, epoch, args):
+    try:
+        if os.path.exists(experiment_hub_path):
+            with open(experiment_hub_path, 'r') as f:
+                experiment_hub = json.load(f)
+        else:
+            experiment_hub = {}
+        path = str(args.SAVE_PATH)
+        if path not in experiment_hub:
+            experiment_hub[path] = {"id": len(
+                experiment_hub), 'epoch_tot': args.epochs, "start_time": time.strftime("%m_%d_%H_%M_%S")}
+        experiment_hub[path]['epoch'] = epoch
+        experiment_hub[path]['endtime'] = time.strftime("%m_%d_%H_%M_%S")
+        with open(experiment_hub_path, 'w') as f:
+            json.dump(experiment_hub, f)
+    except:
+        pass
 
 if __name__ == '__main__':
     img_shape = (32,64)
