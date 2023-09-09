@@ -1,24 +1,217 @@
-def full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list):
-    hidden_fourcast_list_next=[]
-    extra_loss=0
-    for t in hidden_fourcast_list:
-        alpha = model.consistancy_alpha[len(full_fourcast_error_list)]
-        if alpha>0 and t is not None:
-            hidden_fourcast = model(t )
-            if model.consistancy_cut_grad:
-                hidden_fourcast=hidden_fourcast.detach()
 
-            hidden_error  = criterion(ltmv_pred,hidden_fourcast) # can also be criterion(target,hidden_fourcast)
-            hidden_fourcast_list_next.append(hidden_fourcast)
-            full_fourcast_error_list.append(hidden_error.item())
-            extra_loss += alpha*hidden_error
-        else:
-            hidden_fourcast_list_next.append(None)
-            full_fourcast_error_list.append(0)
-    hidden_fourcast_list = hidden_fourcast_list_next + [target]
-    #print(full_fourcast_error_list)
-    return hidden_fourcast_list,full_fourcast_error_list,extra_loss
+import torch.nn as nn
+from evaluator.utils import compute_accu, compute_rmse
+from contextlib import contextmanager
+from utils.tools import get_tensor_norm
+import torch
+import numpy as np
+from .forward_step import once_forward, once_forward_normal
+from utils.tools import get_local_rank,optional_no_grad
 
+"""
+There are two main iteration here
+- the normal iteration: do autoregressive N times one the first stamp of given `batch`.
+    - use plugin to activate disorder error like loss between X_{t+5}^I  and  X_{t+5}^V
+    - use plugin to produce unified rmse/accu regardless the dataengineerning.
+- the `run_one_iter_highlevel_fast` is another smart way to compute any order/disorder autoregressive loss as
+        shown in 
+        X0 X1 X2 X3
+        |  |  |  |
+        x1 x2 x3 x4
+        |  |  |
+        y2 y3 y4
+        |  |
+        z3 z4
+  use the `activate_stamps` to assign the computing path.
+"""
+
+
+
+
+
+class RuntimeRMSE_Pligin:
+    """
+    will convert the 
+    """
+    one_more_forward = False
+    training = False
+
+    def __init__(self, config, normlizer=None):
+        assert normlizer is not None
+        self.normlizer = normlizer
+
+    def initilize(self):
+        pass
+
+    def step(self, model, normlized_predicted_fields: torch.Tensor, normlized_target_fields: torch.Tensor):
+        # only deal with the first stamp prediction
+        normlized_predicted_fields = normlized_predicted_fields[:, :, 0]
+        normlized_target_fields = normlized_target_fields[:, :, 0]
+        unnormlized_predicted_fields = self.normlizer.recovery_from_runtime_fields(
+            normlized_predicted_fields)
+        #(B, P ,W, H)
+        unnormlized_target_fields = self.normlizer.recovery_from_runtime_fields(
+            normlized_target_fields)
+        #(B, P ,W, H)
+        with optional_no_grad(not self.training):
+            accu = compute_accu(unnormlized_predicted_fields,
+                                unnormlized_target_fields).mean().item()
+            rmse = compute_rmse(unnormlized_predicted_fields,
+                                unnormlized_target_fields).mean().item()
+        return {'accu': accu, 'rmse': rmse}
+
+
+class Consistancy_Plugin:
+    one_more_forward = True
+
+    def __init__(self, config, criterion=nn.MSELoss, ):
+        self.criterion = criterion()
+        self.consistancy_alpha = config.get('consistancy_alpha')
+        self.consistancy_cut_grad = config.get('consistancy_cut_grad', False)
+        self.vertical_constrain = config.get('vertical_constrain', None)
+        self.trainining = not config.get('consistancy_eval', False)
+
+    def initilize(self):
+        self.full_fourcast_error_list = []
+        self.hidden_fourcast_list = []
+
+    def full_fourcast_forward(self, model, full_fourcast_error_list, ltmv_pred, target, hidden_fourcast_list):
+        hidden_fourcast_list_next = []
+        extra_loss = 0
+        for t in hidden_fourcast_list:
+            alpha = self.consistancy_alpha[len(full_fourcast_error_list)]
+            if alpha > 0 and t is not None:
+                hidden_fourcast = model(t)
+                if self.consistancy_cut_grad:
+                    hidden_fourcast = hidden_fourcast.detach()
+                # can also be criterion(target,hidden_fourcast)
+                hidden_error = self.criterion(ltmv_pred, hidden_fourcast)
+                hidden_fourcast_list_next.append(hidden_fourcast)
+                full_fourcast_error_list.append(hidden_error.item())
+                extra_loss += alpha*hidden_error
+            else:
+                hidden_fourcast_list_next.append(None)
+                full_fourcast_error_list.append(0)
+        hidden_fourcast_list = hidden_fourcast_list_next + [target]
+        #print(full_fourcast_error_list)
+        return hidden_fourcast_list, full_fourcast_error_list, extra_loss
+
+    def step(self, model, normlized_predicted_fields: torch.Tensor,
+             normlized_target_fields: torch.Tensor):
+        # the consistancy_alpha work as follow
+        # X0 x1   y2    z3
+        #
+        #    X1   x2    y3
+        #       (100)  (010)
+        #         X2    x3
+        #              (001)
+        #               X3
+        loss_for_this_step = {}
+        with optional_no_grad(not self.training):
+            self.hidden_fourcast_list, self.full_fourcast_error_list, extra_loss2 = self.full_fourcast_forward(model,
+                                                                                                               self.full_fourcast_error_list,
+                                                                                                               normlized_predicted_fields,
+                                                                                                               normlized_target_fields,
+                                                                                                               self.hidden_fourcast_list)
+
+        loss_for_this_step['consistancy_loss'] = extra_loss2
+        if self.vertical_constrain and len(self.hidden_fourcast_list) >= 2:
+            all_hidden_fourcast_list = [
+                normlized_predicted_fields]+self.hidden_fourcast_list
+            # epsilon_2^I
+            first_level_error_tensor = all_hidden_fourcast_list[-1] - \
+                all_hidden_fourcast_list[-2]
+            for il in range(len(all_hidden_fourcast_list)-2):
+                hidden_error_tensor = all_hidden_fourcast_list[-2] - \
+                    all_hidden_fourcast_list[il]
+                # <epsilon_2^I|epsilon_2^II-epsilon_2^I>
+                verticalQ = torch.mean(
+                    (hidden_error_tensor*first_level_error_tensor)**2)
+                loss_for_this_step['consistancy_vertical_loss'] = verticalQ
+        return loss_for_this_step
+
+
+def run_one_iter(model, batch, criterion, status, sequence_manager, plugins):
+    activate_stamps = getattr(model.config,'activate_stamps', None)
+    if activate_stamps:
+        return run_one_iter_highlevel_fast(model, batch, criterion, status, sequence_manager, plugins)
+    else:
+        return run_one_iter_normal(model, batch, criterion, status, sequence_manager, plugins)
+  
+def run_one_iter_normal(model, batch, criterion, status, sequence_manager, plugins):
+    """
+    One iter will forward the model N times.
+    N depend on the length of totally sequence, and model.config.pred_len
+    
+    batch is the entire sequence 
+    [
+      timestamp_1:{'Field':Field, 'stamp_status':stamp_status]},
+      timestamp_2:{'Field':Field, 'stamp_status':stamp_status]}
+        ...............................................
+      timestamp_n:{'Field':Field, 'stamp_status':stamp_status]}
+    ]
+    """
+    if model.config.history_length > len(batch):
+        print.info(f"you want to use history={model.config.history_length}")
+        print.info(f"but your input batch(timesteps) only has len(batch)={len(batch)}")
+        raise
+    
+    
+    total_forward_times = (len(batch) - model.config.history_length)//model.config.pred_len
+    assert (len(batch) - model.config.history_length)%model.config.pred_len==0, f"""
+    you must provide correct sequence, based on your assignment, you will use L={model.config.history_length} stamps as inputs and L={model.config.pred_len} as the output.
+    However, the data you provide is a sequence L= {len(batch)}
+    """
+    
+    sequence_manager.initial_unnormilized_inputs_field(batch[0:model.config.history_length])
+    #plugin  = Consistancy_Plugin()
+    _ = [plugin.initilize() for plugin in plugins]
+
+    iter_info_pool = {}
+    loss = accu = pred_step = 0
+    for i in range(model.config.history_length,len(batch), model.config.pred_len):# i now is the target index
+        criterion_now = criterion[pred_step] if isinstance(criterion,(dict,list)) else criterion 
+        sequence_manager.push_unnormilized_target_field(batch[i:i+model.config.pred_len])
+
+        
+        prediction, normlized_target, sequence_manager = once_forward(model, i, sequence_manager)
+        prediction_loss = criterion_now(prediction['field'], normlized_target)
+        loss  += prediction_loss 
+        iter_info_pool[f'{status}/timestep{i}/prediction_loss'] = prediction_loss.item()
+        if 'structure_loss' in prediction:
+            structure_loss = prediction['structure_loss']
+            loss  += structure_loss
+            iter_info_pool[f'{status}/timestep{i}/structure_loss'] = structure_loss.item()
+        
+        
+        for plugin in plugins:
+            plugin_loss = plugin.step(model, prediction['field'], normlized_target)
+            for loss_name, loss_val in plugin_loss.items():
+                if plugin.training:loss += loss_val
+                iter_info_pool[f'{status}/timestep{i}/{plugin}/{loss_name}'] = structure_loss.item()
+            
+        pred_step += 1
+        if model.config.random_time_step_train and i > np.random.randint(0, total_forward_times):
+            break
+
+                
+    
+    ####### consistancy will forward last prediction one more times
+    plugins = [plugin for plugin in plugins if plugin.one_more_forward]
+    if len(plugins)>0:
+        sequence_manager.push_unnormilized_target_field(None)
+        prediction, normlized_target, sequence_manager = once_forward(model, i, sequence_manager)
+        for plugin in plugins:
+            plugin_loss = plugin.step(model, prediction['field'], normlized_target)
+            for loss_name, loss_val in plugin_loss.items():
+                if plugin.training:loss += loss_val
+                iter_info_pool[f'{status}/timestep{i}/{plugin}/{loss_name}'] = structure_loss.item()
+    
+    # loss = loss/(len(batch) - 1)
+    # accu = accu/(len(batch) - 1)
+    loss = loss/pred_step
+    accu = accu/pred_step
+    return loss, accu, iter_info_pool, prediction['field'], normlized_target
 
 def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_record, iter_info_pool):
     if 'during_valid' in mode:
@@ -33,8 +226,8 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
                     error = torch.mean((tensor1-tensor2)**2,dim=(1,2,3)).detach()
                 else:
                     error = torch.mean((tensor1-tensor2)**2).detach()
-                if (level_1,level_2,stamp) not in model.err_record:model.err_record[level_1,level_2,stamp] = []
-                model.err_record[level_1,level_2,stamp].append(error)
+                if (level_1,level_2,stamp) not in model.config.err_record:model.config.err_record[level_1,level_2,stamp] = []
+                model.config.err_record[level_1,level_2,stamp].append(error)
 
             # we would initialize err_reocrd and generate c1,c2,c2 out of the function
         else:
@@ -46,7 +239,7 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
                 tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
                 tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
                 error = torch.mean((tensor1-tensor2)**2).detach()
-                model.err_record[level_1,level_2,stamp] = error
+                model.config.err_record[level_1,level_2,stamp] = error
 
             # we would initialize err_reocrd and generate c1,c2,c2 out of the function
         else:
@@ -54,7 +247,7 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
     else:
         raise # then we directly goes into train mode
 
-    c1,  c2,  c3 = model.c1, model.c2, model.c3
+    c1,  c2,  c3 = model.config.c1, model.config.c2, model.config.c3
     
     
     
@@ -105,28 +298,43 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
     iter_info_pool[f"{status}_e2"] = e2
     iter_info_pool[f"{status}_e3"] = e3
     loss = c1*e1 + c2*e2 + c3*e3 
-    diff = (e1 + e2 + e3)/3
-    return loss, diff,iter_info_pool
+    accu = (e1 + e2 + e3)/3
+    return loss, accu,iter_info_pool
 
-from criterions.high_order_loss_coef import calculate_coef,calculate_deltalog_coef,normlized_coef_type2,normlized_coef_type3,normlized_coef_type0,normlized_coef_type_bonded
-def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
-    assert model.history_length == 1
-    assert model.pred_len == 1
+            
+def esitimate_longterm_error(a0,a1, n =10):
+    """
+        # X0 X1 X2
+        # |  |  |  
+        # x1 x2 x3 
+        # |   
+        # y2 
+        # |  
+        # z3 
+        a1 = (z3 - x3)/(y2-X2)
+        a0 = (y2 - x2)/(x1-X1)
+    """
+    Bn=1
+    for i in range(n):
+        Bn = 1 + torch.pow(1-a1,i)*torch.pow(1-a0,1-i)*Bn
+    return Bn
+
+from forward_step import feature_pick_check
+def run_one_iter_highlevel_fast(model, batch, criterion, status, sequence_manager, plugins):
+    assert model.config.history_length == 1
+    assert model.config.pred_len == 1
     assert len(batch)>1
-    assert len(batch) <= len(model.activate_stamps) + 1
+    assert len(batch) <= len(model.config.activate_stamps) + 1
     iter_info_pool={}
-    
-    if model.history_length > len(batch):
-        print(f"you want to use history={model.history_length}")
-        print(f"but your input batch(timesteps) only has len(batch)={len(batch)}")
-        raise
+
+
     now_level_batch = torch.stack(batch,1) #[(B,P,W,H),(B,P,W,H),...,(B,P,W,H)] -> (B,L,P,W,H)
     # input is a tenosor (B,L,P,W,H)
     # The generated intermediate is recorded as 
-    # X0 x1 y2 z3
-    # X1 x2 y3 z4
-    # X2 x3 y4
-    # X3 x4
+    # X0 -> x1 -> y2 -> z3
+    # X1 -> x2 -> y3 -> z4
+    # X2 -> x3 -> y4
+    # X3 -> x4
     B,L = now_level_batch.shape[:2]
     tshp= now_level_batch.shape[2:]
     all_level_batch = [now_level_batch]
@@ -152,9 +360,12 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     # so we need a flag 
     ####################################################
     train_channel_from_this_stamp,train_channel_from_next_stamp,pred_channel_for_next_stamp = feature_pick_check(model)
-    activate_stamps = model.activate_stamps
-    if model.directly_esitimate_longterm_error and 'during_valid' in model.directly_esitimate_longterm_error and status == 'valid':
+    activate_stamps = model.config.activate_stamps
+    if model.config.directly_esitimate_longterm_error and 'during_valid' in model.config.directly_esitimate_longterm_error and status == 'valid':
         activate_stamps = [[1,2,3],[2],[3]]
+    
+    
+    
     for i in range(len(activate_stamps)): # generate L , L-1, L-2
         # the least coding here
         # now_level_batch = model(now_level_batch[:,:(L-i)].flatten(0,1)).reshape(B,(L-i),*tshp)  
@@ -164,8 +375,9 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
         picked_stamp = []
         for t in activate_stamp:
             picked_stamp.append(last_activate_stamp.index(t-1)) # if t-1 not in last_activate_stamp, raise Error
-        start = [now_level_batch[:,picked_stamp].flatten(0,1)]
-
+        
+        start = [{'field':now_level_batch[:,picked_stamp].flatten(0,1)}]
+        sequence_manager.initial_unnormilized_inputs_field(start)
         if pred_channel_for_next_stamp or train_channel_from_next_stamp:
             if pred_channel_for_next_stamp  : assert t<=L # save key when prediction need last stamp information
             if train_channel_from_next_stamp: assert t< L           
@@ -177,11 +389,12 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
             # notice when activate pred_channel_for_next_stamp, the unpredicted part should be filled by the part from next stamp 
             # but the loss should be calculate only on the predicted part.
             # In theory, the padded constant will not effect the bask-prapagration. <-- when do average, the padded part will provide a extra length to divide. for example, from 3 element average to 4 element average
-            end = now_level_batch[:,target_stamp].flatten(0,1)
+            end = [{'field':now_level_batch[:,target_stamp].flatten(0,1)}]
         else:
             end = None
-        _, _, _, _, start    = once_forward_normal(model,i,start,end,dataset,False)
-        now_level_batch      = start[-1].reshape(B,len(picked_stamp),*tshp)  
+        sequence_manager.push_unnormilized_target_field([end])
+        _, _, sequence_manager = once_forward(model, i, sequence_manager)
+        now_level_batch        = sequence_manager.input_sequence[-1]['field'].reshape(B,len(picked_stamp),*tshp)  
         #now_level_batch     = model(now_level_batch[:,picked_stamp].flatten(0,1)).reshape(B,len(picked_stamp),*tshp)  
         all_level_batch.append(now_level_batch)
         #all_level_record.append([last_activate_stamp[t]+1 for t in picked_stamp])
@@ -191,11 +404,11 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
     ################ calculate error ###################
     iter_info_pool={}
     loss = 0
-    diff = 0
-    loss_count = diff_count = len(model.activate_error_coef)
+    accu = 0
+    loss_count = diff_count = len(model.config.activate_error_coef)
 
-    if not model.directly_esitimate_longterm_error:
-        for (level_1, level_2, stamp, coef,_type) in model.activate_error_coef:
+    if not model.config.directly_esitimate_longterm_error:
+        for (level_1, level_2, stamp, coef,_type) in model.config.activate_error_coef:
             tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
             tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
             if 'quantity' in _type:
@@ -232,245 +445,19 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset):
             iter_info_pool[f"{status}_error_{level_1}_{level_2}_{stamp}"] = error.item()
             loss   += coef*error
             if level_1 ==0 and level_2 == stamp:# to be same as normal train 
-                diff += coef*error
+                accu += coef*error
             
     else:
-        loss, diff, iter_info_pool = lets_calculate_the_coef(
-            model, model.directly_esitimate_longterm_error, status, all_level_batch, all_level_record, iter_info_pool)
+        loss, accu, iter_info_pool = lets_calculate_the_coef(
+            model, model.config.directly_esitimate_longterm_error, status, all_level_batch, all_level_record, iter_info_pool)
         # level_1, level_2, stamp, coef, _type
         # a1 = torch.nn.MSELoss()(all_level_batch[3][:,all_level_record[3].index(3)] , all_level_batch[1][:,all_level_record[1].index(3)])\
         #    /torch.nn.MSELoss()(all_level_batch[2][:,all_level_record[2].index(2)] , all_level_batch[0][:,all_level_record[0].index(2)])
         # a0 = torch.nn.MSELoss()(all_level_batch[2][:,all_level_record[2].index(2)] , all_level_batch[1][:,all_level_record[1].index(2)])\
         #    /torch.nn.MSELoss()(all_level_batch[1][:,all_level_record[1].index(1)] , all_level_batch[0][:,all_level_record[0].index(1)])
-        # error = esitimate_longterm_error(a0, a1, model.directly_esitimate_longterm_error)
-        # iter_info_pool[f"{status}_error_longterm_error_{model.directly_esitimate_longterm_error}"] = error.item()
+        # error = esitimate_longterm_error(a0, a1, model.config.directly_esitimate_longterm_error)
+        # iter_info_pool[f"{status}_error_longterm_error_{model.config.directly_esitimate_longterm_error}"] = error.item()
         # loss += error
 
-    return loss, diff, iter_info_pool, None, None
-            
-def esitimate_longterm_error(a0,a1, n =10):
-    """
-        # X0 X1 X2
-        # |  |  |  
-        # x1 x2 x3 
-        # |   
-        # y2 
-        # |  
-        # z3 
-        a1 = (z3 - x3)/(y2-X2)
-        a0 = (y2 - x2)/(x1-X1)
-    """
-    Bn=1
-    for i in range(n):
-        Bn = 1 + torch.pow(1-a1,i)*torch.pow(1-a0,1-i)*Bn
-    return Bn
+    return loss, accu, iter_info_pool, None, None
 
-
-def once_forward_error_evaluation(model,now_level_batch,snap_mode = False):
-    target_level_batch = now_level_batch[:,1:]
-    P,W,H = target_level_batch[0,0].shape
-    error_record  = []
-    real_res_error_record = []
-    appx_res_error_record = []
-    real_appx_delta_record  = []
-    appx_res_angle_record = []
-    real_res_angle_record = []
-
-    if snap_mode:
-        snap_index_w = torch.LongTensor(np.array([18, 17,  1, 15,  6, 27]))
-        snap_index_h = torch.LongTensor(np.array([38, 41, 17, 14, 27, 40]))
-        snap_index_p = torch.LongTensor(np.array([7, 21, 35, 49, 38]))
-        error_record_snap = []
-        real_res_error_record_snap=[]
-    real_res_error = appx_res_error = real_appx_delta = first_level_batch = None
-    ltmv_preds =  []
-    while now_level_batch.shape[1]>1:
-        B,L = now_level_batch.shape[:2]
-        tshp= now_level_batch.shape[2:]
-
-
-        the_whole_tensor = now_level_batch[:,:-1].flatten(0,1)
-        shard_size       = 16 #<---- TODO: add this to arguement
-        next_level_batch = []
-        for shard_index in range(len(the_whole_tensor)//shard_size+1): 
-            shard_tensor = the_whole_tensor[shard_index*shard_size:(shard_index+1)*shard_size]
-            if len(shard_tensor) == 0:break
-            next_level_batch.append(model(shard_tensor))
-        next_level_batch = torch.cat(next_level_batch)
-
-
-        next_level_batch = next_level_batch.reshape(B,L-1,*tshp)
-        next_level_error_tensor  = target_level_batch[:,-(L-1):] - next_level_batch 
-        next_level_error         = get_tensor_norm(next_level_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P)
-        ltmv_preds.append(next_level_batch[:, 0:1])
-        error_record.append(next_level_error)
-
-        if snap_mode:
-            next_level_error_snap = (next_level_error_tensor[:, :, snap_index_p][:,:,:,snap_index_w][:,:,:,:, snap_index_h]**2).detach().cpu()
-            error_record_snap.append(next_level_error_snap)
-        if first_level_batch is None:
-            first_level_batch        = next_level_batch
-            first_level_error_tensor = next_level_error_tensor
-        else:
-            real_res_error_tensor = first_level_batch[:,-(L-1):] - next_level_batch
-            real_res_error        = get_tensor_norm(real_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
-            if snap_mode:
-                real_res_error_snap = (real_res_error_tensor[:, :, snap_index_p][:, :, :, snap_index_w][:, :, :, :, snap_index_h]**2).detach().cpu()
-                real_res_error_record_snap.append(real_res_error_snap)
-            base_error            = first_level_error_tensor[:,-(L-1):]
-            #real_res_angle        = torch.einsum('btpwh,btpwh->bt',real_res_error_tensor, base_error)/(torch.sum(real_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
-            real_res_error_record.append(real_res_error)
-            #real_res_error_alpha  = real_res_error/error_record[-1][:,-(L-1):] #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
-            #real_appx_delta       = get_tensor_norm(real_res_error_tensor - appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
-            #real_appx_delta_record.append(real_appx_delta)
-            #real_res_angle_record.append(real_res_angle)
-        
-            
-            
-        # if L>2:
-        #     tangent_x             = (target_level_batch[:,-(L-2):] + next_level_batch[:,-(L-2):])/2
-        #     appx_res_error_tensor = calculate_next_level_error_batch(model, tangent_x.flatten(0,1), next_level_error_tensor[:,-(L-2):].flatten(0,1)).reshape(B,L-2,*tshp)
-        #     base_error = first_level_error_tensor[:,-(L-2):]
-        #     appx_res_angle        = torch.einsum('btpwh,btpwh->bt',appx_res_error_tensor, base_error)/(torch.sum(appx_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
-        #     appx_res_error        = get_tensor_norm(appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
-        #     appx_res_error_record.append(appx_res_error)
-        #     appx_res_angle_record.append(appx_res_angle)
-        #     #appx_res_error_alpha  = appx_res_error/error_record[-1][:,-(L-1):]  #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
-        now_level_batch = next_level_batch
-    error_record          = torch.cat(error_record,          1).detach().cpu()
-    real_res_error_record = torch.cat(real_res_error_record, 1).detach().cpu()
-    #real_appx_delta_record= torch.cat(real_appx_delta_record,1).detach().cpu()
-    #real_res_angle_record = torch.cat(real_res_angle_record, 1).detach().cpu()
-    # appx_res_error_record = torch.cat(appx_res_error_record, 1).detach().cpu()
-    # appx_res_angle_record = torch.cat(appx_res_angle_record, 1).detach().cpu()
-    if snap_mode:
-        error_record_snap = torch.cat(error_record_snap, 1)
-        real_res_error_record_snap = torch.cat(real_res_error_record_snap, 1)
-    ltmv_preds = torch.cat(ltmv_preds,1)
-    ltmv_trues = target_level_batch
-    error_information={
-        "error_record"          :error_record,
-        "real_res_error_record" :real_res_error_record,
-        #"real_appx_delta_record":real_appx_delta_record,
-        #"real_res_angle_record" :real_res_angle_record,
-        # "appx_res_error_record" :appx_res_error_record,
-        # "appx_res_angle_record" :appx_res_angle_record,
-    }
-    if snap_mode:
-        error_information['error_record_snap'] = error_record_snap
-        error_information['real_res_error_record_snap'] = real_res_error_record_snap
-        error_information['snap_index_w'] = snap_index_w
-        error_information['snap_index_h'] = snap_index_h
-        error_information['snap_index_p'] = snap_index_p
-    return ltmv_preds, ltmv_trues, error_information
-
-def run_one_iter(model, batch, criterion, status, gpu, dataset):
-    if hasattr(model,'activate_stamps') and model.activate_stamps:
-        return run_one_iter_highlevel_fast(model, batch, criterion, status, gpu, dataset)
-    else:
-        return run_one_iter_normal(model, batch, criterion, status, gpu, dataset)
-
-def run_one_iter_normal(model, batch, criterion, status, gpu, dataset):
-    iter_info_pool={}
-    loss = 0
-    diff = 0
-    random_run_step = np.random.randint(1,len(batch)) if len(batch)>1 else 0
-    time_step_1_mode=False
-    if len(batch) == 1 and isinstance(batch[0],(list,tuple)) and len(batch[0])>1:
-        batch = batch[0] # (Field, FieldDt)
-        time_step_1_mode=True
-    if model.history_length > len(batch):
-        print(f"you want to use history={model.history_length}")
-        print(f"but your input batch(timesteps) only has len(batch)={len(batch)}")
-        raise
-    pred_step = 0
-    start = batch[0:model.history_length] # start must be a list
-    full_fourcast_error_list = []
-    hidden_fourcast_list = [] 
-    # length depend on pred_len time_step=2 --> 1+1
-    #                time_step=3 --> 1+2+2
-    #                time_step=4 --> 1+2+3
-    # use_consistancy_alpha to control activate amplitude
-    
-    
-    for i in range(model.history_length,len(batch), model.pred_len):# i now is the target index
-        end = batch[i:i+model.pred_len]
-        end = end[0] if len(end) == 1 else end
-        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,end,dataset,time_step_1_mode)
-        
-            
-        if extra_loss !=0:
-            iter_info_pool[f'{status}_extra_loss_gpu{gpu}_timestep{i}'] = extra_loss.item()
-        for extra_info_from_model in extra_info_from_model_list:
-            for name, value in extra_info_from_model.items():
-                iter_info_pool[f'{status}_on_{status}_{name}_timestep{i}'] = value
-        
-        ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
-
-        if 'Delta' in dataset.__class__.__name__:
-            loss  += criterion(ltmv_pred,target)+ extra_loss
-            with torch.no_grad():
-                normlized_field_predict = dataset.combine_base_delta(start[-1][0], start[-1][1]) 
-                normlized_field_real    = dataset.combine_base_delta(      end[0],       end[1])  
-                abs_loss = criterion(normlized_field_predict,normlized_field_real)
-            
-        elif 'deseasonal' in dataset.__class__.__name__:
-            loss  += criterion(ltmv_pred,target)+ extra_loss
-            with torch.no_grad():
-                normlized_field_predict = dataset.addseasonal(start[-1][0], start[-1][1])
-                normlized_field_real    = dataset.addseasonal(end[0], end[1])
-                abs_loss = criterion(normlized_field_predict,normlized_field_real)
-        elif '68pixelnorm' in dataset.__class__.__name__:
-            loss  += criterion(ltmv_pred,target)+ extra_loss
-            with torch.no_grad():
-                normlized_field_predict = dataset.recovery(start[-1])
-                normlized_field_real    = dataset.recovery(end)
-                abs_loss = criterion(normlized_field_predict,normlized_field_real)
-        else:
-            normlized_field_predict = ltmv_pred
-            normlized_field_real = target
-            abs_loss = criterion[pred_step](ltmv_pred,target) if isinstance(criterion,(dict,list)) else criterion(ltmv_pred,target)
-            loss += abs_loss + extra_loss
-        
-        diff += abs_loss
-        pred_step+=1
-        
-        if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall and ((not model.consistancy_eval) or (not model.training)): 
-            # the consistancy_alpha work as follow
-            # X0 x1   y2    z3
-            #    
-            #    X1   x2    y3
-            #       (100)  (010)
-            #         X2    x3
-            #              (001)
-            #               X3
-            hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,target,hidden_fourcast_list)
-            if hasattr(model,"vertical_constrain") and model.vertical_constrain and len(hidden_fourcast_list)>=2:
-                all_hidden_fourcast_list = [ltmv_pred]+hidden_fourcast_list
-                first_level_error_tensor = all_hidden_fourcast_list[-1] - all_hidden_fourcast_list[-2] #epsilon_2^I
-                for il in range(len(all_hidden_fourcast_list)-2):
-                    hidden_error_tensor = all_hidden_fourcast_list[-2] - all_hidden_fourcast_list[il]
-                    verticalQ = torch.mean((hidden_error_tensor*first_level_error_tensor)**2) # <epsilon_2^I|epsilon_2^II-epsilon_2^I>
-                    iter_info_pool[f'{status}_vertical_error_{i}_{il}_gpu{gpu}'] =  verticalQ.item()
-                    extra_loss2+= model.vertical_constrain*verticalQ # we only
-            if not model.consistancy_eval:loss+= extra_loss2
-            
-                
-        iter_info_pool[f'{status}_abs_loss_gpu{gpu}_timestep{i}'] =  abs_loss.item()
-        if status != "train":
-            iter_info_pool[f'{status}_accu_gpu{gpu}_timestep{i}']     =  compute_accu(normlized_field_predict,normlized_field_real).mean().item()
-            iter_info_pool[f'{status}_rmse_gpu{gpu}_timestep{i}']     =  compute_rmse(normlized_field_predict,normlized_field_real).mean().item()
-        if model.random_time_step_train and i >= random_run_step:
-            break
-    if hasattr(model,"consistancy_alpha") and model.consistancy_alpha and loss < model.consistancy_activate_wall and ((not model.consistancy_eval) or (not model.training)): 
-        ltmv_pred, target, extra_loss, extra_info_from_model_list, start = once_forward(model,i,start,None,dataset,time_step_1_mode) 
-        ltmv_pred = dataset.do_normlize_data([ltmv_pred])[0]
-        hidden_fourcast_list,full_fourcast_error_list,extra_loss2 = full_fourcast_forward(model,criterion,full_fourcast_error_list,ltmv_pred,None,hidden_fourcast_list)
-        if not model.consistancy_eval:loss+= extra_loss2
-        for iii, val in enumerate(full_fourcast_error_list):
-            if val >0: iter_info_pool[f'{status}_full_fourcast_error_{iii}_gpu{gpu}'] =  val
-    # loss = loss/(len(batch) - 1)
-    # diff = diff/(len(batch) - 1)
-    loss = loss/pred_step
-    diff = diff/pred_step
-    return loss, diff, iter_info_pool, ltmv_pred, target

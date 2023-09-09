@@ -10,7 +10,7 @@ def distributed_initial(args):
     args.dist_file  = None
     args.rank       = 0
     args.dist_backend = "nccl"
-    args.multiprocessing_distributed = ngpus>1
+    
     args.ngpus_per_node = ngpus_per_node
     if not hasattr(args,'train_set'):args.train_set='large'
     ip = os.environ.get("MASTER_ADDR", "127.0.0.1")
@@ -44,7 +44,7 @@ def distributed_initial(args):
         print("dist-url:{} at PROCID {} / {}".format(args.dist_url, args.rank, args.world_size))
     else:
         args.world_size = 1
-    args.distributed = args.world_size > 1 or args.multiprocessing_distributed
+    args.multiprocessing_distributed = args.world_size > 1
     return args
 
 
@@ -239,6 +239,14 @@ def get_center_around_indexes_3D(patch_range,img_shape,z_range=None, h_range=Non
     coor    = coor.reshape(len(wlist),len(hlist),len(zlist),3).transpose(3,2,1,0)
     return coor, indexes
 
+from contextlib import contextmanager
+@contextmanager
+def optional_no_grad(flag):
+    if flag:
+        with torch.no_grad():
+            yield
+    else:
+        yield
 
 def get_sub_luna_point(time):
     import ephem
@@ -280,6 +288,11 @@ def get_sub_sun_point(time):
 
 def get_local_rank():
     return int(os.environ["LOCAL_RANK"]) if "LOCAL_RANK" in os.environ else 0
+
+
+def get_tensor_norm(tensor, dim):  # <--use mse way
+    #return (torch.sum(tensor**2,dim=dim)).sqrt()#(N,B)
+    return (torch.mean(tensor**2, dim=dim))  # (N,B)
 
 
 def update_experiment_info(experiment_hub_path, epoch, args):

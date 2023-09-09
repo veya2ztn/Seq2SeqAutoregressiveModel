@@ -1,22 +1,17 @@
 
 #import optuna
+import copy
 from train.nodal_snap_step import run_nodalosssnap, run_one_epoch
 from evaluator.evaluate import run_fourcast, run_fourcast_during_training
-from utils.tools import distributed_initial
-from mltool.visualization import *
-from mltool.dataaccelerate import DataLoader,DataSimfetcher
-from mltool.loggingsystem import LoggingSystem
 
-from pathlib import Path
+from mltool.visualization import *
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 from torch.utils.data.distributed import DistributedSampler
-from utils.tools import  find_free_port
-import timm.optim
-from timm.scheduler import create_scheduler
-import torch.distributed as dist
+
 
 from model.patch_model import *
 from model.time_embeding_model import *
@@ -30,10 +25,10 @@ from utils.params import get_args
 from utils.tools import save_state, load_model, get_local_rank
 import pandas as pd
 
+import torch.distributed as dist
 
 from model.GradientModifier import *
 from dataset.cephdataset import *
-Datafetcher = DataSimfetcher
 
 import random
 import traceback
@@ -51,7 +46,7 @@ def fast_set_model_epoch(model, criterion, dataloader, optimizer, loss_scaler, e
         model.set_epoch(**kargs)
     if hasattr(model, 'module') and hasattr(model.module, 'set_epoch'):
         model.module.set_epoch(**kargs)
-    if args.distributed and args.data_epoch_shuffle:
+    if args.multiprocess_distributed and args.data_epoch_shuffle:
         dataloader.sampler.set_epoch(epoch)
 
 def step_the_scheduler(lr_scheduler, now_lr, epoch, args):
@@ -97,12 +92,42 @@ def update_and_save_training_status(args, epoch, loss_information, training_syst
     save_path = loss_information[loss_type]['save_path']
     if ((epoch>=args.save_warm_up) and (epoch%args.save_every_epoch==0)) or (epoch==args.epochs-1) or (epoch in args.epoch_save_list):
         logsys.info(f"saving latest model ....", show=False)
-        save_model(epoch=epoch, step=0, path=save_path, only_model=False, performance=performance, **training_system)
+        save_state(epoch=epoch, step=0, path=save_path, only_model=False, performance=performance, **training_system)
         logsys.info(f"done ....",show=False)
         if epoch in args.epoch_save_list:
-            save_model(epoch=epoch, path=save_path, path=f'{save_path}-epoch{epoch}', only_model=True, performance=performance, **training_system)
+            save_state(epoch=epoch, path=save_path, path=f'{save_path}-epoch{epoch}', only_model=True, performance=performance, **training_system)
     return loss_information
     
+def distributed_runtime(args):
+    if args.multiprocess_distributed:
+        if args.dist_url == "env://" and args.rank == -1:
+            args.rank = int(os.environ["RANK"])
+        if args.multiprocessing_distributed:
+            # For multiprocessing distributed training, rank needs to be the
+            # global rank among all the processes
+            args.rank = args.rank * args.ngpus_per_node + args.local_rank
+        print(f"start init_process_group,backend={args.dist_backend}, init_method={args.dist_url},world_size={args.world_size}, rank={args.rank}")
+        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,world_size=args.world_size, rank=args.rank)
+
+from accelerate import Accelerator
+from accelerate.utils import ProjectConfiguration, set_seed
+from accelerate import DistributedDataParallelKwargs
+def build_accelerator(args):
+
+    project_config = ProjectConfiguration(
+        project_dir=str(args.SAVE_PATH),
+        automatic_checkpoint_naming=True,
+        total_limit=args.num_max_checkpoints,
+    )
+    log_with = ['tensorboard']
+    if args.use_wandb:
+        log_with.append("wandb")
+    ddp_kwargs = DistributedDataParallelKwargs(
+        find_unused_parameters=args.find_unused_parameters)
+    accelerator = Accelerator(dispatch_batches=True, project_config=project_config,
+                              log_with=log_with, kwargs_handlers=[ddp_kwargs]
+                              )
+    return accelerator
 
 from configs.arguments import parse_default_args, get_ckpt_path,create_logsys
 from model.get_resource import build_model_and_optimizer
@@ -117,30 +142,18 @@ def main_worker(local_rank, ngpus_per_node, args,
     if local_rank==0:print(f"we are at mode={args.mode}")
     ##### locate the checkpoint dir ###########
     args.gpu       = args.local_rank = gpu  = local_rank
-    ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
-    args            = parse_default_args(args)
-    SAVE_PATH       = get_ckpt_path(args)
-    args.SAVE_PATH  = str(SAVE_PATH)
+    args.ngpus_per_node = ngpus_per_node
+    #--- parse args: dataset_kargs / model_kargs / train_kargs  #---
+    args = parse_default_args(args)
+    SAVE_PATH = get_ckpt_path(args)
+    args.SAVE_PATH = str(SAVE_PATH)
     ########## inital log ###################
     logsys = create_logsys(args)
-    
-
-    if args.distributed:
-        if args.dist_url == "env://" and args.rank == -1:
-            args.rank = int(os.environ["RANK"])
-        if args.multiprocessing_distributed:
-            # For multiprocessing distributed training, rank needs to be the
-            # global rank among all the processes
-            args.rank = args.rank * ngpus_per_node + local_rank
-        logsys.info(f"start init_process_group,backend={args.dist_backend}, init_method={args.dist_url},world_size={args.world_size}, rank={args.rank}")
-        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,world_size=args.world_size, rank=args.rank)
-
+    #########################################
 
     model, optimizer, lr_scheduler, criterion, loss_scaler = build_model_and_optimizer(args)
-    
-    # =======================> start training <==========================
+
     logsys.info(f"entering {args.mode} training in {next(model.parameters()).device}")
-    
     if args.mode=='fourcast':
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
         run_fourcast(args, model,logsys,test_dataloader)
@@ -150,17 +163,21 @@ def main_worker(local_rank, ngpus_per_node, args,
         run_nodalosssnap(args, model,logsys,test_dataloader)
         return logsys.close()
     
+    args.accelerator = build_accelerator(args)
     ####### Training Stage #########
     
-    test_dataloader        = None
-    start_step             = args.start_step
-    
-
     train_dataset, val_dataset, train_dataloader,val_dataloader = get_train_and_valid_dataset(args,
                     train_dataset_tensor=train_dataset_tensor,train_record_load=train_record_load,
                     valid_dataset_tensor=valid_dataset_tensor,valid_record_load=valid_record_load)
     test_dataloader = None 
 
+    if args.accelerator is not None:
+        model, optimizer, lr_scheduler, train_dataloader, val_dataloader = args.accelerator.prepare(
+            model, optimizer, lr_scheduler, train_dataloader, val_dataloader)
+
+
+
+    start_step             = args.start_step
 
     logsys.info(f"use dataset ==> {train_dataset.__class__.__name__}")
     logsys.info(f"Start training for {args.epochs} epochs")
@@ -170,10 +187,6 @@ def main_worker(local_rank, ngpus_per_node, args,
     metric_dict = logsys.initial_metric_dict(accu_list)
     banner = logsys.banner_initial(args.epochs, args.SAVE_PATH)
     logsys.banner_show(0, args.SAVE_PATH)
-
-    if args.tracemodel:logsys.wandb_watch(model,log_freq=100)
-
-
     loss_information = {'train_loss': {'now':None,'best':np.inf, 'save_path':os.path.join(args.SAVE_PATH,'pretrain_latest.pt')},
                         'test_loss' : {'now': None, 'best': np.inf, 'save_path': os.path.join(args.SAVE_PATH, 'fourcast.best.pt')},
                         'valid_loss': {'now': None, 'best': args.min_loss, 'save_path': os.path.join(args.SAVE_PATH, 'backbone.best.pt')},
@@ -212,63 +225,13 @@ def main_worker(local_rank, ngpus_per_node, args,
         logsys.info(f"we finish training, then start test on the best checkpoint {best_valid_ckpt_path}")
         args.mode = 'fourcast'
         args.time_step = 22
-        start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, path=best_valid_ckpt_path, only_model=True, loc='cuda:{}'.format(args.gpu))
+        start_epoch, start_step, min_loss = load_model(model.module if args.multiprocess_distributed else model, path=best_valid_ckpt_path, only_model=True, loc='cuda:{}'.format(args.gpu))
         run_fourcast(args, model,logsys)
         
     if result_tensor is not None and local_rank==0:result_tensor[local_rank] = min_loss
     return logsys.close()
 
 
-def create_memory_templete(args):
-    train_dataset_tensor = valid_dataset_tensor = train_record_load = valid_record_load = None
-    if args.use_inmemory_dataset:
-        assert args.dataset_type
-        print("======== loading data as shared memory==========")
-        if not ('fourcast' in args.mode):
-            print(f"create training dataset template, .....")
-            train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='train' if not args.debug else 'test',
-                                                                                                              root=args.data_root, use_offline_data=args.use_offline_data, dataset_flag=args.dataset_flag)
-            train_dataset_tensor = train_dataset_tensor.share_memory_()
-            train_record_load = train_record_load.share_memory_()
-            print(
-                f"done! -> train template shape={train_dataset_tensor.shape}")
-
-            print(f"create validing dataset template, .....")
-            valid_dataset_tensor, valid_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='valid' if not args.debug else 'test',
-                                                                                                              root=args.data_root, use_offline_data=args.use_offline_data, dataset_flag=args.dataset_flag)
-            valid_dataset_tensor = valid_dataset_tensor.share_memory_()
-            valid_record_load = valid_record_load.share_memory_()
-            print(
-                f"done! -> train template shape={valid_dataset_tensor.shape}")
-        else:
-            print(f"create testing dataset template, .....")
-            train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='test',
-                                                                                                              root=args.data_root, use_offline_data=args.use_offline_data, dataset_flag=args.dataset_flag)
-            train_dataset_tensor = train_dataset_tensor.share_memory_()
-            train_record_load = train_record_load.share_memory_()
-            print(f"done! -> test template shape={train_dataset_tensor.shape}")
-            valid_dataset_tensor = valid_record_load = None
-        print("========      done        ==========")
-    return train_dataset_tensor, valid_dataset_tensor, train_record_load, valid_record_load
-
-def distributing_main(args=None):
-    
-    if args is None:args = get_args()
-    
-    args = distributed_initial(args)
-    train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load = create_memory_templete(args)
-    result_tensor = torch.zeros(1).share_memory_()
-    if args.multiprocessing_distributed:
-        print("======== entering  multiprocessing train ==========")
-        args.world_size = args.ngpus_per_node * args.world_size
-        torch.multiprocessing.spawn(main_worker, nprocs=args.ngpus_per_node, args=(args.ngpus_per_node, args,result_tensor,
-                                    train_dataset_tensor,train_record_load,
-                                    valid_dataset_tensor,valid_record_load))
-    else:
-        print("======== entering  single gpu train ==========")
-        main_worker(0, args.ngpus_per_node, args,result_tensor, train_dataset_tensor,train_record_load,valid_dataset_tensor,valid_record_load)
-    return result_tensor
-
-
 if __name__ == '__main__':
-    main()
+    args = get_args()
+    main_worker(0,0, args)

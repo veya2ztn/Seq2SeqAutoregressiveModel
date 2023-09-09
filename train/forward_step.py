@@ -1,9 +1,21 @@
 import torch
-
-
+from utils.tools import get_tensor_norm
+import torch
+import numpy as np
 #########################################
 ########## normal forward step ##########
 #########################################
+"""
+    To fit different data input format, like 
+    - [list of tensor]
+    - [list of [tensor + constant]]
+    - .....
+Update: 2023.09.06
+    We will do unify processing now. All the input should be only for list of dict  
+    Notice: there are variout model type like Advection model
+"""
+
+
 
 def make_data_regular(batch, half_model=False):
     # the input can be
@@ -33,18 +45,24 @@ def make_data_regular(batch, half_model=False):
 
 
 def once_forward_with_timestamp(model, i, start, end, dataset, time_step_1_mode):
-    if not isinstance(end[0], (list, tuple)):
-        end = [end]
+    """
+    return:
+      ltmv_pred    [not normlized pred Field]
+      target       [normlized target Field]
+      extra_loss
+      extra_info_from_model_list
+      start        [not normlized Field list]
+    """
+    
+    if not isinstance(end[0], (list, tuple)):end = [end]
     start_timestamp = torch.stack([t[1] for t in start], 1)  # [B,T,4]
     end_timestamp = torch.stack([t[1] for t in end], 1)  # [B,T,4]
     #print([(s[0].shape,s[1].shape) for s in start])
     # start is data list [ [[B,P,h,w],[B,4]] , [[B,P,h,w],[B,4]], [[B,P,h,w],[B,4]], ...]
-    normlized_Field_list = dataset.do_normlize_data([[t[0] for t in start]])[
-        0]  # always use normlized input
+    normlized_Field_list = dataset.do_normlize_data([[t[0] for t in start]])[0]  # always use normlized input
     normlized_Field = torch.stack(normlized_Field_list, 2)  # (B,P,T,w,h)
 
-    target_list = dataset.do_normlize_data([[t[0] for t in end]])[
-        0]  # always use normlized input
+    target_list = dataset.do_normlize_data([[t[0] for t in end]])[0]  # always use normlized input
     target = torch.stack(target_list, 2)  # (B,P,T,w,h)
 
     if 'FED' in model.model_type:
@@ -65,13 +83,6 @@ def once_forward_with_timestamp(model, i, start, end, dataset, time_step_1_mode)
     ltmv_pred = dataset.inv_normlize_data([out])[0]
     end_timestamp = end_timestamp.squeeze(1)
     start = start[1:]+[[ltmv_pred, end_timestamp]]
-
-    # return:
-    #  ltmv_pred [not normlized pred Field]
-    #   target  [normlized target Field]
-    #   extra_loss
-    #   extra_info_from_model_list
-    #   start [not normlized Field list]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
 
@@ -98,55 +109,50 @@ def once_forward_with_timeconstant(model, i, start, end, dataset, time_step_1_mo
 
 
 def feature_pick_check(model):
-    train_channel_from_this_stamp = None
-    if hasattr(model, "train_channel_from_this_stamp"):
-        train_channel_from_this_stamp = model.train_channel_from_this_stamp
-    if hasattr(model, "module") and hasattr(model.module, "train_channel_from_this_stamp"):
-        train_channel_from_this_stamp = model.module.train_channel_from_this_stamp
-    train_channel_from_next_stamp = None
-    if hasattr(model, "train_channel_from_next_stamp"):
-        train_channel_from_next_stamp = model.train_channel_from_next_stamp
-    if hasattr(model, "module") and hasattr(model.module, "train_channel_from_next_stamp"):
-        train_channel_from_next_stamp = model.module.train_channel_from_next_stamp
-    pred_channel_for_next_stamp = None
-    if hasattr(model, "pred_channel_for_next_stamp"):
-        pred_channel_for_next_stamp = model.pred_channel_for_next_stamp
-    if hasattr(model, "module") and hasattr(model.module, "pred_channel_for_next_stamp"):
-        pred_channel_for_next_stamp = model.module.pred_channel_for_next_stamp
+    unwrapper_model = model
+    while hasattr(unwrapper_model, 'module'):
+        unwrapper_model = unwrapper_model.module
+    model = unwrapper_model
+    train_channel_from_this_stamp = getattr(model.config, "train_channel_from_this_stamp", None)
+    train_channel_from_next_stamp = getattr(model.config, "train_channel_from_next_stamp", None)
+    pred_channel_for_next_stamp   = getattr(model.config, "pred_channel_for_next_stamp", None)
     return train_channel_from_this_stamp, train_channel_from_next_stamp, pred_channel_for_next_stamp
 
+def once_forward_with_Advection(model, i, start, end, dataset, time_step_1_mode):
+    # the input can be
+    # [
+    #   timestamp_1:[Field,Field_Dt,(physics_part) ],
+    #   timestamp_2:[Field,Field_Dt,(physics_part) ],
+    #     ...............................................
+    #   timestamp_n:[Field,Field_Dt,(physics_part) ]
+    # ]
+    # or
+    # [
+    #   timestamp_1:Field,
+    #   timestamp_2:Field,
+    #     ...............................................
+    #   timestamp_n:Field
+    # ]
 
-def once_forward_normal(model, i, start, end, dataset, time_step_1_mode):
     Field = Advection = None
 
     if isinstance(start[0], (list, tuple)):  # now is [Field, Field_Dt, physics_part]
-        Field = start[-1][0]  # the now Field is the newest timestamp
+        Field     = start[-1][0]  # the now Field is the newest timestamp
         Advection = start[-1][-1]
         normlized_Field_list = dataset.do_normlize_data(start)
         normlized_Field_list = [p[0] for p in normlized_Field_list]
-        normlized_Field = normlized_Field_list[0] if len(
-            normlized_Field_list) == 1 else torch.stack(normlized_Field_list, 1)
+        normlized_Field = normlized_Field_list[0] if len(normlized_Field_list) == 1 else torch.stack(normlized_Field_list, 1)
         #(B,P,y,x) for no history case (B,P,H,y,x) for history version
         target = dataset.do_normlize_data([end[0]])[0]  # in standand unit
     elif time_step_1_mode:
-        normlized_Field, target = dataset.do_normlize_data([[start, target]])[
-            0]
+        normlized_Field, target = dataset.do_normlize_data([[start, target]])[0]
     else:
         Field = start[-1]
-        if hasattr(model, 'calculate_Advection'):
-            Advection = model.calculate_Advection(Field)
-        if hasattr(model, 'module') and hasattr(model.module, 'calculate_Advection'):
-            Advection = model.module.calculate_Advection(Field)
-        normlized_Field_list = dataset.do_normlize_data(
-            [start])[0]  # always use normlized input
-        normlized_Field = normlized_Field_list[0] if len(
-            normlized_Field_list) == 1 else torch.stack(normlized_Field_list, 2)
-        target = dataset.do_normlize_data(
-            [end])[0]  # always use normlized target
-
-    if model.training and model.input_noise_std and i == 1:
-        normlized_Field += torch.randn_like(normlized_Field) * \
-            model.input_noise_std
+        if hasattr(model, 'calculate_Advection'):Advection = model.calculate_Advection(Field)
+        if hasattr(model, 'module') and hasattr(model.module, 'calculate_Advection'):Advection = model.module.calculate_Advection(Field)
+        normlized_Field_list = dataset.do_normlize_data([start])[0]  # always use normlized input
+        normlized_Field = normlized_Field_list[0] if len(normlized_Field_list) == 1 else torch.stack(normlized_Field_list, 2)
+        target = dataset.do_normlize_data([end])[0]  # always use normlized target
 
     train_channel_from_this_stamp, train_channel_from_next_stamp, pred_channel_for_next_stamp = feature_pick_check(
         model)
@@ -175,8 +181,7 @@ def once_forward_normal(model, i, start, end, dataset, time_step_1_mode):
         _, Deltat_F = dataset.inv_normlize_data([[0, normlized_Deltat_F]])[0]
         reduce_Field_coef = torch.Tensor(
             dataset.reduce_Field_coef).to(normlized_Deltat_F.device)
-        if hasattr(model, 'reduce_Field_coef'):
-            reduce_Field_coef += model.reduce_Field_coef
+        reduce_Field_coef += getattr(model, "reduce_Field_coef", 0)
         ltmv_pred = Field + Deltat_F - Advection*reduce_Field_coef
     else:
         ltmv_pred = dataset.inv_normlize_data([out])[0]
@@ -209,6 +214,42 @@ def once_forward_normal(model, i, start, end, dataset, time_step_1_mode):
         target = target[:, pred_channel_for_next_stamp]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
+def once_forward_normal(model, i, sequence_manager, *args):
+    """
+    forward function only map X_{t+i} to X_{t+i+1}
+        model
+        i
+        start: can either be a single tensor for X_{t} -> X_{t+1} or a tensor chain for  X_{t-n},...,X_{t-1}, X_{t} -> X_{t+1}
+        end: the target, can either be a single tensor or a tensor chain for seq2seq model
+        time_step_1_mode: force to the single forward mode
+    -------------------------------------------------------------------
+    # the input can be
+    # [
+    #   timestamp_1:{'Field':Field, 'stamp_status':stamp_status],
+    #   timestamp_2:{'Field':Field, 'stamp_status':stamp_status]
+    #     ...............................................
+    #   timestamp_n:{'Field':Field, 'stamp_status':stamp_status]
+    # ]
+    # or
+    # [
+    #   timestamp_1:{'Field':Field}
+    #   timestamp_2:{'Field':Field}
+    #     ...............................................
+    #   timestamp_n:{'Field':Field}
+    # ]
+    """
+
+    normlized_fields, normlized_target = sequence_manager.get_inputs_and_target()  # always use normlized target
+    
+    if model.training and model.input_noise_std and i == 1:
+        normlized_fields['field'] += torch.randn_like(normlized_fields['field']) * model.input_noise_std
+
+    prediction = model(normlized_fields) # --> prediction is also a dict 
+    
+    # update sequence, update the input sequence and remove the target sequence
+    sequence_manager.push_a_normlized_field(prediction['field'])
+
+    return prediction, normlized_target, sequence_manager
 
 def once_forward_multibranch(model, i, start, end, dataset, time_step_1_mode):
     assert len(start) == 1
@@ -233,7 +274,6 @@ def once_forward_multibranch(model, i, start, end, dataset, time_step_1_mode):
     #print(target.shape,torch.std_mean(target))
 
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
-
 
 def once_forward_shift(model, i, start, end, dataset, time_step_1_mode):
     Field = Advection = None
@@ -452,6 +492,108 @@ def once_forward_self_relation(model, i, start, end, dataset, time_step_1_mode=N
     start = start[1:] + [None]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
+
+def once_forward_error_evaluation(model, now_level_batch, snap_mode=False):
+    target_level_batch = now_level_batch[:, 1:]
+    P, W, H = target_level_batch[0, 0].shape
+    error_record = []
+    real_res_error_record = []
+    appx_res_error_record = []
+    real_appx_delta_record = []
+    appx_res_angle_record = []
+    real_res_angle_record = []
+
+    if snap_mode:
+        snap_index_w = torch.LongTensor(np.array([18, 17,  1, 15,  6, 27]))
+        snap_index_h = torch.LongTensor(np.array([38, 41, 17, 14, 27, 40]))
+        snap_index_p = torch.LongTensor(np.array([7, 21, 35, 49, 38]))
+        error_record_snap = []
+        real_res_error_record_snap = []
+    real_res_error = appx_res_error = real_appx_delta = first_level_batch = None
+    ltmv_preds = []
+    while now_level_batch.shape[1] > 1:
+        B, L = now_level_batch.shape[:2]
+        tshp = now_level_batch.shape[2:]
+
+        the_whole_tensor = now_level_batch[:, :-1].flatten(0, 1)
+        shard_size = 16  # <---- TODO: add this to arguement
+        next_level_batch = []
+        for shard_index in range(len(the_whole_tensor)//shard_size+1):
+            shard_tensor = the_whole_tensor[shard_index *
+                                            shard_size:(shard_index+1)*shard_size]
+            if len(shard_tensor) == 0:
+                break
+            next_level_batch.append(model(shard_tensor))
+        next_level_batch = torch.cat(next_level_batch)
+
+        next_level_batch = next_level_batch.reshape(B, L-1, *tshp)
+        next_level_error_tensor = target_level_batch[:, -(
+            L-1):] - next_level_batch
+        next_level_error = get_tensor_norm(
+            next_level_error_tensor, dim=(3, 4))  # (B,T,P,W,H)->(B,T,P)
+        ltmv_preds.append(next_level_batch[:, 0:1])
+        error_record.append(next_level_error)
+
+        if snap_mode:
+            next_level_error_snap = (
+                next_level_error_tensor[:, :, snap_index_p][:, :, :, snap_index_w][:, :, :, :, snap_index_h]**2).detach().cpu()
+            error_record_snap.append(next_level_error_snap)
+        if first_level_batch is None:
+            first_level_batch = next_level_batch
+            first_level_error_tensor = next_level_error_tensor
+        else:
+            real_res_error_tensor = first_level_batch[:, -
+                                                      (L-1):] - next_level_batch
+            # (B,T,P,W,H)->(B,T,P) # <--record
+            real_res_error = get_tensor_norm(real_res_error_tensor, dim=(3, 4))
+            if snap_mode:
+                real_res_error_snap = (
+                    real_res_error_tensor[:, :, snap_index_p][:, :, :, snap_index_w][:, :, :, :, snap_index_h]**2).detach().cpu()
+                real_res_error_record_snap.append(real_res_error_snap)
+            base_error = first_level_error_tensor[:, -(L-1):]
+            #real_res_angle        = torch.einsum('btpwh,btpwh->bt',real_res_error_tensor, base_error)/(torch.sum(real_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
+            real_res_error_record.append(real_res_error)
+            #real_res_error_alpha  = real_res_error/error_record[-1][:,-(L-1):] #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
+            #real_appx_delta       = get_tensor_norm(real_res_error_tensor - appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
+            #real_appx_delta_record.append(real_appx_delta)
+            #real_res_angle_record.append(real_res_angle)
+
+        # if L>2:
+        #     tangent_x             = (target_level_batch[:,-(L-2):] + next_level_batch[:,-(L-2):])/2
+        #     appx_res_error_tensor = calculate_next_level_error_batch(model, tangent_x.flatten(0,1), next_level_error_tensor[:,-(L-2):].flatten(0,1)).reshape(B,L-2,*tshp)
+        #     base_error = first_level_error_tensor[:,-(L-2):]
+        #     appx_res_angle        = torch.einsum('btpwh,btpwh->bt',appx_res_error_tensor, base_error)/(torch.sum(appx_res_error_tensor**2,dim=(2,3,4)).sqrt()*torch.sum(base_error**2,dim=(2,3,4)).sqrt())#->(B,T)
+        #     appx_res_error        = get_tensor_norm(appx_res_error_tensor, dim = (3,4)) #(B,T,P,W,H)->(B,T,P) # <--record
+        #     appx_res_error_record.append(appx_res_error)
+        #     appx_res_angle_record.append(appx_res_angle)
+        #     #appx_res_error_alpha  = appx_res_error/error_record[-1][:,-(L-1):]  #(B,T,P)/(B,T,P)->(B,T,P) # <--can calculate later
+        now_level_batch = next_level_batch
+    error_record = torch.cat(error_record,          1).detach().cpu()
+    real_res_error_record = torch.cat(real_res_error_record, 1).detach().cpu()
+    #real_appx_delta_record= torch.cat(real_appx_delta_record,1).detach().cpu()
+    #real_res_angle_record = torch.cat(real_res_angle_record, 1).detach().cpu()
+    # appx_res_error_record = torch.cat(appx_res_error_record, 1).detach().cpu()
+    # appx_res_angle_record = torch.cat(appx_res_angle_record, 1).detach().cpu()
+    if snap_mode:
+        error_record_snap = torch.cat(error_record_snap, 1)
+        real_res_error_record_snap = torch.cat(real_res_error_record_snap, 1)
+    ltmv_preds = torch.cat(ltmv_preds, 1)
+    ltmv_trues = target_level_batch
+    error_information = {
+        "error_record": error_record,
+        "real_res_error_record": real_res_error_record,
+        #"real_appx_delta_record":real_appx_delta_record,
+        #"real_res_angle_record" :real_res_angle_record,
+        # "appx_res_error_record" :appx_res_error_record,
+        # "appx_res_angle_record" :appx_res_angle_record,
+    }
+    if snap_mode:
+        error_information['error_record_snap'] = error_record_snap
+        error_information['real_res_error_record_snap'] = real_res_error_record_snap
+        error_information['snap_index_w'] = snap_index_w
+        error_information['snap_index_h'] = snap_index_h
+        error_information['snap_index_p'] = snap_index_p
+    return ltmv_preds, ltmv_trues, error_information
 
 def once_forward(model, i, start, end, dataset, time_step_1_mode):
     if 'Patch' in dataset.__class__.__name__:

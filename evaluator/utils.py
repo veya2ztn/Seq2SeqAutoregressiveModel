@@ -22,10 +22,8 @@ def generate_latweight(w, device):
 
 
 def compute_accu(ltmsv_pred, ltmsv_true):
-    if len(ltmsv_pred.shape) == 5:
-        ltmsv_pred = ltmsv_pred.flatten(1, 2)
-    if len(ltmsv_true.shape) == 5:
-        ltmsv_true = ltmsv_true.flatten(1, 2)
+    if len(ltmsv_pred.shape) == 5:ltmsv_pred = ltmsv_pred.flatten(1, 2)
+    if len(ltmsv_true.shape) == 5:ltmsv_true = ltmsv_true.flatten(1, 2)
     ltmsv_pred = ltmsv_pred.permute(0, 2, 3, 1)
     ltmsv_true = ltmsv_true.permute(0, 2, 3, 1)
     # ltmsv_pred --> (B, w, h, property)
@@ -41,10 +39,8 @@ def compute_accu(ltmsv_pred, ltmsv_true):
 
 def compute_rmse(pred, true, return_map_also=False, smooth_sigma_1=0.1, smooth_sigma_2=2, smooth_times=0):
 
-    if len(pred.shape) == 5:
-        pred = pred.flatten(1, 2)
-    if len(true.shape) == 5:
-        true = true.flatten(1, 2)
+    if len(pred.shape) == 5:pred = pred.flatten(1, 2)
+    if len(true.shape) == 5:true = true.flatten(1, 2)
     if smooth_times > 0:
         smother = GaussianBlur(3, sigma=(smooth_sigma_1, smooth_sigma_2))
     for i in range(smooth_times):
@@ -52,9 +48,7 @@ def compute_rmse(pred, true, return_map_also=False, smooth_sigma_1=0.1, smooth_s
     pred = pred.permute(0, 2, 3, 1)
     true = true.permute(0, 2, 3, 1)
     latweight = generate_latweight(pred.shape[1], pred.device)
-    out = torch.sqrt(torch.clamp(
-        (latweight*(pred - true)**2).mean(dim=(1, 2)), 0, 1000))
+    out = torch.sqrt(torch.clamp((latweight*(pred - true)**2).mean(dim=(1, 2)), 0, 1000))
     if return_map_also:
-        out = [out, torch.clamp(
-            (latweight*(pred - true)**2).sum(dim=(0)), 0, 1000)]
+        out = [out, torch.clamp((latweight*(pred - true)**2).sum(dim=(0)), 0, 1000)]
     return out
