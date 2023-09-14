@@ -1,6 +1,6 @@
 #from tkinter.messagebox import NO
 
-import h5py
+
 import os
 
 import pandas as pd
@@ -21,41 +21,30 @@ try:
     import petrel_client
 except:
     Client = None
-
-
-
-
-
-def getFalse(x): return False
-
-
-def identity(x):
-    return x
-
-
-def do_batch_normlize(batch, mean, std):
-    torchQ = isinstance(batch, torch.Tensor)
-    if torchQ:
-        mean = torch.Tensor(mean).to(batch.device)
-        std = torch.Tensor(std).to(batch.device)
-
-    if isinstance(batch, list):
-        return [do_batch_normlize(x, mean, std) for x in batch]
-    else:
-        return (batch-mean)/(std+1e-10)
-
-
-def inv_batch_normlize(batch, mean, std):
-    torchQ = isinstance(batch, torch.Tensor)
-    if torchQ:
-        mean = torch.Tensor(mean).to(batch.device)
-        std = torch.Tensor(std).to(batch.device)
-    if isinstance(batch, list):
-        return [inv_batch_normlize(x, mean, std) for x in batch]
-    else:
-        return batch*(std+1e-10)+mean
-
-
+import typing
+from dataclasses import dataclass, field
+@dataclass
+class DatasetArguments:
+    root:str 
+    time_unit:int
+    resolution_w :int   
+    resolution_h :int   
+    channel_name_list:str
+    timestamps_list:typing.Optional[list] = field(default=None)
+    
+    time_step    :int = field(default=2)    
+    time_intervel:int = field(default=1)    
+    patch_range: typing.Union[list, int, None] = field(default=None)
+    
+    normlized_flag                 : str  = field( default = 'N')
+    time_reverse_flag              : str  = field( default ='only_forward')
+    use_time_feature               : bool = field( default = False)
+    add_LunaSolarDirectly          : bool = field( default = False)
+    offline_data_is_already_normed : bool = field( default = False)
+    cross_sample                   : bool = field( default = False)
+    
+    constant_channel_pick              : typing.Optional[list] = field(default=None)
+    make_data_physical_reasonable_mode : typing.Optional[str] = field(default=None)
 
 class BaseDataset:
     client = None

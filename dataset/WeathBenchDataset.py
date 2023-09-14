@@ -104,6 +104,11 @@ def preload_full_dataset(split, config):
         print("finish preload the whole dataset into memory")
         return loaded_tensor, loaded_flag
 
+def get_the_dataset_flag(config):
+    channel_picked_name = os.path.split(config.get('channel_name_list'))[-1].split('.')[0]
+    normlizer_name      = config.get('normlized_flag')
+    return channel_picked_name+normlizer_name
+
 class WeatherBenchBase(BaseDataset):
     time_unit  = 1
         
@@ -163,40 +168,41 @@ class WeatherBench(WeatherBenchBase):
     record_load_tensor = None
     dataset_tensor = None
 
-    def __init__(self, split="train", shared_dataset_tensor_buffer=(None, None), config={}):
+    def __init__(self, split="train", shared_dataset_tensor_buffer=(None, None),with_idx=False, config={}, debug=False):
         self.root = config.get('root', self.default_root)
         assert self.root is not None
         print(f"use dataset in {self.root} for {split}")
         self.split = split
+        self.with_idx=with_idx
         self.timestamp_date=get_timestamp_date(split, config)
         self.single_data_path_list = get_init_file_list(self.timestamp_date)
-        
-        self.time_step = config.get('time_step', 2)
-        self.crop_coord = config.get('crop_coord', None)
-        self.with_idx = config.get('with_idx', False)
-        self.dataset_flag = config.get('dataset_flag', '2D110N')
-        self.use_time_stamp = config.get('use_time_stamp', False)
-        self.time_reverse_flag = config.get(
-            'time_reverse_flag', 'only_forward')
-        self.use_offline_data = config.get('use_offline_data', False)
+        self.time_step     = config.get('time_step', 2)
         self.time_intervel = config.get('time_intervel', 1)
-        self.resolution_w = config.get('resolution_w', 1440)
-        self.resolution_h = config.get('resolution_h',  720)
-        self.constant_channel_pick = config.get('constant_channel_pick', None)
-        self.make_data_physical_reasonable_mode = config.get(
-            'make_data_physical_reasonable_mode', None)
+        self.resolution_w  = config.get('resolution_w', 1440)
+        self.resolution_h  = config.get('resolution_h',  720)
+        
+        self.normlized_flag = config.get('normlized_flag', 'N')
+        self.use_time_feature = config.get('use_time_feature', False)
+        self.time_reverse_flag = config.get('time_reverse_flag', 'only_forward')
         self.add_LunaSolarDirectly = config.get('add_LunaSolarDirectly', False)
-        self.use_position_idx = config.get('use_position_idx', False)
         self.offline_data_is_already_normed = config.get('offline_data_is_already_normed', False)
-        self.cross_sample = False
-        #self.vnames= [self.weatherbench_property_name_list[i] for i in self.channel_choice]
 
+        self.constant_channel_pick = config.get('constant_channel_pick', None)
+        self.make_data_physical_reasonable_mode = config.get('make_data_physical_reasonable_mode', None)
+        
+        
+        self.patch_range  = config.get('patch_range', None)
+        self.cross_sample = config.get('cross_sample', True) and ((self.split == 'train') or debug) and (self.patch_range is not None)
+        
+        #self.vnames= [self.weatherbench_property_name_list[i] for i in self.channel_choice]
+        self.dataset_flag = get_the_dataset_flag(config)
+        
         self.vnames = get_vnames_from_config(config)
         self.channel_choice = np.array(self.get_channel_choice(self.vnames))
 
         self.mean_std = self.load_original_meanstds()  # (2, P, W, H)
         self.normlizer = self.get_normlizer(
-            self.mean_std[:, self.channel_choice][..., None, None], self.dataset_flag)
+            self.mean_std[:, self.channel_choice][..., None, None], self.normlized_flag)
 
         #self.channel_choice, self.normlizer = self.get_config_from_preset_pool(self.dataset_flag)
         self.mean, self.std = self.normlizer.mean, self.normlizer.std
@@ -229,12 +235,24 @@ class WeatherBench(WeatherBenchBase):
         # if self.constant_channel_pick: ### no need change vnames anymore, since we add constant at another key
         #     self.vnames = self.vnames + [self.cons_vnames[i] for i in self.constant_channel_pick]
             
-        if self.use_time_stamp:
+        if self.use_time_feature:
             self.timestamp_date = time_features(pd.to_datetime(self.timestamp_date)).transpose(1, 0)
 
         if self.add_LunaSolarDirectly:
             self.LaLotude, self.LaLotudeVector = self.get_mesh_lon_lat(
                 self.resolution_h, self.resolution_w)  # (32, 64 )
+
+        
+        self.img_shape    = (self.resolution_h, self.resolution_w)  
+        if self.patch_range:
+            if len(self.channel_choice.shape) == 2:
+                patch_range = patch_range if isinstance(patch_range, (list, tuple)) else (patch_range, patch_range, patch_range)
+                self.center_index, self.around_index = get_center_around_indexes_3D(patch_range, self.img_shape)
+            else:
+                patch_range = patch_range if isinstance(patch_range, (list, tuple)) else (patch_range, patch_range)
+                self.center_index, self.around_index = get_center_around_indexes(patch_range, self.img_shape)
+            self.patch_range = patch_range
+            print(f"notice we will use around_index{self.around_index.shape} to patch data")
 
     def get_channel_choice(self, property_names):
         if isinstance(property_names, (tuple,list)):
@@ -256,7 +274,8 @@ class WeatherBench(WeatherBenchBase):
 
     @staticmethod
     def unique_name(config):
-        return f"WeatherBench_{config.get('resolution_h')}x{config.get('resolution_w')}_{config.get('dataset_flag')}"
+        return f"WeatherBench_{config.get('resolution_h')}x{config.get('resolution_w')}_{get_the_dataset_flag(config)}"
+
 
     @staticmethod
     def _add_constant_mean_std(mean_std, channel_num):
@@ -266,17 +285,17 @@ class WeatherBench(WeatherBenchBase):
         return np.stack([mean, std])  # (2, 71, 1, 1)
 
     @staticmethod
-    def get_normlizer(mean_std, dataset_flag):
+    def get_normlizer(mean_std, normlized_flag):
         
-        if dataset_flag[-1] == 'N':
+        if normlized_flag[-1] == 'N':
             return PreGauessNormlizer(mean_std)
-        elif dataset_flag[-1] == 'U':
+        elif normlized_flag[-1] == 'U':
             return PreUnitNormlizer(mean_std)
-        elif dataset_flag[-1] == 'O':
+        elif normlized_flag[-1] == 'O':
             return PostGauessNormlizer(mean_std)
         else:
             raise NotImplementedError(
-                f"dataset_flag {dataset_flag} is not implemented")
+                f"normlized_flag {normlized_flag} is not implemented")
 
     def get_config_from_preset_pool(self, dataset_flag):
         if dataset_flag == '2D110N':
@@ -387,7 +406,7 @@ class WeatherBench(WeatherBenchBase):
                 #location= self.center_index[:, center_h, center_w]
 
         if location is not None:
-            if len(dataset.channel_choice.shape) == 2:
+            if len(self.channel_choice.shape) == 2:
                 patch_idx_z, patch_idx_h, patch_idx_w = location
                 data = data[..., patch_idx_z, patch_idx_h, patch_idx_w]
             else:
@@ -396,14 +415,14 @@ class WeatherBench(WeatherBenchBase):
 
         output = {'field': data}
 
-        if self.use_time_stamp:
+        if self.use_time_feature:
             output['timestamp'] = self.timestamp_date[idx]
         if self.add_LunaSolarDirectly:
             output['sun_mask'] = self.get_sum_mask(idx)
             output['luna_mask'] = self.get_moon_mask(idx)
         if self.constant_channel_pick and len(self.constant_channel_pick) > 0:
             output['constant'] = self.constants[self.constant_channel_pick]
-        if self.use_position_idx:
+        if self.patch_range:
             output['location'] = location
         return output
 
@@ -533,22 +552,9 @@ class WeatherBench7066(WeatherBenchPhysical):
     time_unit        = 6
     
 class WeatherBenchPatchDataset(WeatherBench):
-    def __init__(self, split="train", shared_dataset_tensor_buffer=(None, None), config={}):
-        super().__init__(split=split, shared_dataset_tensor_buffer=shared_dataset_tensor_buffer, config=config)
-        self.cross_sample = config.get('cross_sample', True) and ((self.split == 'train') or (config.get('debug', 0)))
-        patch_range       = config.get('patch_range', 5)
-        self.img_shape    = (self.resolution_h, self.resolution_w)  
-        
-        if len(dataset.channel_choice.shape) == 2:
-            patch_range = patch_range if isinstance(patch_range, (list, tuple)) else (patch_range, patch_range, patch_range)
-            self.center_index, self.around_index = get_center_around_indexes_3D(patch_range, self.img_shape)
-        else:
-            patch_range = patch_range if isinstance(patch_range, (list, tuple)) else (patch_range, patch_range)
-            self.center_index, self.around_index = get_center_around_indexes(patch_range, self.img_shape)
-        
-        self.patch_range = patch_range
-        print(f"notice we will use around_index{self.around_index.shape} to patch data")
-        #self.random = kargs.get('random_dataset', False)
+    """
+    Merge into Base WeatherBench
+    """
         
 
         
@@ -556,15 +562,16 @@ class WeatherBenchPatchDataset(WeatherBench):
     
 
 if __name__ == "__main__":
-    import sys
-    import time
-    from tqdm import tqdm
-    from multiprocessing import Pool
-    from petrel_client.client import Client
-    import petrel_client
-    dataset = WeatherBench64x128(split='test',root='weatherbench:s3://weatherbench/weatherbench64x128/npy',dataset_flag='2D68N')
-    for i in tqdm(range(0, 1000)):
-        a = dataset[i][0]
+    pass
+    # import sys
+    # import time
+    # from tqdm import tqdm
+    # from multiprocessing import Pool
+    # from petrel_client.client import Client
+    # import petrel_client
+    # dataset = WeatherBench64x128(split='test',root='weatherbench:s3://weatherbench/weatherbench64x128/npy',dataset_flag='2D68N')
+    # for i in tqdm(range(0, 1000)):
+    #     a = dataset[i][0]
 
     # def load_data_range(dataset, start, end):
     #     for i in tqdm(range(start, end)):
