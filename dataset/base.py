@@ -61,6 +61,7 @@ class BaseDataset:
     client = None
     time_intervel = 1
     error_path       = []
+    retry_limit = 1
     def do_normlize_data(self, batch):
         raise NotImplementedError("Not use anymore")
 
@@ -79,7 +80,7 @@ class BaseDataset:
     
     def do_time_reverse_augmentation_Q(self):
         ###### may get error when use distributed dataset as the function is not allowed to pickle.
-        if self.time_reverse_flag == 'only_forward':
+        if self.time_reverse_flag == 'only_forward' :
            return False
            #print("we only using forward sequence, i.e. from t1, t2, ..., to tn")
         elif self.time_reverse_flag == 'only_backward':
@@ -104,27 +105,27 @@ class BaseDataset:
     
     def __getitem__(self, idx):
 
-        try:
-            reversed_part  = self.do_time_reverse_augmentation_Q()
-            time_step_list = [idx+i*self.time_intervel for i in range(self.time_step)]
-            # time reverse require the 
-            # 1. reverse of the sequence
-            # 2. reverse of the volecity
-            if reversed_part:time_step_list = time_step_list[::-1]
-            batch = [self.get_item(i, reversed_part) for i in time_step_list]
-            dict_list =[]
-            for i,data in enumerate(batch):
-                _dict = {'field':data} if isinstance(data, (torch.Tensor, np.ndarray)) else data
-                assert isinstance(_dict, dict)
-                if self.with_idx:_dict['idx'] = idx
-                dict_list.append(_dict)
-            return dict_list
-        except:
-            self.error_path.append(idx)
-            if len(self.error_path) < 10:
-                next_idx = np.random.randint(0, len(self))
-                return self.__getitem__(next_idx)
-            else:
-                print(self.error_path)
-                traceback.print_exc()
-                raise NotImplementedError("too many error happened, check the errer path")
+        #try:
+        reversed_part  = self.do_time_reverse_augmentation_Q()
+        time_step_list = [idx+i*self.time_intervel for i in range(self.time_step)]
+        # time reverse require the 
+        # 1. reverse of the sequence
+        # 2. reverse of the volecity
+        if reversed_part:time_step_list = time_step_list[::-1]
+        batch = [self.get_item(i, reversed_part) for i in time_step_list]
+        dict_list =[]
+        for i,data in enumerate(batch):
+            _dict = {'field':data} if isinstance(data, (torch.Tensor, np.ndarray)) else data
+            assert isinstance(_dict, dict)
+            if self.with_idx:_dict['idx'] = idx
+            dict_list.append(_dict)
+        return dict_list
+        # except:
+        #     self.error_path.append(idx)
+        #     if len(self.error_path) < self.retry_limit:
+        #         next_idx = np.random.randint(0, len(self))
+        #         return self.__getitem__(next_idx)
+        #     else:
+        #         print(self.error_path)
+        #         traceback.print_exc()
+        #         raise NotImplementedError("too many error happened, check the errer path")

@@ -1,5 +1,6 @@
 
 from .base import BaseDataset
+import numpy as np
 
 class SpeedTestDataset(BaseDataset):
     h = None
@@ -15,7 +16,7 @@ class SpeedTestDataset(BaseDataset):
         self.use_time_stamp = config.get('use_time_stamp', False)
         self.time_reverse_flag = config.get('time_reverse_flag', False)
         self.channel_picks = config.get('channel_picks', list(range(70)))
-        self.data      = torch.Tensor()
+        
 
     def __len__(self):
         return 1000
