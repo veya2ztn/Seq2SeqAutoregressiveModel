@@ -23,6 +23,8 @@ except:
     Client = None
 import typing
 from dataclasses import dataclass, field
+
+
 @dataclass
 class DatasetArguments:
     root:str 
@@ -46,6 +48,9 @@ class DatasetArguments:
     constant_channel_pick              : typing.Optional[list] = field(default=None)
     make_data_physical_reasonable_mode : typing.Optional[str] = field(default=None)
 
+    def get(self, attribute, default=None):
+        return getattr(self, attribute, default)
+    
 class BaseDataset:
     client = None
     time_intervel = 1

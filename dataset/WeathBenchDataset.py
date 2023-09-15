@@ -1,4 +1,4 @@
-from .base import BaseDataset, identity
+from .base import BaseDataset
 import numpy as np 
 import os
 import torch
@@ -30,10 +30,10 @@ def get_init_file_list(dates):
     #             file_list.append([year, hour])
     # return file_list
     """
-    years          = dates.astype('datetime64[Y]').astype(int) 
+    years          = dates.astype('datetime64[Y]').astype(int)   ## start from 1970, thus 1979 is 9
     start_of_years = years.astype('datetime64[Y]')
     hours          = (dates - start_of_years) / np.timedelta64(1, 'h')
-    hours[years == 9] -= 7
+    hours[years == 9] -= 7 # 1979 data lake 7 hours
     hours = np.maximum(hours, 0)  # ensure no negative hour values
     file_list      = np.vstack((years+1970, hours)).T.astype(int)
     return file_list
@@ -41,8 +41,8 @@ def get_init_file_list(dates):
 
 def get_default_timestamp_pool(config):
     time_unit = config.get('time_unit', 1 )
-    return {'train':np.arange(np.datetime64("1979-01-02"), np.datetime64("2016-01-01"), np.timedelta64(time_unit, "h")),
-            'valid':np.arange(np.datetime64("2016-01-01"), np.datetime64("2018-01-01"), np.timedelta64(time_unit, "h")),
+    return {'train':np.arange(np.datetime64("1979-01-02"), np.datetime64("2017-01-01"), np.timedelta64(time_unit, "h")),
+            'valid':np.arange(np.datetime64("2017-01-01"), np.datetime64("2018-01-01"), np.timedelta64(time_unit, "h")),
             'test' :np.arange(np.datetime64("2018-01-01"), np.datetime64("2019-01-01"), np.timedelta64(time_unit, "h")),
             'ftest':np.arange(np.datetime64("1979-01-02"), np.datetime64("1980-01-01"), np.timedelta64(time_unit, "h")),
             }
@@ -106,7 +106,7 @@ def preload_full_dataset(split, config):
 
 def get_the_dataset_flag(config):
     channel_picked_name = os.path.split(config.get('channel_name_list'))[-1].split('.')[0]
-    normlizer_name      = config.get('normlized_flag')
+    normlizer_name      = config.get('normlized_flag','N')
     return channel_picked_name+normlizer_name
 
 class WeatherBenchBase(BaseDataset):
@@ -125,29 +125,6 @@ class WeatherBenchBase(BaseDataset):
     weatherbench_property_name_list = single_vnames + level_vnames
     ## the 110 channel for weatherbench dataset
     cons_vnames= ["lsm", "slt", "orography"]
-
-    threeD_channel = np.arange(6, 110).reshape(8,13)
-    
-
-    #### TODO: it is better use compoent name list rather than index to flag each channel select mode.
-    _component_list70= ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+   # u component of wind and the 10m u wind
-                        [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+   # v component of wind and the 10m v wind
-                        [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,  0]+   # Temperature and the 2m_temperature
-                        [ 6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 18]+   # Geopotential and the last one is ground Geopotential, should be replace later
-                        [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 57]    # Realitve humidity and the Realitve humidity at groud, should be modified by total precipitaiton later
-                    )
-    _component_list68= ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+   # u component of wind and the 10m u wind
-                        [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+   # v component of wind and the 10m v wind
-                        [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,  0]+   # Temperature and the 2m_temperature
-                        [ 6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18    ]+   # Geopotential 
-                        [45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57    ]    # Realitve humidity 
-                    )  
-    _component_list55= ([58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70,  1]+   # u component of wind and the 10m u wind
-                        [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,  2]+   # v component of wind and the 10m v wind
-                        [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,  0]+   # Temperature and the 2m_temperature
-                        [ 6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18    ]    # Geopotential and the last one is ground Geopotential, should be replace later
-                    )
-
 
 class WeatherBench(WeatherBenchBase):
     '''
@@ -191,7 +168,7 @@ class WeatherBench(WeatherBenchBase):
         self.make_data_physical_reasonable_mode = config.get('make_data_physical_reasonable_mode', None)
         
         
-        self.patch_range  = config.get('patch_range', None)
+        self.patch_range  = patch_range = config.get('patch_range', None)
         self.cross_sample = config.get('cross_sample', True) and ((self.split == 'train') or debug) and (self.patch_range is not None)
         
         #self.vnames= [self.weatherbench_property_name_list[i] for i in self.channel_choice]
@@ -220,7 +197,7 @@ class WeatherBench(WeatherBenchBase):
         else:
             self.dataset_tensor, self.record_load_tensor = shared_dataset_tensor_buffer
         if self.dataset_tensor is not None:
-            assert len(self.dataset_tensor) == len(self.timestamp_date)
+            assert len(self.dataset_tensor) == len(self.timestamp_date), f"{len(self.dataset_tensor)} == {len(self.timestamp_date)}"
             assert self.dataset_tensor.shape[-2] == self.resolution_h
             assert self.dataset_tensor.shape[-1] == self.resolution_w
         if self.single_data_path_list is not None:
@@ -396,7 +373,7 @@ class WeatherBench(WeatherBenchBase):
             center_h = np.random.randint(
                 self.img_shape[-2] - (self.patch_range[-2]//2)*2)
             center_w = np.random.randint(self.img_shape[-1])
-            if len(dataset.channel_choice.shape) == 2:
+            if len(self.channel_choice.shape) == 2:
                 center_z = np.random.randint(
                     self.img_shape[-3] - (self.patch_range[-3]//2)*2)
                 location = self.around_index[center_z, center_h, center_w]
@@ -547,13 +524,26 @@ class WeatherBenchMultibranchRandom(WeatherBench):
         return batch if not self.with_idx else (idx, batch)
            
 class WeatherBench7066(WeatherBenchPhysical):
-    default_root     ='datasets/weatherbench_6hour'
-    use_offline_data = False
-    time_unit        = 6
+    """
+    config = {
+        'root':"/mnt/data/ai4earth/zhangtianning/datasets/WeatherBench/weatherbench_6hour/",
+        'channel_name_list':"configs/datasets/WeatherBench/2D70.channel_list.json",
+        'time_reverse_flag':'only_forward',
+        'offline_data_is_already_normed':True,
+        'time_unit':6
+    }
+    
+    """
     
 class WeatherBenchPatchDataset(WeatherBench):
     """
-    Merge into Base WeatherBench
+    config = {
+        'root':"/mnt/data/ai4earth/zhangtianning/datasets/WeatherBench/weatherbench_6hour/",
+        'channel_name_list':"configs/datasets/WeatherBench/2D70.channel_list.json",
+        'time_reverse_flag':'only_forward',
+        'offline_data_is_already_normed':True,
+        'time_unit':6
+    }
     """
         
 
