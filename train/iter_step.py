@@ -7,6 +7,7 @@ import torch
 import numpy as np
 from .forward_step import once_forward, once_forward_normal
 from utils.tools import get_local_rank,optional_no_grad
+from .forward_step import feature_pick_check
 
 """
 There are two main iteration here
@@ -319,7 +320,7 @@ def esitimate_longterm_error(a0,a1, n =10):
         Bn = 1 + torch.pow(1-a1,i)*torch.pow(1-a0,1-i)*Bn
     return Bn
 
-from forward_step import feature_pick_check
+
 def run_one_iter_highlevel_fast(model, batch, criterion, status, sequence_manager, plugins):
     assert model.config.history_length == 1
     assert model.config.pred_len == 1

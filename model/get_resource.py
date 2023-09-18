@@ -2,7 +2,7 @@
 
 import torch
 import torch.backends.cudnn as cudnn
-from ..utils import load_model, getModelSize, deal_with_tuple_string
+#from utils import load_model, getModelSize, deal_with_tuple_string
 import timm
 import os
 import numpy as np
@@ -110,9 +110,8 @@ def build_model_and_optimizer(args):
     cudnn.benchmark = False  # will search a best CNN realized way at beginning
     cudnn.deterministic = True  # the key for continue training.
     logsys = args.logsys
-    logsys.info(f"model args: img_size= {args.img_size}")
-    logsys.info(f"model args: patch_size= {args.patch_size}")
-    args.model_kargs['unique_up_sample_channel'] = 0
+    logsys.info(f"model args: img_size= {args.model.img_size}")
+    logsys.info(f"model args: patch_size= {args.model.patch_size}")
     # ==============> Initial Model <=============
     if args.wrapper_model and 'Comb' in args.wrapper_model:
         model = build_combination_model(args)

@@ -1,40 +1,19 @@
 
-#import optuna
-import copy
-from train.nodal_snap_step import run_nodalosssnap, run_one_epoch
+from train.epoch_step import run_one_epoch
+from train.nodal_snap_step import run_nodalosssnap
 from evaluator.evaluate import run_fourcast, run_fourcast_during_training
-
-from mltool.visualization import *
-
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.backends.cudnn as cudnn
-from torch.utils.data.distributed import DistributedSampler
-
-
-from model.patch_model import *
-from model.time_embeding_model import *
-from model.physics_model import *
-from model.othermodels import *
-from model.FeaturePickModel import *
-from model.GraphCast import *  
-from criterions.criterions import *
-
-from utils.params import get_args
+from configs.arguments import get_args
 from utils.tools import save_state, load_model, get_local_rank
-import pandas as pd
-
 import torch.distributed as dist
-
-from model.GradientModifier import *
-from dataset.cephdataset import *
-
-import random
-import traceback
-import time
-
-
+import os
+from accelerate import Accelerator
+from accelerate.utils import ProjectConfiguration, set_seed
+from accelerate import DistributedDataParallelKwargs
+from configs.utils import get_ckpt_path
+from utils.loggingsystem import create_logsys
+from model.get_resource import build_model_and_optimizer
+from dataset.get_resource import get_test_dataset, get_train_and_valid_dataset
 #########################################
 ############# main script ###############
 #########################################
@@ -53,7 +32,7 @@ def step_the_scheduler(lr_scheduler, now_lr, epoch, args):
     freeze_learning_rate = (args.scheduler_min_lr and now_lr < args.scheduler_min_lr)  and (args.scheduler_inital_epochs and epoch > args.scheduler_inital_epochs)
     if (not args.more_epoch_train) and (lr_scheduler is not None) and not freeze_learning_rate:lr_scheduler.step(epoch)
 
-def update_and_save_training_status(args, epoch, loss_information, training_system):
+def update_and_save_training_status(args, epoch, loss_information, training_state):
     if get_local_rank():return 
     ### loss_information:
     ## {'train_loss': {'now':0, 'best':0, 'save_path':.....},
@@ -76,7 +55,7 @@ def update_and_save_training_status(args, epoch, loss_information, training_syst
             if epoch > args.epochs//10:
                 logsys.info(f"saving best model for {loss_type}....",show=False)
                 performance = dict([(name, val['best']) for name, val in loss_information])
-                save_state(epoch=epoch, path=save_path, only_model=True, performance=performance, **training_system)
+                save_state(epoch=epoch, path=save_path, only_model=True, performance=performance, **training_state)
                 logsys.info(f"done;",show=False)
             logsys.info(f"The best {loss_type} is {best_loss}", show=False)
             logsys.record(f'best_{loss_type}', best_loss, epoch, epoch_flag='epoch')
@@ -92,10 +71,10 @@ def update_and_save_training_status(args, epoch, loss_information, training_syst
     save_path = loss_information[loss_type]['save_path']
     if ((epoch>=args.save_warm_up) and (epoch%args.save_every_epoch==0)) or (epoch==args.epochs-1) or (epoch in args.epoch_save_list):
         logsys.info(f"saving latest model ....", show=False)
-        save_state(epoch=epoch, step=0, path=save_path, only_model=False, performance=performance, **training_system)
+        save_state(epoch=epoch, step=0, path=save_path, only_model=False, performance=performance, **training_state)
         logsys.info(f"done ....",show=False)
         if epoch in args.epoch_save_list:
-            save_state(epoch=epoch, path=save_path, path=f'{save_path}-epoch{epoch}', only_model=True, performance=performance, **training_system)
+            save_state(epoch=epoch, path=f'{save_path}-epoch{epoch}', only_model=True, performance=performance, **training_state)
     return loss_information
     
 def distributed_runtime(args):
@@ -109,9 +88,7 @@ def distributed_runtime(args):
         print(f"start init_process_group,backend={args.dist_backend}, init_method={args.dist_url},world_size={args.world_size}, rank={args.rank}")
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,world_size=args.world_size, rank=args.rank)
 
-from accelerate import Accelerator
-from accelerate.utils import ProjectConfiguration, set_seed
-from accelerate import DistributedDataParallelKwargs
+
 def build_accelerator(args):
 
     project_config = ProjectConfiguration(
@@ -120,18 +97,15 @@ def build_accelerator(args):
         total_limit=args.num_max_checkpoints,
     )
     log_with = ['tensorboard']
-    if args.use_wandb:
+    if args.monitor.use_wandb:
         log_with.append("wandb")
-    ddp_kwargs = DistributedDataParallelKwargs(
-        find_unused_parameters=args.find_unused_parameters)
-    accelerator = Accelerator(dispatch_batches=True, project_config=project_config,
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=args.train.find_unused_parameters)
+    accelerator = Accelerator(dispatch_batches=not args.data.dispatch_in_gpu, project_config=project_config,
                               log_with=log_with, kwargs_handlers=[ddp_kwargs]
                               )
     return accelerator
 
-from configs.arguments import parse_default_args, get_ckpt_path,create_logsys
-from model.get_resource import build_model_and_optimizer
-from dataset.utils import get_test_dataset,get_train_and_valid_dataset
+
 def main_worker(local_rank, ngpus_per_node, args,
                 result_tensor=None,
                 train_dataset_tensor=None,train_record_load=None,
@@ -141,12 +115,11 @@ def main_worker(local_rank, ngpus_per_node, args,
     """
     if local_rank==0:print(f"we are at mode={args.mode}")
     ##### locate the checkpoint dir ###########
-    args.gpu       = args.local_rank = gpu  = local_rank
+    args.gpu            = args.local_rank = gpu  = local_rank
     args.ngpus_per_node = ngpus_per_node
     #--- parse args: dataset_kargs / model_kargs / train_kargs  #---
-    args = parse_default_args(args)
-    SAVE_PATH = get_ckpt_path(args)
-    args.SAVE_PATH = str(SAVE_PATH)
+    #args      = parse_default_args(args)
+    args.SAVE_PATH = get_ckpt_path(args)
     ########## inital log ###################
     logsys = create_logsys(args)
     #########################################
@@ -175,7 +148,7 @@ def main_worker(local_rank, ngpus_per_node, args,
         model, optimizer, lr_scheduler, train_dataloader, val_dataloader = args.accelerator.prepare(
             model, optimizer, lr_scheduler, train_dataloader, val_dataloader)
 
-
+    raise
 
     start_step             = args.start_step
 

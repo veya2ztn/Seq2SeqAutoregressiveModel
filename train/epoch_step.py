@@ -1,16 +1,13 @@
-from dataset.utils import RandomSelectPatchFetcher, RandomSelectMultiBranchFetcher
+from dataset.get_resource import RandomSelectPatchFetcher, RandomSelectMultiBranchFetcher
 from mltool.dataaccelerate import DataSimfetcher as Datafetcher
 import torch
 import time 
 import torch.distributed as dist
 import numpy as np
-import torch.nn as nn
-
 from .iter_step import run_one_iter
-from .utils import NanDetect
-from .forward_step import make_data_regular
-from criterions.high_order_loss_coef import calculate_coef, calculate_deltalog_coef, normlized_coef_type2, normlized_coef_type3, normlized_coef_type0, normlized_coef_type_bonded
-from utils.tools import get_local_rank, optional_no_grad
+from .sequence2sequence_manager import FieldsSequence
+
+from criterions.high_order_loss_coef import calculate_coef, normlized_coef_type2, normlized_coef_type3, normlized_coef_type0, normlized_coef_type_bonded
 
 def get_fetcher(status,data_loader):
     if (status =='train' and \
@@ -142,7 +139,7 @@ class LongTermEstimatePlugin:
             #print(c1,c2,c3)
             #raise
 
-from sequence2sequence_manager import FieldsSequence
+
 def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, 
                          optimizer, logsys, status, accelerator, plugins=[]):
     

@@ -1,485 +1,485 @@
+import argparse
+import json
+from dataclasses import dataclass, field
+from simple_parsing import ArgumentParser
+from model.model_arguements import (AFNONetConfig, PatchEmbeddingConfig, GraphCastConfig)
 
-#########################################
-######## argument and config set #######
-#########################################
+def build_parser():
+    parser = ArgumentParser(description='Arguments', allow_abbrev=False, add_help=True)
+    # Standard arguments.
+    parser = _add_model_args(parser)
+    parser = _add_training_args(parser)
+    parser = _add_optimizer_args(parser)
+    parser = _add_dataset_args(parser)
+    parser = _add_valid_args(parser)
+    return parser
 
-def tuple2str(_tuple):
-    if isinstance(_tuple,(list,tuple)):
-        return '.'.join([str(t) for t in (_tuple)])
-    else:
-        return _tuple
+def get_plain_parser():
+    parser = build_parser()
+    return parser.parse_args()
 
-def get_model_name(args):
-    model_name = args.model_type
-    if "FED" in args.model_type:
-        mode_name =args.modes.replace(",","-")
-        return f"{args.model_type}.{args.mode_select}_select.M{mode_name}_P{args.pred_len}L{args.label_len}"
-    if "AFN" in args.model_type and hasattr(args,'model_depth') and args.model_depth == 6:
-        model_name = "small_" + model_name
-    model_name = f"ViT_in_bulk-{model_name}" if len(args.img_size)>2 else model_name
-    model_name = f"{args.wrapper_model}-{model_name}" if args.wrapper_model else model_name
-    model_name = f"{model_name}_Patch_{tuple2str(args.patch_range)}" if (args.patch_range and 'Patch' in args.dataset_type) else model_name
-    return model_name
-
-def get_datasetname(args):
-    datasetname = args.dataset_type
-    if not args.dataset_type and args.train_set in train_set:
-        datasetname = train_set[args.train_set][4].__name__
-    if not datasetname:
-        raise NotImplementedError("please use right dataset type")
-        
-    if datasetname in ["",'ERA5CephDataset','ERA5CephSmallDataset']:
-        datasetname  = "ERA5_20-12" if 'physics' in args.train_set else "ERA5_20"
-    return datasetname
-
-def get_projectname(args):
-    model_name   = get_model_name(args)
-    datasetname  = get_datasetname(args)
-
-    if "Self" in datasetname:
-        property_names = 'UVTPH'
-        picked_input_name = "".join([property_names[t] for t in args.picked_input_property])
-        picked_output_name= "".join([property_names[t] for t in args.picked_output_property])
-        project_name = f"{picked_input_name}_{picked_output_name}"
-    else:
-        project_name = f"{args.mode}-{args.train_set}"
-        if hasattr(args,'random_time_step') and args.random_time_step:project_name = 'rd_sp_'+project_name 
-        if hasattr(args,'time_step') and args.time_step:              project_name = f"ts_{args.time_step}_" +project_name 
-        if hasattr(args,'history_length') and args.history_length !=1:project_name = f"his_{args.history_length}_"+project_name
-        if hasattr(args,'time_reverse_flag') and args.time_reverse_flag !="only_forward":project_name = f"{args.time_reverse_flag}_"+project_name
-        if hasattr(args,'time_intervel') and args.time_intervel:project_name = project_name + f"_per_{args.time_intervel}_step"
-        if args.patch_range != args.dataset_patch_range and args.patch_range and args.dataset_patch_range: 
-            project_name = project_name + f"_P{tuple2str(args.dataset_patch_range)}_for_P{tuple2str(args.patch_range)}"
-        #if hasattr(args,'cross_sample') and args.cross_sample:project_name = project_name + f"_random_dataset"
-        #print(project_name)
-    return model_name, datasetname,project_name
-
-def deal_with_tuple_string(patch_size,defult=None,dtype=int):
-    if isinstance(patch_size,str):
-        if len(patch_size)>0:
-            patch_size  = tuple([dtype(t) for t in patch_size.split(',')])
-            if len(patch_size) == 1: patch_size=patch_size[0]
-        else:
-            patch_size = defult
-    elif isinstance(patch_size,int):
-        patch_size = patch_size
-    elif isinstance(patch_size,list):
-        patch_size = tuple(patch_size)
-    elif isinstance(patch_size,tuple):
-        pass
-    else:
-        patch_size = defult
-    return patch_size
-
-def get_ckpt_path(args):
-    if args.debug:
-        return Path('./debug')
-    TIME_NOW  = time.strftime("%m_%d_%H_%M")+f"_{args.port}" if args.distributed else time.strftime("%m_%d_%H_%M_%S")
-    if args.seed == -1:args.seed = 42;#random.randint(1, 100000)
-    if args.seed == -2:args.seed = random.randint(1, 100000)
-    TIME_NOW  = f"{TIME_NOW}-seed_{args.seed}"
-    args.trail_name = TIME_NOW
-    if not hasattr(args,'train_set'):args.train_set='large'
-    args.time_step  = ts_for_mode[args.mode] if not args.time_step else args.time_step
-    model_name, datasetname, project_name = get_projectname(args)
-    if args.continue_train or (('fourcast' in args.mode) and (not args.do_fourcast_anyway)):
-        assert args.pretrain_weight
-        #args.mode = "finetune"
-        SAVE_PATH = Path(os.path.dirname(args.pretrain_weight))
-    else:
-        SAVE_PATH = Path(f'./checkpoints/{datasetname}/{model_name}/{project_name}/{TIME_NOW}')
-        SAVE_PATH.mkdir(parents=True, exist_ok=True)
-    return SAVE_PATH
-
-def parse_default_args(args):
-    if args.seed == -1:args.seed = 42
-    if args.seed == -2:args.seed = random.randint(1, 100000)
-    args.half_model = half_model
-    args.batch_size = bs_for_mode[args.mode] if args.batch_size == -1 else args.batch_size
-    args.valid_batch_size = args.batch_size*8 if args.valid_batch_size == -1 else args.valid_batch_size
-    args.epochs     = ep_for_mode[args.mode] if args.epochs == -1 else args.epochs
-    args.lr         = lr_for_mode[args.mode] if args.lr == -1 else args.lr
-    args.time_step = ts_for_mode[args.mode] if args.time_step == -1 else args.time_step
-
-    if not hasattr(args,'epoch_save_list'):args.epoch_save_list = [99]
-    if isinstance(args.epoch_save_list,str):args.epoch_save_list = [int(p) for p in args.epoch_save_list.split(',')]
-    # input size
-    img_size = patch_size = x_c = y_c =  dataset_type = None
-
-    if args.train_set is not None and args.train_set in train_set:
-        img_size, patch_size, x_c, y_c, dataset_type,dataset_kargs = train_set[args.train_set]
-        
-        if 'Euler' in args.wrapper_model: y_c  = 15
-    else:
-        assert args.img_size
-        assert args.patch_size
-        assert args.input_channel
-        assert args.output_channel
-        assert args.dataset_type
-        dataset_kargs={}
-
-
-    dataset_kargs['root'] = args.data_root if args.data_root != "" else None
-    dataset_kargs['mode']        = args.mode
-    dataset_kargs['time_step']   = args.time_step
-    dataset_kargs['check_data']  = True
-    dataset_kargs['time_reverse_flag'] = 'only_forward' if not hasattr(args,'time_reverse_flag') else args.time_reverse_flag
+def structure_args(args):
     
-    dataset_kargs['use_offline_data'] = args.use_offline_data
-    dataset_kargs['add_ConstDirectly'] = args.add_ConstDirectly
-    dataset_kargs['add_LunaSolarDirectly'] = args.add_LunaSolarDirectly
-    if hasattr(args,'dataset_flag') and args.dataset_flag:dataset_kargs['dataset_flag']= args.dataset_flag
-    if hasattr(args,'time_intervel'):dataset_kargs['time_intervel']= args.time_intervel
-    if hasattr(args,'cross_sample'):dataset_kargs['cross_sample']= args.cross_sample
-    if hasattr(args,'use_time_stamp') and args.use_time_stamp:dataset_kargs['use_time_stamp']= args.use_time_stamp
-    if hasattr(args,'use_position_idx'):dataset_kargs['use_position_idx']= args.use_position_idx
-    
-    args.unique_up_sample_channel = args.unique_up_sample_channel
-    
+    new_args = argparse.Namespace(
+        model=get_model_args(args),
+        train=get_train_args(args),
+        valid=get_valid_args(args),
+        data=get_data_args(args),
+        optimizer=get_optim_args(args),
+        debug=args.debug
+    )
+    return new_args
 
-    args.dataset_type = dataset_type if not args.dataset_type else args.dataset_type
-    args.dataset_type = args.dataset_type.__name__ if not isinstance(args.dataset_type,str) else args.dataset_type
-    x_c        = args.input_channel = x_c if not args.input_channel else args.input_channel
-    y_c        = args.output_channel= y_c if not args.output_channel else args.output_channel
-    patch_size = args.patch_size = deal_with_tuple_string(args.patch_size,patch_size)
-    img_size   = args.img_size   = deal_with_tuple_string(args.img_size,img_size)
-    patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,None)
-    multibranch_select = args.multibranch_select= deal_with_tuple_string(args.multibranch_select,None)
-    #print(args.multibranch_select)
-    if "Patch" in args.dataset_type:
-        dataset_patch_range = args.dataset_patch_range = deal_with_tuple_string(args.dataset_patch_range,None)
-    else:
-        dataset_patch_range = args.dataset_patch_range = None
-    dataset_kargs['img_size'] = img_size
-    dataset_kargs['patch_range']= dataset_patch_range if dataset_patch_range else patch_range
-    dataset_kargs['debug']= args.debug
-    dataset_kargs['multibranch_select']= args.multibranch_select
-    args.dataset_kargs = dataset_kargs
-    args.picked_input_property = args.picked_output_property = None
-    if args.picked_inputoutput_property:
-        args.picked_input_property, args.picked_output_property = args.picked_inputoutput_property.split(".")
-        args.picked_input_property = deal_with_tuple_string(args.picked_input_property,None)
-        args.picked_input_property = [args.picked_input_property] if isinstance(args.picked_input_property,int) else args.picked_input_property
-        args.picked_output_property = deal_with_tuple_string(args.picked_output_property,None)
-        args.picked_output_property= [args.picked_output_property] if isinstance(args.picked_output_property,int) else args.picked_output_property
-        args.input_channel = 14*len(args.picked_input_property)
-        args.output_channel= 14*len(args.picked_output_property)
-    dataset_kargs['picked_input_property'] = args.picked_input_property
-    dataset_kargs['picked_output_property'] = args.picked_output_property
-    # model_img_size= args.img_size
-    # if 'Patch' in args.wrapper_model:
-    #     if '3D' in args.wrapper_model:
-    #         model_img_size = tuple([5]*3)
-    #     else:
-    #         model_img_size = tuple([5]*2)
-    model_kargs={
-        "img_size": args.img_size, 
-        "patch_size": args.patch_size, 
-        "patch_range":args.patch_range,
-        "in_chans": args.input_channel, 
-        "out_chans": args.output_channel,
-        "fno_blocks": args.fno_blocks,
-        "embed_dim": args.embed_dim if not args.debug else 16*6, 
-        "depth": args.model_depth if not args.debug else 1,
-        "debug_mode":args.debug,
-        "double_skip":args.double_skip, 
-        "fno_bias": args.fno_bias, 
-        "fno_softshrink": args.fno_softshrink,
-        "history_length": args.history_length,
-        "reduce_Field_coef":args.use_scalar_advection,
-        "modes":deal_with_tuple_string(args.modes,(17,33,6)),
-        "mode_select":args.mode_select,
-        "physics_num":args.physics_num,
-        "pred_len":args.pred_len,
-        "n_heads":args.n_heads,
-        "label_len":args.label_len,
-        "canonical_fft":args.canonical_fft,
-        "unique_up_sample_channel":args.unique_up_sample_channel,
-        "share_memory":args.share_memory,
-        "dropout_rate":args.dropout_rate,
-        "conv_simple":args.conv_simple,
-        "graphflag":args.graphflag,
-        "use_pos_embed":args.use_pos_embed,
-        "agg_way":args.agg_way
-    }
-    args.model_kargs = model_kargs
-
-
-    args.snap_index = [[0,40,80,12], [t for t in [38,49,13,27] if t < args.output_channel]      # property  Z500 and T850 and v2m and u2m and 
-                       ] 
-    if args.wrapper_model == 'PatchWrapper':
-        args.snap_index.append({0:[[15],[15]],1:[[13],[15]],2:[[11],[15]],3:[[ 9],[15]],4:[[ 7],[15]],5:[[ 5],[15]]})
-    else:
-        args.snap_index.append([[15,15,15, 7, 7, 7,23,23,23],
-                                [15,31,45,15,31,45,15,31,45]])
-    if args.output_channel<=13:args.snap_index=None
-    if not hasattr(args,'ngpus_per_node'):args.ngpus_per_node=1
-    args.real_batch_size = args.batch_size * args.accumulation_steps * args.ngpus_per_node 
-    args.compute_graph = parser_compute_graph(args.compute_graph_set)
-    args.torch_compile = (torch.__version__[0]=="2" and args.torch_compile)
+def get_args_parser():
+    """Parse all arguments in structure way"""
+    args = get_plain_parser()
+    args = structure_args(args)   
     return args
 
-def create_logsys(args,save_config=True):
-    local_rank = args.gpu
-    SAVE_PATH  = args.SAVE_PATH
-    recorder_list = args.recorder_list if hasattr(args,'recorder_list') else ['tensorboard']
-    logsys   = LoggingSystem(local_rank==0 or (not args.distributed),args.SAVE_PATH,seed=args.seed,
-                             use_wandb=args.use_wandb,recorder_list=recorder_list,flag=args.mode,
-                             disable_progress_bar=args.disable_progress_bar)
-    hparam_dict={'patch_size':args.patch_size , 'lr':args.lr, 'batch_size':args.batch_size,'model':args.model_type}
-    metric_dict={'best_loss':None}
-    dirname = SAVE_PATH
-    dirname,name     = os.path.split(dirname)
-    dirname,job_type = os.path.split(dirname)
-    dirname,group    = os.path.split(dirname)
-    dirname,project  = os.path.split(dirname)
-    wandb_id         = None
-    # if wandb_id is None:
-    #     wandb_id = f"{project}-{group}-{job_type}-{name}"
-    #     wandb_id = hashlib.md5(wandb_id.encode("utf-8")).hexdigest()+"the2"
-    #args.wandb_id = wandb_id #if we dont assign the wandb_id, the default is None 
-    #do not save the args.wandb_id in the config
-    print(f"wandb id: {wandb_id}")
-    _ = logsys.create_recorder(hparam_dict=hparam_dict,metric_dict={'best_loss': None},
-                                args=args,project = project,
-                                entity  = "szztn951357",
-                                group   = group,
-                                job_type= job_type,
-                                name    = name,
-                                wandb_id =wandb_id
-                               ) 
-    # fix the seed for reproducibility
-    # torch.manual_seed(args.seed)
-    # np.random.seed(args.seed)
-    # cudnn.benchmark = True
-    ## already done in logsys
-    if args.log_trace_times is None:
-        logsys.log_trace_times   = 1 if "Patch" in args.dataset_type else 100
-    else:
-        logsys.log_trace_times = args.log_trace_times
-    logsys.do_iter_log     = args.do_iter_log
-    args.logsys = ""
-    if not args.debug and save_config:
-        for key, val in vars(args).items():
-            if local_rank==0:print(f"{key:30s} ---> {val}")
-        config_path = os.path.join(logsys.ckpt_root,'config.json')
-        if not os.path.exists(config_path):
-            with open(config_path,'w') as f:
-                config = vars(args)
-                config['wandb_id']=""
-                json.dump(config,f)
-    args.logsys = logsys
+def flatten_dict(_dict):
+    out = {}
+    for key, val in _dict.items():
+        if isinstance(val, dict):
+            for k, v in val.items():
+                out[k] = v 
+        else:
+            out[key] = val
+    return out
     
-    return logsys
+def get_args(config_path=None):
+    conf_parser = argparse.ArgumentParser(add_help=False)
+    conf_parser.add_argument("-c", "--conf_file",     default=None, help="Specify config file", metavar="FILE")
+    conf_parser.add_argument("-m", "--model_config",  default=None, help="Specify config file", metavar="FILE")
+    conf_parser.add_argument("-t", "--train_config",  default=None, help="Specify config file", metavar="FILE")
+    args, remaining_argv = conf_parser.parse_known_args()
+    parser = argparse.ArgumentParser('The Whole argument', parents=[build_parser()])
+    defaults = {}
+    config_path = config_path if config_path else args.conf_file
+
+    if config_path:
+        with open(config_path, 'r') as f:defaults = json.load(f)
+        
+        if 'model_config' in defaults:
+            args.model_config = defaults['model_config']
+            print("given config has model config, overwrite other model_config")
+        if 'train_config' in defaults:
+            args.train_config = defaults['train_config']
+            print("given config has train config, overwrite other train_config")
+        new_pool = {}
+        for key, val in defaults.items(): 
+            # check the code below , there are many key and attr have different name, which means the json load cannot recovery exactly the origin configuration.
+            # since the model_config and train_config maybe also get changed during develop.
+            # load a trail from json config is experiment.
+            if isinstance(val, dict):
+                for k,v in val.items():new_pool[k] = v
+            else:
+                new_pool[key] = val
+        parser.set_defaults(**flatten_dict(new_pool))
+
+    if args.model_config:
+        with open(args.model_config, 'r') as f:defaults = json.load(f)
+        parser.set_defaults(**flatten_dict(defaults))
+
+    if args.train_config:
+        with open(args.train_config, 'r') as f:defaults = json.load(f)
+        parser.set_defaults(**flatten_dict(defaults)) 
+    
+    
+    config = parser.parse_known_args(remaining_argv)[0]
+    config.config_file = args.conf_file
+    config = structure_args(config)
+
+    if args.model_config:config.model_config = args.model_config
+    if args.train_config:config.train_config = args.train_config
+    return config
 
 
-def parser_compute_graph(compute_graph_set):
-    # X0 X1 X2
-    # |  |  |
-    # x1 x2 x3
-    # |  |
-    # y2 y3
-    # |
-    # z3
 
-    if compute_graph_set is None:
-        return None, None
-    if compute_graph_set == "":
-        return None, None
-    compute_graph_set_pool = {
-        'fwd3_D': ([[1], [2], [3]], [[0, 1, 1, 0.33, "quantity"],
-                                     [0, 2, 2, 0.33, "quantity"],
-                                     [0, 3, 3, 0.33, "quantity"]]),
-        'fwd3_D_Rog5': ([[1], [2], [3]], [[0, 1, 1, 1.0, "quantity_real_log5"], [0, 2, 2, 1.0, "quantity_real_log5"], [0, 3, 3, 1.0, "quantity_real_log5"]]),
-        'fwd3_D_Mog': ([[1], [2], [3]], [[0, 1, 1, 1.0, "quantity_mean_log"], [0, 2, 2, 1.0, "quantity_mean_log"], [0, 3, 3, 1.0, "quantity_mean_log"]]),
-        'fwd2_TA': ([[1, 2, 3], [2], [3]], [[0, 1, 1, 0.25, "quantity"],
-                                            [0, 2, 2, 0.25, "quantity"],
-                                            [1, 2, 2, 0.25, "alpha"],
-                                            [1, 3, 3, 0.25, "alpha"]
-                                            ]),
-        'fwd2_TAL': ([[1, 2, 3], [2], [3]], [[0, 1, 1, 0.25, "quantity"],
-                                             [0, 2, 2, 0.25, "quantity"],
-                                             [1, 2, 2, 0.25, "alpha_log"],
-                                             [1, 3, 3, 0.25, "alpha_log"]
-                                             ]),
-        'fwd2_KAR': ([[1, 2, 3], [2, 3], [3]], [[0, 1, 1, 0.5, "quantity"],
-                                                [0, 2, 2, 0.5, "quantity"],
-                                                [1, 2, 2, 0.5, "quantity"],
-                                                [1, 3, 3, 0.5, "quantity"],
-                                                [2, 3, 3, 0.5, "quantity"]
-                                                ]),
-        'fwd1_D': ([[1]],   [[0, 1, 1, 1.0, "quantity"]]),
-        'fwd1_TA': ([[1, 2], [2]],   [[0, 1, 1, 1.0, "quantity"], [1, 2, 2, 1.0, "alpha"]]),
-        'fwd2_D': ([[1], [2]],   [[0, 1, 1, 1.0, "quantity"], [0, 2, 2, 1.0, "quantity"]]),
-        'fwd2_D_Log': ([[1], [2]],   [[0, 1, 1, 1.0, "quantity_log"], [0, 2, 2, 1.0, "quantity_log"]]),
-        'fwd2_D_Rog': ([[1], [2]],   [[0, 1, 1, 1.0, "quantity_real_log"], [0, 2, 2, 1.0, "quantity_real_log"]]),
-        'fwd2_D_Rog5': ([[1], [2]],   [[0, 1, 1, 1.0, "quantity_real_log5"], [0, 2, 2, 1.0, "quantity_real_log5"]]),
+##############################################
+############### Model Setting ################
+##############################################
 
-        'fwd2_D_Rog3': ([[1], [2]],   [[0, 1, 1, 1.0, "quantity_real_log3"], [0, 2, 2, 1.0, "quantity_real_log3"]]),
-        'fwd2_D_Rog2': ([[1], [2]],   [[0, 1, 1, 1.0, "quantity_real_log2"], [0, 2, 2, 1.0, "quantity_real_log2"]]),
-        'fwd2_D_Mog': ([[1], [2]],   [[0, 1, 1, 1.0, "quantity_mean_log"], [0, 2, 2, 1.0, "quantity_mean_log"]]),
-        'fwd2_D_Pog': ([[1], [2]],   [[0, 1, 1, 1.0, "quantity_batch_mean_log"], [0, 2, 2, 1.0, "quantity_batch_mean_log"]]),
-        'fwd1_D_Mog': ([[1]],   [[0, 1, 1, 1.0, "quantity_mean_log"]]),
-        'fwd1_D_Rog5': ([[1]],   [[0, 1, 1, 1.0, "quantity_real_log5"]]),
-        'fwd2_P': ([[1, 2], [2]], [[0, 1, 1, 1.0, "quantity"],
-                                   [0, 2, 2, 1.0, "quantity"],
-                                   [1, 2, 2, 1.0, "quantity"]
-                                   ]),
-        'fwd2_PR': ([[1, 2], [2]], [[0, 1, 1, 0.5, "quantity"],
-                                    [0, 2, 2, 0.5, "quantity"],
-                                    [1, 2, 2, 1.0, "quantity"]
-                                    ]),
-        'fwd2_PRO': ([[1, 2], [2]], [[0, 1, 1, 1, "quantity"],
-                                     [0, 2, 2, 1, "quantity"],
-                                     [1, 2, 2, 0.5, "quantity"]
-                                     ]),
-        'fwd4_AC': ([[1, 2, 3, 4],
-                     [2],
-                     [3],
-                     [4]],
-                    [[0, 1, 1, 1, "quantity"],
-                        [1, 2, 2, 1, "quantity"],
-                        [1, 3, 3, 1, "quantity"],
-                     [1, 4, 4, 1, "quantity"],
-                     ]),
-        'fwd4_KC_L': ([[1, 2, 3, 4],
-                       [2],
-                       [3],
-                       [4]],
-                      [[0, 3, 3, 1, "quantity"],
-                          [1, 2, 2, 0.33, "quantity"],
-                          [1, 3, 3, 0.33, "quantity"],
-                          [1, 4, 4, 0.33, "quantity"],
-                       ]),
-        'fwd4_AC': ([[1, 2, 3, 4],
-                     [2],
-                     [3],
-                     [4]],
-                    [[0, 1, 1, 1, "quantity"],
-                        [1, 2, 2, 1, "quantity"],
-                        [1, 3, 3, 1, "quantity"],
-                     [1, 4, 4, 1, "quantity"],
-                     ]),
-        'fwd4_C': ([[1, 2, 3, 4],
-                    [2],
-                    [3],
-                    [4]],
-                   [[0, 1, 1, 1, "quantity"],
-                       [1, 4, 4, 1, "quantity"],
-                    ]),
-        'fwd4_ABC': ([[1, 2, 3, 4],
-                      [2],
-                      [3],
-                      [4]],
-                     [[0, 1, 1, 1, "quantity"],
-                         [0, 1, 2, 1, "quantity"],
-                         [0, 1, 3, 1, "quantity"],
-                         [1, 2, 2, 1, "quantity"],
-                         [1, 3, 3, 1, "quantity"],
-                         [1, 4, 4, 1, "quantity"],
-                      ]),
-        'fwd4_ABC_H': ([[1, 2, 3, 4],
-                        [2],
-                        [3],
-                        [4]],
-                       [[0, 1, 1, 1, "quantity"],
-                           [0, 1, 2, 1, "quantity"],
-                           [0, 1, 3, 1, "quantity"],
-                        [1, 2, 2, 2, "quantity"],
-                        [1, 3, 3, 2, "quantity"],
-                        [1, 4, 4, 2, "quantity"],
-                        ]),
-        'fwd4_ABC_L': ([[1, 2, 3, 4],
-                        [2],
-                        [3],
-                        [4]],
-                       [[0, 1, 1, 0.5, "quantity"],
-                           [0, 1, 2, 0.5, "quantity"],
-                           [0, 1, 3, 0.5, "quantity"],
-                        [1, 2, 2, 1, "quantity"],
-                        [1, 3, 3, 1, "quantity"],
-                        [1, 4, 4, 1, "quantity"],
-                        ]),
-        'fwd3_ABC': ([[1, 2, 3],
-                      [2],
-                      [3]],
-                     [[0, 1, 1, 1, "quantity"],
-                      [0, 1, 2, 1, "quantity"],
-                      [1, 2, 2, 1, "quantity"],
-                      [1, 3, 3, 1, "quantity"]
-                      ]),
-        'fwd3_ABC_Log': ([[1, 2, 3],
-                          [2],
-                          [3]],
-                         [[0, 1, 1, 1, "quantity_log"],
-                          [0, 1, 2, 1, "quantity_log"],
-                          [1, 2, 2, 1, "quantity_log"],
-                          [1, 3, 3, 1, "quantity_log"]
-                          ]),
-        'fwd3_DC_Log': ([[1, 3],
-                         [2],
-                         [3]],
-                        [[0, 1, 1, 1, "quantity_log"],
-                         [0, 2, 2, 1, "quantity_log"],
-                         [1, 3, 3, 1, "quantity_log"]
-                         ]),
-        'fwd3_D_Log': ([[1], [2], [3]],   [[0, 1, 1, 1.0, "quantity_log"], [0, 2, 2, 1.0, "quantity_log"], [0, 3, 3, 1.0, "quantity_log"]]),
-        'fwd3_D_Pog': ([[1], [2], [3]],   [[0, 1, 1, 1.0, "quantity_batch_mean_log"], [0, 2, 2, 1.0, "quantity_batch_mean_log"], [0, 3, 3, 1.0, "quantity_batch_mean_log"]]),
-        'fwd2_PA': ([[1, 2], [2]], [[0, 1, 1, 1.0, "quantity"],
-                                    [0, 2, 2, 1.0, "quantity"],
-                                    [1, 2, 2, 1.0, "alpha"]
-                                    ]),
-        'fwd2_PAL': ([[1, 2], [2]], [[0, 1, 1, 1.0, "quantity"],
-                                     [0, 2, 2, 1.0, "quantity"],
-                                     [1, 2, 2, 1.0, "alpha_log"]
-                                     ]),
-        'fwd3_DlongT5': ([[1, 2, 3],
-                          [2],
-                          [3]],
-                         [[0, 1, 1, 1, "quantity"],
-                          [0, 1, 2, 1, "quantity"],
-                          [0, 1, 3, 1, "quantity"],
-                          ], 5),  # <--- in old better version it is another mean
-        'fwd3_longT10': ([[1, 2, 3],
-                          [2],
-                          [3]],
-                         [[0, 1, 1, 1, "quantity"],
-                         [0, 1, 2, 1, "quantity"],
-                         [0, 1, 3, 1, "quantity"],
-                         [0, 2, 2, 1, "quantity"],
-                         [0, 3, 3, 1, "quantity"],
-                          ], "during_valid_normal"),
-        'fwd3_D_go10': ([[1], [2], [3]],
-                        [],  # <--- no need, will auto deploy for during_valid_normal mode
-                        "during_valid_normal_10"),
-        'fwd3_D_go10_deltalog': ([[1], [2], [3]],
-                                 [],  # <--- no need, will auto deploy for during_valid_normal mode
-                                 "during_valid_deltalog_10"),
-        'fwd3_D_go10_per_feature': ([[1], [2], [3]],
-                                    [],  # <--- no need, will auto deploy for during_valid_normal mode
-                                    "during_valid_per_feature_10"),
-        'fwd3_D_go10_per_feature_needbase': ([[1], [2], [3]],
-                                             [],  # <--- no need, will auto deploy for during_valid_normal mode
-                                             "needbase_during_valid_per_feature_10"),
-        'fwd3_D_go10_needbase': ([[1], [2], [3]],
-                                 [],  # <--- no need, will auto deploy for during_valid_normal mode
-                                 "needbase_during_valid_normal_10"),
-        'fwd3_D_go10_vallina': ([[1], [2], [3]],
-                                [],  # <--- no need, will auto deploy for during_valid_normal mode
-                                "vallina_during_valid_normal_10"),
-        'fwd3_D_go10_per_feature_vallina': ([[1], [2], [3]],
-                                            [],  # <--- no need, will auto deploy for during_valid_normal mode
-                                            "vallina_during_valid_per_feature_10"),
-        'fwd3_D_go10_per_sample_vallina': ([[1], [2], [3]],
-                                           [],  # <--- no need, will auto deploy for during_valid_normal mode
-                                           "vallina_during_valid_per_sample_10"),
-        'fwd3_D_go10_per_sample_logoffset': ([[1], [2], [3]],
-                                             [],  # <--- no need, will auto deploy for during_valid_normal mode
-                                             "logoffset_during_valid_per_sample_10"),
-        'fwd3_D_go10_runtime_logoffset': ([[1], [2], [3]],
-                                          [],  # <--- no need, will auto deploy for during_valid_normal mode
-                                          "logoffset_runtime_10"),
+def _add_model_args(parser):
+    group = parser.add_argument_group(title='model')
+    
+    group.add_argument('--history_length', type=int, default=1)
+    group.add_argument('--in_chans', type=int,       default=20)
+    group.add_argument('--out_chans', type=int,      default=20)
+    group.add_argument('--embed_dim', type=int,      default=768)
+    group.add_argument('--depth', type=int,          default=12)
+    group.add_argument('--num_heads', type=int,      default=16)
+    group.add_argument('--compute_graph_set'  , type=str, default=None)
 
-    }
 
-    return compute_graph_set_pool[compute_graph_set]
+    group.add_argument('--skip_constant_2D70N', action='store_true',default=False)
+    group.add_argument('--pos_embed_type'     , type=str,default=None)
+    group.add_argument('--patch_size', type=int, nargs=',' , default=8)
+
+    parser.add_arguments(AFNONetConfig, dest="afnonet")
+    #parser.add_arguments(PatchEmbeddingConfig, dest="patch_embedding")
+    parser.add_arguments(GraphCastConfig, dest="graphcast")
+    # ### AFNONET
+    # group.add_argument('--unique_up_sample_channel', type=int, default=None)
+    # group.add_argument('--fno-softshrink', type=float, default=0.00)
+    # group.add_argument('--fno-bias', action='store_true')
+    # group.add_argument('--double-skip', action='store_true')
+
+    # #### Sphere Model
+    # group.add_argument('--block_target_timestamp', default=0, type=int)
+    
+    # #### MultiBranch Model
+    # group.add_argument('--model_type1', type=str, default=None)
+    # group.add_argument('--model_type2', type=str, default=None)
+    # group.add_argument('--backbone1_ckpt_path', type=str, default="")
+    # group.add_argument('--backbone2_ckpt_path', type=str, default="")
+    
+    
+    # #### MultiBranch Model
+    # group.add_argument('--multi_branch_order' , type=str, default=None)
+    # group.add_argument('--multibranch_select', type=str, default=None)
+
+
+    # ### PatchModel ###<---- due to the dataclass limit it is impossible to parse a list from commend line, thus declear it here
+    group.add_argument('--patch_range', type=str,default=None)
+
+    # ### GraphCastModel
+    # group.add_argument('--graphflag', type=str, default="mesh5")
+    # group.add_argument('--agg_way', default='mean', type=str)
+
+    # ### TimeSeries Model
+    # group.add_argument('--canonical_fft', default=1, type=int)
+    # group.add_argument('--pred_len', type=int, default=1)
+    # group.add_argument('--label_len', type=int, default=3)
+    return parser
+
+def get_model_args(args):
+    model_params = argparse.Namespace(
+        img_size = args.img_size,
+        history_length = args.history_length,
+        in_chans = args.in_chans,
+        out_chans = args.out_chans,
+        embed_dim = args.embed_dim,
+        depth     = args.depth,
+        debug_mode = args.debug
+    )
+
+    return model_params
+
+##############################################
+############### Plugin Setting ################
+##############################################
+def _add_plugin_args(parser):
+    group = parser.add_argument_group(title='plugin')
+    group.add_argument('--GDMod_type', type=str, default='off')
+    group.add_argument('--GDMod_lambda1', type=float, default=1)
+    group.add_argument('--GDMod_lambda2', type=float, default=0)
+    group.add_argument('--GDMod_L1_level', type=float, default=1)
+    group.add_argument('--GDMod_L2_level', type=float, default=1)
+    group.add_argument('--GDMod_sample_times', type=int, default=100)
+    group.add_argument('--path_length_mode', type=str, default="000")
+    group.add_argument('--rotation_regular_mode', type=str, default=None)
+    group.add_argument('--rotation_regularize',action='store_true', default=False)
+    group.add_argument('--GDMod_intervel', type=int, default=10)
+    group.add_argument('--ngmod_freq', type=int,default=10, help='ngmod_freq')
+    group.add_argument('--split_batch_chunk', type=int,default=16, help='split_batch_chunk')
+    group.add_argument('--gmod_update_mode', type=int,default=2, help='gmod_update_mode')
+    group.add_argument('--gd_alpha', type=float, default=1)
+    group.add_argument('--gd_loss_wall', type=float, default=0)
+    group.add_argument('--gd_loss_target', type=float, default=None)
+
+    group.add_argument('--path_length_regularize', type=int, default=0)
+    group.add_argument('--gmod_coef', type=str, default=None)
+    group.add_argument('--gdamp', type=int, default=0)
+    group.add_argument('--gdeval', type=int, default=0)
+
+    group.add_argument('--consistancy_alpha', type=str, default=None)
+    group.add_argument('--vertical_constrain', type=float, default=None)
+    group.add_argument('--consistancy_activate_wall', default=100, type=float)
+    group.add_argument('--consistancy_eval', default=0, type=int)
+    group.add_argument('--consistancy_cut_grad', action='store_true', default=False)
+    group.add_argument('--use_scalar_advection', action='store_true', default=False)
+    group.add_argument('--gd_alpha_stratagy', type=str, default='normal')
+    return parser    
+def get_plugin_args(args):
+    model_params = argparse.Namespace(
+        img_size = args.img_size,
+        patch_size = args.patch_size,
+        history_length = args.history_length,
+        in_chans = args.in_chans,
+        out_chans = args.out_chans,
+        embed_dim = args.embed_dim,
+        depth = args.depth,
+        debug_mode = args.debug_mode,
+    )
+
+    return model_params
+
+
+##############################################
+######## Data Augmentation Setting #########
+##############################################
+def _add_augmentation_args(parser):
+    group = parser.add_argument_group(title='augmentation')
+    group.add_argument('--input_noise_std', type=float,default=0.0, help='input_noise_std')
+    return parser
+
+
+##############################################
+############## Train Setting #################
+##############################################
+
+def _add_training_args(parser):
+    group = parser.add_argument_group(title='train')
+    group.add_argument('--debug'                 , type=int, default=0, help='debug mode')
+    group.add_argument('--mode'                  , type=str, default='pretrain', choices=['pretrain', 'finetune', 'more_epoch_train', 'continue_train'])
+    group.add_argument('--batch_size'            , default=32, type=int)
+    group.add_argument('--epochs'                , default=100, type=int)
+    group.add_argument('--seed'                  , default=1994, type=int)
+    group.add_argument('--accumulation_steps'    , type=int,default=1, help='accumulation_steps')
+    group.add_argument('--skip_first_valid'      , action='store_true',default=False)
+    group.add_argument('--do_first_fourcast'     , action='store_true', default=False)
+    group.add_argument('--do_final_fourcast'     , action='store_true',default=False)
+    group.add_argument('--do_fourcast_anyway'    , action='store_true',default=False)
+    group.add_argument('--train_not_shuffle'     , action='store_true',default=False)
+    group.add_argument('--load_model_lossy'      , action='store_true', default=False)
+    group.add_argument('--find_unused_parameters', action='store_true', default=False)
+    return parser
+
+def get_train_args(args):
+    training_params=argparse.Namespace(
+        debug  = args.debug,
+        mode  = args.mode,
+        batch_size  = args.batch_size,
+        valid_batch_size  = args.valid_batch_size,
+        epochs  = args.epochs,
+        seed  = args.seed,
+        accumulation_steps  = args.accumulation_steps,
+        skip_first_valid  = args.skip_first_valid,
+        do_first_fourcast  = args.do_first_fourcast,
+        do_final_fourcast  = args.do_final_fourcast,
+        do_fourcast_anyway  = args.do_fourcast_anyway,
+        train_not_shuffle  = args.train_not_shuffle,
+        load_model_lossy  = args.load_model_lossy,
+        find_unused_parameters  = args.find_unused_parameters,
+    )
+    return training_params
+
+
+
+##############################################
+############## ForeCast Setting ##############
+##############################################
+def _add_valid_args(parser):
+    group = parser.add_argument_group(title='training')
+    group.add_argument('--forecast_every_epoch', type=int, default=0,help='forecast_every_epoch')
+    group.add_argument('--pretrain_weight', type=str,default='', help='pretrain_weight')
+    group.add_argument('--fourcast_randn_initial', default=0, type=int)
+    group.add_argument('--force_fourcast', default=0, type=int)
+    group.add_argument('--snap_index'    , type=str, default=None)
+    group.add_argument('--wandb_id'      , type=str, default=None)
+    return parser
+
+def get_valid_args(args):
+    validation_params=argparse.Namespace(
+        valid_batch_size= args.valid_batch_size,
+        valid_every_epoch=args.valid_every_epoch,
+        forecast_every_epoch=args.forecast_every_epoch,
+        evaluate_every_epoch=args.evaluate_every_epoch,
+        sampling_rate=args.sampling_rate,
+        evaluate_branch=args.evaluate_branch
+    )
+    return validation_params
+
+
+##############################################
+############## Valid Setting #################
+##############################################
+def _add_valid_args(parser):
+    group = parser.add_argument_group(title='training')
+    group.add_argument('--valid_batch_size', type=int, default=2,help='valid batch size')
+    group.add_argument('--valid_every_epoch', type=int, default=1,help='valid_every_epoch')
+    group.add_argument('--forecast_every_epoch', type=int, default=0,help='forecast_every_epoch')
+    group.add_argument('--evaluate_every_epoch', type=int,
+                       default=10, help='evaluate_every_epoch')
+    group.add_argument('--evaluate_branch', type=str,
+                       default='TEST', help='evaluate_branch')
+    group.add_argument('--sampling_rate', type=int, default=100,help='sampling_rate')
+    return parser
+def get_valid_args(args):
+    validation_params=argparse.Namespace(
+        valid_batch_size= args.valid_batch_size,
+        valid_every_epoch=args.valid_every_epoch,
+        forecast_every_epoch=args.forecast_every_epoch,
+        evaluate_every_epoch=args.evaluate_every_epoch,
+        sampling_rate=args.sampling_rate,
+        evaluate_branch=args.evaluate_branch
+    )
+    return validation_params
+
+##############################################
+############### Loss Setting #################
+##############################################
+def _add_loss_args(parser):
+    group = parser.add_argument_group(title='loss')
+    parser.add_argument('--criterion', type=str,default='mse', help='criterion')
+    return parser
+def _structure_loss_args(args):
+    criterion_params = argparse.Namespace(
+        criterion= args.criterion,
+    )
+    return criterion_params
+
+
+##############################################
+############## Monitor Setting ###############
+##############################################
+def _add_monitor_args(parser):
+    group = parser.add_argument_group(title='monitor')
+    group.add_argument('--use_wandb', type=str, default="off",help='when to activate wandb')
+    group.add_argument("--tracemodel", type=int, default=0)
+    group.add_argument("--log_trace_times", type=int, default=40)
+    group.add_argument('--do_iter_log',action='store_true', help='whether continue train')
+    group.add_argument('--disable_progress_bar',action='store_true', help='whether continue train')
+    group.add_argument('--do_error_propagration_monitor', action='store_true')
+    return parser
+def get_monitor_args(args):
+    monitor_params = argparse.Namespace(
+        recorder_list= args.recorder_list,
+        disable_progress_bar=args.disable_progress_bar,
+        log_trace_times=args.log_trace_times,
+        do_iter_log=args.do_iter_log,
+        tracemodel=args.tracemodel
+    )
+    return monitor_params
+##############################################
+############## Dataset Setting ###############
+##############################################
+def _add_checkpointing_args(parser):
+    group = parser.add_argument_group(title='checkpointing')
+    group.add_argument('--epoch_save_list', type=int, nargs=',', default=None)
+    group.add_argument('--save_every_epoch', default=1, type=int)
+    group.add_argument('--save_warm_up', default=5, type=int)
+    return parser
+
+
+##############################################
+############# Optimizer Setting ##############
+##############################################
+def _add_optimizer_args(parser):
+    group = parser.add_argument_group(title='learning rate')
+    # Optimizer parameters # feed into timm
+    group.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER', help='Optimizer (default: "adamw"')
+    group.add_argument('--opt-eps', default=1e-8, type=float, metavar='EPSILON', help='Optimizer Epsilon (default: 1e-8)')
+    group.add_argument('--opt-betas', default=None, type=float, nargs='+', metavar='BETA', help='Optimizer Betas (default: None, use opt default)')
+    group.add_argument('--clip_grad', type=float, default=0, metavar='NORM', help='Clip gradient norm (default: None, no clipping)')
+    group.add_argument('--momentum', type=float, default=0.9, metavar='M', help='SGD momentum (default: 0.9)')
+    group.add_argument('--weight-decay', type=float, default=0.05, help='weight decay (default: 0.05)')
+    group.add_argument('--lr', type=float, default=1e-4, metavar='LR', help='learning rate (default: 5e-4)')
+    return parser
+def get_optim_args(args):
+    optimizer_params = argparse.Namespace(
+        epochs=args.epochs,
+        opt=args.opt,
+        opt_eps=args.opt_eps,
+        opt_betas=args.opt_betas,
+        clip_grad=args.clip_grad,
+        momentum=args.momentum,
+        weight_decay=args.weight_decay,
+        lr=args.lr,
+    )
+    return optimizer_params
+
+##############################################
+############# Optimizer Setting ##############
+##############################################
+def _add_scheduler_args(parser):
+    group = parser.add_argument_group(title='scheduler')
+    group.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER', help='LR scheduler (default: "cosine"')
+    group.add_argument('--lr-noise', type=float, nargs='+', default=None, metavar='pct, pct', help='learning rate noise on/off epoch percentages')
+    group.add_argument('--lr-noise-pct', type=float, default=0.67, metavar='PERCENT', help='learning rate noise limit percent (default: 0.67)')
+    group.add_argument('--lr-noise-std', type=float, default=1.0, metavar='STDDEV', help='learning rate noise std-dev (default: 1.0)')
+    group.add_argument('--warmup-lr', type=float, default=1e-6, metavar='LR', help='warmup learning rate (default: 1e-6)')
+    group.add_argument('--min-lr', type=float, default=1e-5, metavar='LR', help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
+    group.add_argument('--decay-epochs', type=float, default=30, metavar='N', help='epoch interval to decay LR')
+    group.add_argument('--warmup-epochs', type=int, default=5, metavar='N', help='epochs to warmup LR, if scheduler supports')
+    group.add_argument('--cooldown-epochs', type=int, default=10, metavar='N', help='epochs to cooldown LR at min_lr, after cyclic schedule ends')
+    group.add_argument('--patience-epochs', type=int, default=10, metavar='N', help='patience epochs for Plateau LR scheduler (default: 10')
+    group.add_argument('--decay-rate', '--dr', type=float, default=0.1, metavar='RATE', help='LR decay rate (default: 0.1)')
+    group.add_argument('--scheduler_inital_epochs', type=int, default=None)
+    group.add_argument('--scheduler_min_lr', type=float, default=None)
+    return parser
+def get_scheduler_args(args):
+    optimizer_params = argparse.Namespace(
+        lr=args.lr,
+        sched = args.sched,
+        lr_noise = args.lr_noise,
+        lr_noise_pct = args.lr_noise_pct,
+        lr_noise_std = args.lr_noise_std,
+        warmup_lr = args.warmup_lr,
+        min_lr = args.min_lr,
+        decay_epochs = args.decay_epochs,
+        warmup_epochs = args.warmup_epochs,
+        cooldown_epochs = args.cooldown_epochs,
+        patience_epochs = args.patience_epochs,
+        decay_rate = args.decay_rate,
+        scheduler_inital_epochs = args.scheduler_inital_epochs,
+        scheduler_min_lr = args.scheduler_min_lr
+    )
+    return optimizer_params
+
+
+
+##############################################
+############## Dataset Setting ###############
+##############################################
+def _add_dataset_args(parser):
+    group = parser.add_argument_group(title='data')
+    group.add_argument('--root', type=str, default = 'datasets/WeatherBench/weatherbench32x64_1hour/')
+    group.add_argument('--time_unit' , type = int, default = 1)
+    group.add_argument('--img_size', type=int, nargs=',', default=(32,64))
+    group.add_argument('--channel_name_list' , type = str, default="configs/datasets/WeatherBench/2D70.channel_list.json")
+    group.add_argument('--timestamps_list' , type = int , default = None)
+    group.add_argument('--time_step' , type = int , default = 2)
+    group.add_argument('--time_intervel' , type = int , default = 1)
+    group.add_argument('--dataset_patch_range' , type = int , nargs=',' , default=None)
+    group.add_argument('--normlized_flag' , type = str, default = 'N') 
+    group.add_argument('--time_reverse_flag' , type = str, default ='only_forward')
+    group.add_argument('--use_time_feature' , action='store_true', default = False) 
+    group.add_argument('--add_LunaSolarDirectly' , action='store_true', default = False) 
+    group.add_argument('--offline_data_is_already_normed' , action='store_true', default = False)
+    group.add_argument('--cross_sample' , action='store_true', default = False) 
+    group.add_argument('--constant_channel_pick' , type = int, nargs=',' , default = None)
+    group.add_argument('--make_data_physical_reasonable_mode' , type = str, default = None)
+    group.add_argument('--share_memory', action='store_true', default = False, help='share_memory_flag')
+    group.add_argument('--random_dataset', action='store_true', default = False, help='activate randomlized dataset ')
+    group.add_argument('--num_workers', type=int, default=0, help='num worker is better set 0')
+    group.add_argument('--use_offline_data', action='store_true', default = False)
+    group.add_argument('--chunk_size', type=int, default=1024)
+    group.add_argument('--picked_inputoutput_property',type=str, default=None)
+    group.add_argument('--random_time_step', action='store_true', default=None)
+    return parser
+
+def get_data_args(args):
+    data_params = argparse.Namespace(
+        root = args.root,
+        time_unit = args.time_unit,
+        resolution_w = args.img_size[1],
+        resolution_h = args.img_size[0],
+        channel_name_list = args.channel_name_list,
+        timestamps_list = args.timestamps_list,
+        time_step = args.time_step,
+        time_intervel = args.time_intervel,
+        normlized_flag = args.normlized_flag,
+        time_reverse_flag = args.time_reverse_flag,
+        use_time_feature = args.use_time_feature,
+        add_LunaSolarDirectly = args.add_LunaSolarDirectly,
+        offline_data_is_already_normed = args.offline_data_is_already_normed,
+        cross_sample = args.cross_sample,
+        constant_channel_pick = args.constant_channel_pick,
+        make_data_physical_reasonable_mode         = args.make_data_physical_reasonable_mode     
+    )
+    return data_params
+
+if __name__ == '__main__':
+    args = get_args()
+    #

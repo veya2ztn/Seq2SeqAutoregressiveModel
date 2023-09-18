@@ -1,8 +1,6 @@
 import os
 from .base import BaseDataset, Client
-
 from functools import lru_cache
-
 import numpy as np
 from utils.timefeatures import time_features
 import pandas as pd
@@ -63,10 +61,10 @@ class ERA5BaseDataset(BaseDataset):
 class ERA5CephDataset(ERA5BaseDataset):
     default_root     = 'cluster3:s3://era5npy'
     def __init__(self, split="train", config = {}):
-        self.root    = config.get('root', self.default_root)
-        self.years   = config.get('years', None)
+        self.root         = config.get('root', self.default_root)
+        self.years        = config.get('years', None)
         if self.years is None:self.years=self.Years[split] 
-        self.time_step = config.get('time_step', 2)
+        self.time_step    = config.get('time_step', 2)
         self.crop_coord   = config.get('crop_coord', None)
         self.channel_last = config.get('channel_last', None)
         self.with_idx     = config.get('with_idx', False)

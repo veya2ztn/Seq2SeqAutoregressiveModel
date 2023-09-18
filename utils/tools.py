@@ -146,7 +146,10 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
     return start_epoch, start_step, min_loss
 
 
-def save_state(epoch=0, step=0, performance=None, model = None, optimizer=None, lr_scheduler=None, loss_scaler=None, min_loss=np.inf, path=None, only_model=False):
+def save_state(epoch=0, step=0, performance=None, 
+               model = None, optimizer=None, lr_scheduler=None, 
+               loss_scaler=None, min_loss=np.inf, 
+               path=None, only_model=False):
     unwrapper_model = model
     while hasattr(unwrapper_model,'module'):
         unwrapper_model = unwrapper_model.module

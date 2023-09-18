@@ -3,7 +3,7 @@
 #########################################
 import torch
 from train.forward_step import make_data_regular
-from dataset.utils import get_test_dataset
+from dataset.get_resource import get_test_dataset
 from utils.tools import get_tensor_norm
 
 def save_and_log_table(_list, logsys, name, column, row=None):
@@ -256,7 +256,7 @@ def run_one_fourcast_iter(model, batch, idxes, fourcastresult,dataset,**kargs):
         return run_one_fourcast_iter_single_branch(model, batch, idxes, fourcastresult,dataset,**kargs)
 
 from train.forward_step import once_forward
-from train.iter_step import once_forward_error_evaluation
+from train.forward_step import once_forward_error_evaluation
 from .utils import compute_rmse,compute_accu
 
 

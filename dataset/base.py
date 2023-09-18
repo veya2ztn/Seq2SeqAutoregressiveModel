@@ -10,46 +10,14 @@ import traceback
 import numpy as np
 import torch
 import os
-import io
 import socket
-from torchvision import datasets, transforms
 from .utils import load_numpy_from_url
-hostname = socket.gethostname()
-#if hostname not in ['SH-IDC1-10-140-0-184','SH-IDC1-10-140-0-185'] and '54' not in hostname and '52' not in hostname:
 try:
     from petrel_client.client import Client
-    import petrel_client
 except:
     Client = None
-import typing
+from typing import Union, Optional
 from dataclasses import dataclass, field
-
-
-@dataclass
-class DatasetArguments:
-    root:str 
-    time_unit:int
-    resolution_w :int   
-    resolution_h :int   
-    channel_name_list:str
-    timestamps_list:typing.Optional[list] = field(default=None)
-    
-    time_step    :int = field(default=2)    
-    time_intervel:int = field(default=1)    
-    patch_range: typing.Union[list, int, None] = field(default=None)
-    
-    normlized_flag                 : str  = field( default = 'N')
-    time_reverse_flag              : str  = field( default ='only_forward')
-    use_time_feature               : bool = field( default = False)
-    add_LunaSolarDirectly          : bool = field( default = False)
-    offline_data_is_already_normed : bool = field( default = False)
-    cross_sample                   : bool = field( default = False)
-    
-    constant_channel_pick              : typing.Optional[list] = field(default=None)
-    make_data_physical_reasonable_mode : typing.Optional[str] = field(default=None)
-
-    def get(self, attribute, default=None):
-        return getattr(self, attribute, default)
     
 class BaseDataset:
     client = None
