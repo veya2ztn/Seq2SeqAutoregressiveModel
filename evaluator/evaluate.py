@@ -970,7 +970,7 @@ def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True,get_value
         logsys.info("starting fourcast~!")
         #with open(os.path.join(logsys.ckpt_root,'weight_path'),'w') as f:f.write(args.pretrain_weight)
         fourcastresult  = fourcast_step(test_dataloader, model,logsys,
-                                        random_repeat = args.fourcast_randn_initial,
+                                        random_repeat = args.fourcast_randn_repeat,
                                         snap_index=args.snap_index,
                                         do_error_propagration_monitor=args.do_error_propagration_monitor,
                                         order = order,smooth_karg=smooth_karg)

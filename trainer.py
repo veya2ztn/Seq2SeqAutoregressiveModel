@@ -97,9 +97,9 @@ def build_accelerator(args):
         total_limit=args.num_max_checkpoints,
     )
     log_with = ['tensorboard']
-    if args.monitor.use_wandb:
+    if args.Monitor.use_wandb:
         log_with.append("wandb")
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=args.train.find_unused_parameters)
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=args.Train.find_unused_parameters)
     accelerator = Accelerator(dispatch_batches=not args.data.dispatch_in_gpu, project_config=project_config,
                               log_with=log_with, kwargs_handlers=[ddp_kwargs]
                               )
@@ -113,7 +113,7 @@ def main_worker(local_rank, ngpus_per_node, args,
     """
     xxxx_dataset_tensor used for shared-in-memory dataset among DDP
     """
-    if local_rank==0:print(f"we are at mode={args.mode}")
+    if local_rank==0:print(f"we are at mode={args.Train.mode}")
     ##### locate the checkpoint dir ###########
     args.gpu            = args.local_rank = gpu  = local_rank
     args.ngpus_per_node = ngpus_per_node
@@ -122,16 +122,17 @@ def main_worker(local_rank, ngpus_per_node, args,
     args.SAVE_PATH = get_ckpt_path(args)
     ########## inital log ###################
     logsys = create_logsys(args)
+    args.logsys = logsys
     #########################################
 
     model, optimizer, lr_scheduler, criterion, loss_scaler = build_model_and_optimizer(args)
 
-    logsys.info(f"entering {args.mode} training in {next(model.parameters()).device}")
-    if args.mode=='fourcast':
+    logsys.info(f"entering {args.Train.mode} training in {next(model.parameters()).device}")
+    if args.Train.mode=='fourcast':
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
         run_fourcast(args, model,logsys,test_dataloader)
         return logsys.close()
-    elif args.mode=='fourcast_for_snap_nodal_loss':
+    elif args.Train.mode=='fourcast_for_snap_nodal_loss':
         test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
         run_nodalosssnap(args, model,logsys,test_dataloader)
         return logsys.close()
@@ -196,8 +197,8 @@ def main_worker(local_rank, ngpus_per_node, args,
     best_valid_ckpt_path = loss_information['valid_loss']['save_path']
     if os.path.exists(best_valid_ckpt_path) and args.do_final_fourcast:
         logsys.info(f"we finish training, then start test on the best checkpoint {best_valid_ckpt_path}")
-        args.mode = 'fourcast'
-        args.time_step = 22
+        args.Train.mode = 'fourcast'
+        args.Dataset.time_step = 22
         start_epoch, start_step, min_loss = load_model(model.module if args.multiprocess_distributed else model, path=best_valid_ckpt_path, only_model=True, loc='cuda:{}'.format(args.gpu))
         run_fourcast(args, model,logsys)
         

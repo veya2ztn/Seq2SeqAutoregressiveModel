@@ -156,7 +156,7 @@ def get_args_parser():
     
     # Fourcast Parameter
     parser.add_argument('--pretrain_weight', type=str, default='', help='pretrain_weight')
-    parser.add_argument('--fourcast_randn_initial', default=0, type=int)
+    parser.add_argument('--fourcast_randn_repeat', default=0, type=int)
     parser.add_argument('--force_fourcast', default=0, type=int)
     parser.add_argument('--snap_index', type=str, default=None)
     parser.add_argument('--wandb_id', type=str, default=None)

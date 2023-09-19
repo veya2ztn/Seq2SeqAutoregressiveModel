@@ -8,7 +8,7 @@ def create_memory_templete(args):
     if args.use_inmemory_dataset:
         assert args.dataset_type
         print("======== loading data as shared memory==========")
-        if not ('fourcast' in args.mode):
+        if not ('fourcast' in args.Train.mode):
             print(f"create training dataset template, .....")
             train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='train' if not args.debug else 'test',
                                                                                                               root=args.data_root, use_offline_data=args.use_offline_data, dataset_flag=args.dataset_flag)

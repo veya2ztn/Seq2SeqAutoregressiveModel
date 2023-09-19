@@ -14,7 +14,7 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
     
     train_datasampler = DistributedSampler(train_dataset, shuffle=args.do_train_shuffle) if args.distributed else None
     g = torch.Generator()
-    g.manual_seed(args.seed)
+    g.manual_seed(args.Train.seed)
     train_dataloader  = DataLoader(train_dataset, args.batch_size, sampler=train_datasampler, num_workers=args.num_workers, pin_memory=True,
                                    drop_last=True,worker_init_fn=seed_worker,generator=g,shuffle=True if ((not args.distributed) and args.do_train_shuffle) else False)
     
@@ -162,47 +162,47 @@ def build_model(args):
     logsys = args.logsys
     logsys.info(f"model args: img_size= {args.img_size}")
     logsys.info(f"model args: patch_size= {args.patch_size}")
-    args.model_kargs['unique_up_sample_channel'] = 0
+    args.Model.model_kargs['unique_up_sample_channel'] = 0
     # ==============> Initial Model <=============
     if args.wrapper_model and 'Comb' in args.wrapper_model:
-        args.model_kargs['history_length'] = 1
-        assert args.model_type1
-        assert args.model_type2
-        args.model_kargs['in_chans'] = eval(
+        args.Model.model_kargs['history_length'] = 1
+        assert args.Model.model_type1
+        assert args.Model.model_type2
+        args.Model.model_kargs['in_chans'] = eval(
             args.wrapper_model).default_input_channel1
-        args.model_kargs['out_chans'] = eval(
+        args.Model.model_kargs['out_chans'] = eval(
             args.wrapper_model).default_output_channel1
-        # if args.model_type1 == 'AFNONet':
+        # if args.Model.model_type1 == 'AFNONet':
         #     pass
         # else:
         #     print("the ")
         #     #raise NotImplementedError
-        backbone1 = eval(args.model_type1)(**args.model_kargs)
-        args.model_kargs['in_chans'] = eval(
+        backbone1 = eval(args.Model.model_type1)(**args.Model.model_kargs)
+        args.Model.model_kargs['in_chans'] = eval(
             args.wrapper_model).default_input_channel2
-        args.model_kargs['out_chans'] = eval(
+        args.Model.model_kargs['out_chans'] = eval(
             args.wrapper_model).default_output_channel2
 
-        if args.model_type2 == 'AFNONet':
+        if args.Model.model_type2 == 'AFNONet':
             pass
-        elif args.model_type2 == 'smallAFNONet':
-            args.model_kargs['depth'] = 6
-            args.model_type2 = 'AFNONet'
-        elif args.model_type2 == 'tinyAFNONet':
-            args.model_kargs['embed_dim'] = 384
-            args.model_kargs['depth'] = 6
-            args.model_type2 = 'AFNONet'
+        elif args.Model.model_type2 == 'smallAFNONet':
+            args.Model.model_kargs['depth'] = 6
+            args.Model.model_type2 = 'AFNONet'
+        elif args.Model.model_type2 == 'tinyAFNONet':
+            args.Model.model_kargs['embed_dim'] = 384
+            args.Model.model_kargs['depth'] = 6
+            args.Model.model_type2 = 'AFNONet'
         else:
             raise NotImplementedError
 
-        backbone2 = eval(args.model_type2)(**args.model_kargs)
-        args.model_kargs['in_chans'] = args.input_channel
-        args.model_kargs['out_chans'] = args.output_channel
-        args.model_kargs['history_length'] = 1
+        backbone2 = eval(args.Model.model_type2)(**args.Model.model_kargs)
+        args.Model.model_kargs['in_chans'] = args.input_channel
+        args.Model.model_kargs['out_chans'] = args.output_channel
+        args.Model.model_kargs['history_length'] = 1
         model = eval(args.wrapper_model)(args, backbone1, backbone2,
                                          args.backbone1_ckpt_path, args.backbone2_ckpt_path)
     else:
-        model = eval(args.model_type)(**args.model_kargs)
+        model = eval(args.Model.model_type)(**args.Model.model_kargs)
         if args.wrapper_model:
 
             if args.subweight:
@@ -220,9 +220,9 @@ def build_model(args):
         param_sum, buffer_sum, all_size = getModelSize(model)
         logsys.info(
             f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
-    if args.pretrain_weight and args.torch_compile and not args.continue_train:
-        only_model = ('fourcast' in args.mode) or (
-            args.mode == 'finetune' and not args.continue_train)
+    if args.pretrain_weight and args.torch_compile and not args.Train.mode == 'continue_train':
+        only_model = ('fourcast' in args.Train.mode) or (
+            args.Train.mode == 'finetune' and not args.Train.mode == 'continue_train')
         assert only_model
         load_model(model, path=args.pretrain_weight, only_model=only_model,
                    loc='cpu', strict=bool(args.load_model_strict))
@@ -237,14 +237,14 @@ def build_model(args):
         torch.cuda.set_device(args.gpu)
         model.cuda(args.gpu)
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[
-                                                          args.gpu], find_unused_parameters=("FED" in args.model_type) or args.find_unused_parameters)
+                                                          args.gpu], find_unused_parameters=("FED" in args.Model.model_type) or args.find_unused_parameters)
     else:
         model = model.cuda()
 
     if args.half_model:
         model = model.half()
 
-    model.train_mode = args.mode
+    model.train_mode = args.Train.mode
 
     model.random_time_step_train = args.random_time_step
     model.input_noise_std = args.input_noise_std
@@ -266,7 +266,7 @@ def build_model(args):
     model.consistancy_activate_wall = args.consistancy_activate_wall
     model.mean_path_length = torch.zeros(1)
     model.wrapper_type = args.wrapper_model
-    model.model_type = args.model_type
+    model.model_type = args.Model.model_type
     compute_graph = parser_compute_graph(args.compute_graph_set)
     if len(compute_graph) == 2:
         model.activate_stamps, model.activate_error_coef = compute_graph
@@ -287,7 +287,7 @@ def build_model(args):
 def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
                 train_dataset_tensor=None, train_record_load=None, valid_dataset_tensor=None, valid_record_load=None):
     if local_rank == 0:
-        print(f"we are at mode={args.mode}")
+        print(f"we are at mode={args.Train.mode}")
     ##### locate the checkpoint dir ###########
     args.gpu = args.local_rank = gpu = local_rank
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
@@ -318,13 +318,13 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
     args.pretrain_weight = args.pretrain_weight.strip()
     logsys.info(f"loading weight from {args.pretrain_weight}")
     # we put pretrain loading here due to we need load optimizer
-    if args.torch_compile and args.pretrain_weight and not args.continue_train:
+    if args.torch_compile and args.pretrain_weight and not args.Train.mode == 'continue_train':
         start_epoch, start_step, min_loss = 0, 0, 0
         print(f"remind in torch compile mode, any pretrain model should be load before torch.compile and DistributedDataParallel")
     else:
         start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight,
-                                                       only_model=('fourcast' in args.mode) or (args.mode == 'finetune' and not args.continue_train), loc='cuda:{}'.format(args.gpu), strict=bool(args.load_model_strict))
-    start_epoch = start_epoch if args.continue_train else 0
+                                                       only_model=('fourcast' in args.Train.mode) or (args.Train.mode == 'finetune' and not args.Train.mode == 'continue_train'), loc='cuda:{}'.format(args.gpu), strict=bool(args.load_model_strict))
+    start_epoch = start_epoch if args.Train.mode == 'continue_train' else 0
     logsys.info(f"======> start from epoch:{start_epoch:3d}/{args.epochs:3d}")
     if args.more_epoch_train:
         assert args.pretrain_weight
@@ -336,7 +336,7 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
 
     # =======================> start training <==========================
     logsys.info(
-        f"entering {args.mode} training in {next(model.parameters()).device}")
+        f"entering {args.Train.mode} training in {next(model.parameters()).device}")
     now_best_path = SAVE_PATH / 'backbone.best.pt'
     latest_ckpt_p = SAVE_PATH / 'pretrain_latest.pt'
     now_Z500_path = SAVE_PATH / 'fourcast.best.pt'

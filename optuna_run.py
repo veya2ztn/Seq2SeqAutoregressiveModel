@@ -53,9 +53,9 @@ def optuna_high_level_main():
         args = copy.deepcopy(gargs)
         #args.distributed= False
         #args.rank=0
-        #random_seed= args.seed
-        #args.seed  = random_seed= random.randint(1, 100000)
-        args.seed  = random_seed = 2022
+        #random_seed= args.Train.seed
+        #args.Train.seed  = random_seed= random.randint(1, 100000)
+        args.Train.seed  = random_seed = 2022
         args.hparam_dict = {}
         set_range_optuna_list(trial, args,optuna_args.lr_range,'lr')
         if args.optuna_args.batchsize_list:set_select_optuna_list(trial, args, optuna_args.batchsize_list, 'batch_size')

@@ -10,11 +10,11 @@ def tuple2str(_tuple):
         return _tuple
 
 def get_model_name(args):
-    model_name = args.model_type
-    if "FED" in args.model_type:
+    model_name = args.Model.model_type
+    if "FED" in args.Model.model_type:
         mode_name =args.modes.replace(",","-")
-        return f"{args.model_type}.{args.mode_select}_select.M{mode_name}_P{args.pred_len}L{args.label_len}"
-    if "AFN" in args.model_type and hasattr(args,'model_depth') and args.model_depth == 6:
+        return f"{args.Model.model_type}.{args.mode_select}_select.M{mode_name}_P{args.pred_len}L{args.label_len}"
+    if "AFN" in args.Model.model_type and hasattr(args,'model_depth') and args.Model.model_depth == 6:
         model_name = "small_" + model_name
     model_name = f"ViT_in_bulk-{model_name}" if len(args.img_size)>2 else model_name
     model_name = f"{args.wrapper_model}-{model_name}" if args.wrapper_model else model_name
@@ -23,13 +23,13 @@ def get_model_name(args):
 
 def get_datasetname(args):
     datasetname = args.dataset_type
-    if not args.dataset_type and args.train_set in train_set:
-        datasetname = train_set[args.train_set][4].__name__
+    if not args.dataset_type and args.Train_set in train_set:
+        datasetname = train_set[args.Train_set][4].__name__
     if not datasetname:
         raise NotImplementedError("please use right dataset type")
         
     if datasetname in ["",'ERA5CephDataset','ERA5CephSmallDataset']:
-        datasetname  = "ERA5_20-12" if 'physics' in args.train_set else "ERA5_20"
+        datasetname  = "ERA5_20-12" if 'physics' in args.Train_set else "ERA5_20"
     return datasetname
 
 def get_projectname(args):
@@ -42,9 +42,9 @@ def get_projectname(args):
         picked_output_name= "".join([property_names[t] for t in args.picked_output_property])
         project_name = f"{picked_input_name}_{picked_output_name}"
     else:
-        project_name = f"{args.mode}-{args.train_set}"
+        project_name = f"{args.Train.mode}-{args.Train_set}"
         if hasattr(args,'random_time_step') and args.random_time_step:project_name = 'rd_sp_'+project_name 
-        if hasattr(args,'time_step') and args.time_step:              project_name = f"ts_{args.time_step}_" +project_name 
+        if hasattr(args,'time_step') and args.Dataset.time_step:              project_name = f"ts_{args.Dataset.time_step}_" +project_name 
         if hasattr(args,'history_length') and args.history_length !=1:project_name = f"his_{args.history_length}_"+project_name
         if hasattr(args,'time_reverse_flag') and args.time_reverse_flag !="only_forward":project_name = f"{args.time_reverse_flag}_"+project_name
         if hasattr(args,'time_intervel') and args.time_intervel:project_name = project_name + f"_per_{args.time_intervel}_step"
@@ -75,16 +75,16 @@ def get_ckpt_path(args):
     if args.debug:
         return Path('./debug')
     TIME_NOW  = time.strftime("%m_%d_%H_%M")+f"_{args.port}" if args.distributed else time.strftime("%m_%d_%H_%M_%S")
-    if args.seed == -1:args.seed = 42;#random.randint(1, 100000)
-    if args.seed == -2:args.seed = random.randint(1, 100000)
-    TIME_NOW  = f"{TIME_NOW}-seed_{args.seed}"
+    if args.Train.seed == -1:args.Train.seed = 42;#random.randint(1, 100000)
+    if args.Train.seed == -2:args.Train.seed = random.randint(1, 100000)
+    TIME_NOW  = f"{TIME_NOW}-seed_{args.Train.seed}"
     args.trail_name = TIME_NOW
-    if not hasattr(args,'train_set'):args.train_set='large'
-    args.time_step  = ts_for_mode[args.mode] if not args.time_step else args.time_step
+    if not hasattr(args,'train_set'):args.Train_set='large'
+    args.Dataset.time_step  = ts_for_mode[args.Train.mode] if not args.Dataset.time_step else args.Dataset.time_step
     model_name, datasetname, project_name = get_projectname(args)
-    if args.continue_train or (('fourcast' in args.mode) and (not args.do_fourcast_anyway)):
+    if args.Train.mode == 'continue_train' or (('fourcast' in args.Train.mode) and (not args.do_fourcast_anyway)):
         assert args.pretrain_weight
-        #args.mode = "finetune"
+        #args.Train.mode = "finetune"
         SAVE_PATH = Path(os.path.dirname(args.pretrain_weight))
     else:
         SAVE_PATH = Path(f'./checkpoints/{datasetname}/{model_name}/{project_name}/{TIME_NOW}')
@@ -92,22 +92,22 @@ def get_ckpt_path(args):
     return SAVE_PATH
 
 def parse_default_args(args):
-    if args.seed == -1:args.seed = 42
-    if args.seed == -2:args.seed = random.randint(1, 100000)
+    if args.Train.seed == -1:args.Train.seed = 42
+    if args.Train.seed == -2:args.Train.seed = random.randint(1, 100000)
     args.half_model = half_model
-    args.batch_size = bs_for_mode[args.mode] if args.batch_size == -1 else args.batch_size
+    args.batch_size = bs_for_mode[args.Train.mode] if args.batch_size == -1 else args.batch_size
     args.valid_batch_size = args.batch_size*8 if args.valid_batch_size == -1 else args.valid_batch_size
-    args.epochs     = ep_for_mode[args.mode] if args.epochs == -1 else args.epochs
-    args.lr         = lr_for_mode[args.mode] if args.lr == -1 else args.lr
-    args.time_step = ts_for_mode[args.mode] if args.time_step == -1 else args.time_step
+    args.epochs     = ep_for_mode[args.Train.mode] if args.epochs == -1 else args.epochs
+    args.lr         = lr_for_mode[args.Train.mode] if args.lr == -1 else args.lr
+    args.Dataset.time_step = ts_for_mode[args.Train.mode] if args.Dataset.time_step == -1 else args.Dataset.time_step
 
     if not hasattr(args,'epoch_save_list'):args.epoch_save_list = [99]
     if isinstance(args.epoch_save_list,str):args.epoch_save_list = [int(p) for p in args.epoch_save_list.split(',')]
     # input size
     img_size = patch_size = x_c = y_c =  dataset_type = None
 
-    if args.train_set is not None and args.train_set in train_set:
-        img_size, patch_size, x_c, y_c, dataset_type,dataset_kargs = train_set[args.train_set]
+    if args.Train_set is not None and args.Train_set in train_set:
+        img_size, patch_size, x_c, y_c, dataset_type,dataset_kargs = train_set[args.Train_set]
         
         if 'Euler' in args.wrapper_model: y_c  = 15
     else:
@@ -120,8 +120,8 @@ def parse_default_args(args):
 
 
     dataset_kargs['root'] = args.data_root if args.data_root != "" else None
-    dataset_kargs['mode']        = args.mode
-    dataset_kargs['time_step']   = args.time_step
+    dataset_kargs['mode']        = args.Train.mode
+    dataset_kargs['time_step']   = args.Dataset.time_step
     dataset_kargs['check_data']  = True
     dataset_kargs['time_reverse_flag'] = 'only_forward' if not hasattr(args,'time_reverse_flag') else args.time_reverse_flag
     
@@ -180,7 +180,7 @@ def parse_default_args(args):
         "out_chans": args.output_channel,
         "fno_blocks": args.fno_blocks,
         "embed_dim": args.embed_dim if not args.debug else 16*6, 
-        "depth": args.model_depth if not args.debug else 1,
+        "depth": args.Model.model_depth if not args.debug else 1,
         "debug_mode":args.debug,
         "double_skip":args.double_skip, 
         "fno_bias": args.fno_bias, 
@@ -202,7 +202,7 @@ def parse_default_args(args):
         "use_pos_embed":args.use_pos_embed,
         "agg_way":args.agg_way
     }
-    args.model_kargs = model_kargs
+    args.Model.model_kargs = model_kargs
 
 
     args.snap_index = [[0,40,80,12], [t for t in [38,49,13,27] if t < args.output_channel]      # property  Z500 and T850 and v2m and u2m and 
@@ -436,11 +436,11 @@ def create_logsys(args, save_config=True):
     SAVE_PATH = args.SAVE_PATH
     recorder_list = args.recorder_list if hasattr(
         args, 'recorder_list') else ['tensorboard']
-    logsys = LoggingSystem(local_rank == 0 or (not args.distributed), args.SAVE_PATH, seed=args.seed,
-                           use_wandb=args.use_wandb, recorder_list=recorder_list, flag=args.mode,
+    logsys = LoggingSystem(local_rank == 0 or (not args.distributed), args.SAVE_PATH, seed=args.Train.seed,
+                           use_wandb=args.use_wandb, recorder_list=recorder_list, flag=args.Train.mode,
                            disable_progress_bar=args.disable_progress_bar)
     hparam_dict = {'patch_size': args.patch_size, 'lr': args.lr,
-                   'batch_size': args.batch_size, 'model': args.model_type}
+                   'batch_size': args.batch_size, 'model': args.Model.model_type}
     metric_dict = {'best_loss': None}
     dirname = SAVE_PATH
     dirname, name = os.path.split(dirname)
@@ -463,8 +463,8 @@ def create_logsys(args, save_config=True):
                                wandb_id=wandb_id
                                )
     # fix the seed for reproducibility
-    # torch.manual_seed(args.seed)
-    # np.random.seed(args.seed)
+    # torch.manual_seed(args.Train.seed)
+    # np.random.seed(args.Train.seed)
     # cudnn.benchmark = True
     ## already done in logsys
     if args.log_trace_times is None:

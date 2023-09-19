@@ -132,7 +132,7 @@ def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,wei
     from train.pretrain import main
     args = get_the_args(ckpt_path)
     if args is None:return
-    args.mode      = 'fourcast'
+    args.Train.mode      = 'fourcast'
     args.fourcast  = True
     args.recorder_list = []
     #args.use_wandb = 'off'
@@ -158,7 +158,7 @@ def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,wei
             return
     #best_path = os.path.join(ckpt_path,'pretrain_latest.pt')
     args.pretrain_weight = best_path
-    args.time_step = step
+    args.Dataset.time_step = step
     #args.data_root = "datasets/weatherbench"
     args.force_fourcast = force_fourcast
     
@@ -170,7 +170,7 @@ def run_snap_nodal(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,w
     from train.pretrain import main
     args = get_the_args(ckpt_path)
     if args is None:return
-    args.mode      = 'fourcast_for_snap_nodal_loss' 
+    args.Train.mode      = 'fourcast_for_snap_nodal_loss' 
     args.fourcast  = True
     args.recorder_list = []
     #args.use_wandb = 'wandb_runtime'
@@ -194,7 +194,7 @@ def run_snap_nodal(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,w
             return
     #best_path = os.path.join(ckpt_path,'pretrain_latest.pt')
     args.pretrain_weight = best_path
-    args.time_step = step
+    args.Dataset.time_step = step
     #args.data_root = "datasets/weatherbench"
     args.force_fourcast = force_fourcast
     args.wandb_id = None
@@ -211,7 +211,7 @@ def get_the_args(ckpt_path):
     # else:
     #     if "Euler" in ckpt_path:
     #         args.wrapper_model   = [p for p in ckpt_path.split("/") if 'Euler' in p][0].split('-')[0]
-    #args.train_set = 'small'
+    #args.Train_set = 'small'
     
     # args.time_reverse_flag = 'only_backward'
     # args.img_size  = (3,51,96)
@@ -238,7 +238,7 @@ def create_fourcast_table(ckpt_path,force_fourcast=False):
     #     return
     args = get_the_args(ckpt_path)
     
-    args.mode = 'fourcast'
+    args.Train.mode = 'fourcast'
     args.gpu = args.local_rank = gpu  = local_rank = 0
     #args.data_root = "datasets/weatherbench"
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
@@ -272,7 +272,7 @@ def create_nodalsnap_table(ckpt_path):
     # if 'rmse_unit_table' in os.listdir(ckpt_path):
     #     return
     args = get_the_args(ckpt_path)
-    args.mode = 'fourcast_for_snap_nodal_loss'
+    args.Train.mode = 'fourcast_for_snap_nodal_loss'
     args.gpu = args.local_rank = gpu  = local_rank = 0
     #args.data_root = "datasets/weatherbench"
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
@@ -304,7 +304,7 @@ def create_multi_fourcast_table(ckpt_path,force=False):
     if not force and os.path.exists(os.path.join(ckpt_path,"result_of_epoch_0","fourcastresult.out")):
         return 
     args = get_the_args(ckpt_path)
-    args.mode = 'fourcast'
+    args.Train.mode = 'fourcast'
     args.gpu = args.local_rank = gpu  = local_rank = 0
     #args.data_root = "datasets/weatherbench"
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########

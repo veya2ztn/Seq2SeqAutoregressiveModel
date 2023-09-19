@@ -12,7 +12,7 @@ def distributed_initial(args):
     args.dist_backend = "nccl"
     
     args.ngpus_per_node = ngpus_per_node
-    if not hasattr(args,'train_set'):args.train_set='large'
+    if not hasattr(args,'train_set'):args.Train_set='large'
     ip = os.environ.get("MASTER_ADDR", "127.0.0.1")
     port = find_free_port()#os.environ.get("MASTER_PORT", f"{find_free_port()}" )
     args.port = port

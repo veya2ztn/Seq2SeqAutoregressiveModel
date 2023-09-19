@@ -9,38 +9,38 @@ import numpy as np
 
 
 def build_combination_model(args):
-    args.model_kargs['history_length'] = 1
-    assert args.model_type1
-    assert args.model_type2
-    args.model_kargs['in_chans']   = eval(args.wrapper_model).default_input_channel1
-    args.model_kargs['out_chans']  = eval(args.wrapper_model).default_output_channel1
-    backbone1                      = eval(args.model_type1)(**args.model_kargs)
+    args.Model.model_kargs['history_length'] = 1
+    assert args.Model.model_type1
+    assert args.Model.model_type2
+    args.Model.model_kargs['in_chans']   = eval(args.wrapper_model).default_input_channel1
+    args.Model.model_kargs['out_chans']  = eval(args.wrapper_model).default_output_channel1
+    backbone1                      = eval(args.Model.model_type1)(**args.Model.model_kargs)
         
     
-    args.model_kargs['in_chans']  = eval(args.wrapper_model).default_input_channel2
-    args.model_kargs['out_chans'] = eval(args.wrapper_model).default_output_channel2
+    args.Model.model_kargs['in_chans']  = eval(args.wrapper_model).default_input_channel2
+    args.Model.model_kargs['out_chans'] = eval(args.wrapper_model).default_output_channel2
 
-    if args.model_type2 == 'AFNONet':
+    if args.Model.model_type2 == 'AFNONet':
         pass
-    elif args.model_type2 == 'smallAFNONet':
-        args.model_kargs['depth'] = 6
-        args.model_type2 = 'AFNONet'
-    elif args.model_type2 == 'tinyAFNONet':
-        args.model_kargs['embed_dim'] = 384
-        args.model_kargs['depth'] = 6
-        args.model_type2 = 'AFNONet'
+    elif args.Model.model_type2 == 'smallAFNONet':
+        args.Model.model_kargs['depth'] = 6
+        args.Model.model_type2 = 'AFNONet'
+    elif args.Model.model_type2 == 'tinyAFNONet':
+        args.Model.model_kargs['embed_dim'] = 384
+        args.Model.model_kargs['depth'] = 6
+        args.Model.model_type2 = 'AFNONet'
     else:
         raise NotImplementedError
 
-    backbone2 = eval(args.model_type2)(**args.model_kargs)
-    args.model_kargs['in_chans'] = args.input_channel
-    args.model_kargs['out_chans'] = args.output_channel
-    args.model_kargs['history_length'] = 1
+    backbone2 = eval(args.Model.model_type2)(**args.Model.model_kargs)
+    args.Model.model_kargs['in_chans'] = args.input_channel
+    args.Model.model_kargs['out_chans'] = args.output_channel
+    args.Model.model_kargs['history_length'] = 1
     model = eval(args.wrapper_model)(args, backbone1, backbone2, args.backbone1_ckpt_path, args.backbone2_ckpt_path)
     return model
     
 def build_wrapper_model(args):
-    model = eval(args.model_type)(**args.model_kargs)
+    model = eval(args.Model.model_type)(**args.Model.model_kargs)
     if args.wrapper_model:
         if args.subweight:
             print(f"in wrapper model, load subweight from {args.subweight}")
@@ -50,9 +50,9 @@ def build_wrapper_model(args):
             
 def prepare_model(model ,optimizer, lr_scheduler, criterion, loss_scaler, args):
     logsys = args.logsys
-    if args.pretrain_weight and (torch.__version__[0] == "2" and args.torch_compile) and not args.continue_train:
+    if args.pretrain_weight and (torch.__version__[0] == "2" and args.torch_compile) and not args.Train.mode == 'continue_train':
         # if want to pretrain a model, then need load the model before torch.compile.
-        only_model = ('fourcast' in args.mode) or (args.mode == 'finetune' and not args.continue_train)
+        only_model = ('fourcast' in args.Train.mode) or (args.Train.mode == 'finetune' and not args.Train.mode == 'continue_train')
         assert only_model
         load_model(model, path=args.pretrain_weight, only_model=only_model,loc='cpu', strict=bool(args.load_model_strict))
             
@@ -66,21 +66,21 @@ def prepare_model(model ,optimizer, lr_scheduler, criterion, loss_scaler, args):
     args.pretrain_weight = args.pretrain_weight.strip()
     logsys.info(f"loading weight from {args.pretrain_weight}")
     # we put pretrain loading here due to we need load optimizer
-    if args.torch_compile and args.pretrain_weight and not args.continue_train:
+    if args.torch_compile and args.pretrain_weight and not args.Train.mode == 'continue_train':
         start_epoch, start_step = 0, 0
         print(f"remind in torch compile mode, any pretrain model should be load before torch.compile and DistributedDataParallel")
     else:
         # if want to continue train a model, then need load the model after the torch.compile.
         start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, 
             optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
-            only_model= ('fourcast' in args.mode) or (args.mode=='finetune' and not args.continue_train),
+            only_model= ('fourcast' in args.Train.mode) or (args.Train.mode=='finetune' and not args.Train.mode == 'continue_train'),
             loc = 'cuda:{}'.format(args.gpu),strict=bool(args.load_model_strict))
         
-    if not args.continue_train:min_loss = np.inf
+    if not args.Train.mode == 'continue_train':min_loss = np.inf
     args.start_step = start_step
     args.min_loss   = min_loss
 
-    start_epoch = start_epoch if args.continue_train else 0
+    start_epoch = start_epoch if args.Train.mode == 'continue_train' else 0
     logsys.info(f"======> start from epoch:{start_epoch:3d}/{args.epochs:3d}")
     if args.more_epoch_train:
         assert args.pretrain_weight
@@ -95,7 +95,7 @@ def prepare_model(model ,optimizer, lr_scheduler, criterion, loss_scaler, args):
         # DistributedDataParallel will use all available devices.
         torch.cuda.set_device(args.gpu)
         model.cuda(args.gpu)
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=("FED" in args.model_type) or args.find_unused_parameters)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=("FED" in args.Model.model_type) or args.find_unused_parameters)
     else:
         model = model.cuda()
 
@@ -110,8 +110,8 @@ def build_model_and_optimizer(args):
     cudnn.benchmark = False  # will search a best CNN realized way at beginning
     cudnn.deterministic = True  # the key for continue training.
     logsys = args.logsys
-    logsys.info(f"model args: img_size= {args.model.img_size}")
-    logsys.info(f"model args: patch_size= {args.model.patch_size}")
+    logsys.info(f"model args: img_size= {args.Model.model.img_size}")
+    logsys.info(f"model args: patch_size= {args.Model.patch_embedding.patch_size}")
     # ==============> Initial Model <=============
     if args.wrapper_model and 'Comb' in args.wrapper_model:
         model = build_combination_model(args)
@@ -129,7 +129,7 @@ def build_model_and_optimizer(args):
 
 
 
-    model.train_mode = args.mode
+    model.train_mode = args.Train.mode
     model.random_time_step_train = args.random_time_step
     model.input_noise_std = args.input_noise_std
     model.history_length = args.history_length
@@ -149,7 +149,7 @@ def build_model_and_optimizer(args):
     model.consistancy_activate_wall = args.consistancy_activate_wall
     model.mean_path_length = torch.zeros(1)
     model.wrapper_type = args.wrapper_model
-    model.model_type = args.model_type
+    model.model_type = args.Model.model_type
 
     if len(args.compute_graph) == 2:
         model.activate_stamps, model.activate_error_coef = args.compute_graph
@@ -257,7 +257,7 @@ def build_optimizer(args, model):
     elif args.criterion == 'pred_time_weighted_mse':
         print(args.dataset_patch_range)
         criterion = [CenterWeightMSE(args.dataset_patch_range - i, args.dataset_patch_range)
-                     for i in range(args.time_step - args.history_length)]
+                     for i in range(args.Dataset.time_step - args.history_length)]
     elif args.criterion == 'PressureWeightMSE':
         criterion = PressureWeightMSE()
 

@@ -22,9 +22,9 @@ from train.pretrain import *
 
 def run_fourcast(ckpt_path):
     args = get_args(args=[])
-    args.train_set = "physics_small"
+    args.Train_set = "physics_small"
     args.fourcast  = True
-    args.mode = 'fourcast'
+    args.Train.mode = 'fourcast'
     args.batch_size= 64
     if 'backbone.best.pt' in os.listdir(ckpt_path):
         best_path = os.path.join(ckpt_path,'backbone.best.pt')
