@@ -968,7 +968,7 @@ def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True,get_value
             os.system(f"rm {logsys.ckpt_root}/fourcastresult.gpu_*")
         logsys.info(f"use dataset ==> {test_dataset.__class__.__name__}")
         logsys.info("starting fourcast~!")
-        #with open(os.path.join(logsys.ckpt_root,'weight_path'),'w') as f:f.write(args.pretrain_weight)
+        #with open(os.path.join(logsys.ckpt_root,'weight_path'),'w') as f:f.write(args.Checkpoint.pretrain_weight)
         fourcastresult  = fourcast_step(test_dataloader, model,logsys,
                                         random_repeat = args.fourcast_randn_repeat,
                                         snap_index=args.snap_index,

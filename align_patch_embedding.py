@@ -202,15 +202,15 @@ def build_model(args):
         model = eval(args.wrapper_model)(args, backbone1, backbone2,
                                          args.backbone1_ckpt_path, args.backbone2_ckpt_path)
     else:
-        model = eval(args.Model.model_type)(**args.Model.model_kargs)
+        model = eval(args.Model.model.model_type)(**args.Model.model_kargs)
         if args.wrapper_model:
 
             if args.subweight:
                 print(
                     f"in wrapper model, load subweight from {args.subweight}")
-                # load_model(model.backbone,path=args.subweight,only_model=True, loc = 'cpu',strict=bool(args.load_model_strict))
+                # load_model(model.backbone,path=args.subweight,only_model=True, loc = 'cpu',strict=bool(args.Checkpoint.load_model_strict))
                 load_model(model, path=args.subweight, only_model=True,
-                           loc='cpu', strict=bool(args.load_model_strict))
+                           loc='cpu', strict=bool(args.Checkpoint.load_model_strict))
             model = eval(args.wrapper_model)(args, model)
 
     logsys.info(f"use model ==> {model.__class__.__name__}")
@@ -220,12 +220,12 @@ def build_model(args):
         param_sum, buffer_sum, all_size = getModelSize(model)
         logsys.info(
             f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
-    if args.pretrain_weight and args.torch_compile and not args.Train.mode == 'continue_train':
+    if args.Checkpoint.pretrain_weight and args.torch_compile and not args.Train.mode == 'continue_train':
         only_model = ('fourcast' in args.Train.mode) or (
             args.Train.mode == 'finetune' and not args.Train.mode == 'continue_train')
         assert only_model
-        load_model(model, path=args.pretrain_weight, only_model=only_model,
-                   loc='cpu', strict=bool(args.load_model_strict))
+        load_model(model, path=args.Checkpoint.pretrain_weight, only_model=only_model,
+                   loc='cpu', strict=bool(args.Checkpoint.load_model_strict))
     if torch.__version__[0] == "2" and args.torch_compile:
         print(f"Now in torch 2.0, we use torch.compile")
         torch.set_float32_matmul_precision('high')
@@ -237,7 +237,7 @@ def build_model(args):
         torch.cuda.set_device(args.gpu)
         model.cuda(args.gpu)
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[
-                                                          args.gpu], find_unused_parameters=("FED" in args.Model.model_type) or args.find_unused_parameters)
+                                                          args.gpu], find_unused_parameters=("FED" in args.Model.model.model_type) or args.find_unused_parameters)
     else:
         model = model.cuda()
 
@@ -266,7 +266,7 @@ def build_model(args):
     model.consistancy_activate_wall = args.consistancy_activate_wall
     model.mean_path_length = torch.zeros(1)
     model.wrapper_type = args.wrapper_model
-    model.model_type = args.Model.model_type
+    model.model_type = args.Model.model.model_type
     compute_graph = parser_compute_graph(args.compute_graph_set)
     if len(compute_graph) == 2:
         model.activate_stamps, model.activate_error_coef = compute_graph
@@ -315,23 +315,23 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
     loss_scaler = torch.cuda.amp.GradScaler(enabled=args.use_amp)
     logsys.info(f'use lr_scheduler:{lr_scheduler}')
 
-    args.pretrain_weight = args.pretrain_weight.strip()
-    logsys.info(f"loading weight from {args.pretrain_weight}")
+    args.Checkpoint.pretrain_weight = args.Checkpoint.pretrain_weight.strip()
+    logsys.info(f"loading weight from {args.Checkpoint.pretrain_weight}")
     # we put pretrain loading here due to we need load optimizer
-    if args.torch_compile and args.pretrain_weight and not args.Train.mode == 'continue_train':
+    if args.torch_compile and args.Checkpoint.pretrain_weight and not args.Train.mode == 'continue_train':
         start_epoch, start_step, min_loss = 0, 0, 0
         print(f"remind in torch compile mode, any pretrain model should be load before torch.compile and DistributedDataParallel")
     else:
-        start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight,
-                                                       only_model=('fourcast' in args.Train.mode) or (args.Train.mode == 'finetune' and not args.Train.mode == 'continue_train'), loc='cuda:{}'.format(args.gpu), strict=bool(args.load_model_strict))
+        start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.Checkpoint.pretrain_weight,
+                                                       only_model=('fourcast' in args.Train.mode) or (args.Train.mode == 'finetune' and not args.Train.mode == 'continue_train'), loc='cuda:{}'.format(args.gpu), strict=bool(args.Checkpoint.load_model_strict))
     start_epoch = start_epoch if args.Train.mode == 'continue_train' else 0
-    logsys.info(f"======> start from epoch:{start_epoch:3d}/{args.epochs:3d}")
+    logsys.info(f"======> start from epoch:{start_epoch:3d}/{args.Train.epochs:3d}")
     if args.more_epoch_train:
-        assert args.pretrain_weight
+        assert args.Checkpoint.pretrain_weight
         print(
-            f"detect more epoch training, we will do a copy processing for {args.pretrain_weight}")
+            f"detect more epoch training, we will do a copy processing for {args.Checkpoint.pretrain_weight}")
         os.system(
-            f'cp {args.pretrain_weight} {args.pretrain_weight}-epoch{start_epoch}')
+            f'cp {args.Checkpoint.pretrain_weight} {args.Checkpoint.pretrain_weight}-epoch{start_epoch}')
     logsys.info("done!")
 
     # =======================> start training <==========================
@@ -348,11 +348,11 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
                                                                                                train_dataset_tensor=train_dataset_tensor, train_record_load=train_record_load,
                                                                                                valid_dataset_tensor=valid_dataset_tensor, valid_record_load=valid_record_load)
     logsys.info(f"use dataset ==> {train_dataset.__class__.__name__}")
-    logsys.info(f"Start training for {args.epochs} epochs")
-    master_bar = logsys.create_master_bar(args.epochs)
+    logsys.info(f"Start training for {args.Train.epochs} epochs")
+    master_bar = logsys.create_master_bar(args.Train.epochs)
     accu_list = ['valid_loss']
     metric_dict = logsys.initial_metric_dict(accu_list)
-    banner = logsys.banner_initial(args.epochs, args.SAVE_PATH)
+    banner = logsys.banner_initial(args.Train.epochs, args.SAVE_PATH)
     logsys.banner_show(0, args.SAVE_PATH)
     val_loss = 1.234
     train_loss = -1
@@ -363,7 +363,7 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
             continue
         # do fourcast once at begining
         fast_set_model_epoch(model, epoch=epoch,
-                             epoch_total=args.epochs, eval_mode=False)
+                             epoch_total=args.Train.epochs, eval_mode=False)
         logsys.record(
             'learning rate', optimizer.param_groups[0]['lr'], epoch, epoch_flag='epoch')
         val_loss = train_loss = run_one_epoch(epoch, start_step, model, criterion,
@@ -390,7 +390,7 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
                 logsys.info(f"The best accu is {val_loss}", show=False)
             logsys.record('best_loss', min_loss, epoch, epoch_flag='epoch')
             update_experiment_info(experiment_hub_path, epoch, args)
-            if ((epoch >= args.save_warm_up) and (epoch % args.save_every_epoch == 0)) or (epoch == args.epochs-1) or (epoch in args.epoch_save_list):
+            if ((epoch >= args.save_warm_up) and (epoch % args.save_every_epoch == 0)) or (epoch == args.Train.epochs-1) or (epoch in args.epoch_save_list):
                 
                 logsys.info(f"saving latest model ....", show=False)
                 save_model(model, epoch=epoch+1, step=0, optimizer=optimizer, lr_scheduler=lr_scheduler,loss_scaler=loss_scaler, min_loss=min_loss, path=latest_ckpt_p)

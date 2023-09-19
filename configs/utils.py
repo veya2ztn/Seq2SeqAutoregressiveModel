@@ -46,10 +46,10 @@ def tuple2str(_tuple):
 
 def get_model_name(args):
     model_name = args.Model.model.get_name()
-    # if "FED" in args.Model.model_type:
+    # if "FED" in args.Model.model.model_type:
     #     mode_name =args.modes.replace(",","-")
-    #     return f"{args.Model.model_type}.{args.mode_select}_select.M{mode_name}_P{args.pred_len}L{args.label_len}"
-    # if "AFN" in args.Model.model_type and hasattr(args,'model_depth') and args.Model.model_depth == 6:
+    #     return f"{args.Model.model.model_type}.{args.mode_select}_select.M{mode_name}_P{args.pred_len}L{args.label_len}"
+    # if "AFN" in args.Model.model.model_type and hasattr(args,'model_depth') and args.Model.model_depth == 6:
     #     model_name = "small_" + model_name
     # model_name = f"ViT_in_bulk-{model_name}" if len(args.img_size)>2 else model_name
     # model_name = f"{args.wrapper_model}-{model_name}" if args.wrapper_model else model_name
@@ -117,9 +117,9 @@ def get_ckpt_path(args):
     if not hasattr(args,'train_set'):args.Train_set='large'
     model_name, datasetname, project_name = get_projectname(args)
     if args.Train.mode in ['continue_train', 'fourcast'] and (not args.Train.do_fourcast_anyway):
-        assert args.pretrain_weight
+        assert args.Checkpoint.pretrain_weight
         #args.Train.mode = "finetune"
-        SAVE_PATH = os.path.dirname(args.pretrain_weight)
+        SAVE_PATH = os.path.dirname(args.Checkpoint.pretrain_weight)
     else:
         SAVE_PATH = f'./checkpoints/{datasetname}/{model_name}/{project_name}/{TIME_NOW}'
         SAVE_PATH.mkdir(parents=True, exist_ok=True)
@@ -131,8 +131,8 @@ def parse_default_args(args):
     args.half_model = half_model
     args.batch_size = bs_for_mode[args.Train.mode] if args.batch_size == -1 else args.batch_size
     args.valid_batch_size = args.batch_size*8 if args.valid_batch_size == -1 else args.valid_batch_size
-    args.epochs     = ep_for_mode[args.Train.mode] if args.epochs == -1 else args.epochs
-    args.lr         = lr_for_mode[args.Train.mode] if args.lr == -1 else args.lr
+    args.Train.epochs     = ep_for_mode[args.Train.mode] if args.Train.epochs == -1 else args.Train.epochs
+    args.Optimizer.lr         = lr_for_mode[args.Train.mode] if args.Optimizer.lr == -1 else args.Optimizer.lr
     args.Dataset.time_step = ts_for_mode[args.Train.mode] if args.Dataset.time_step == -1 else args.Dataset.time_step
 
     if not hasattr(args,'epoch_save_list'):args.epoch_save_list = [99]

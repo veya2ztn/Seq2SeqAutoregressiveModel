@@ -2,7 +2,7 @@ import argparse
 import json
 from dataclasses import dataclass, field
 from simple_parsing import ArgumentParser
-from model.model_arguements import (AFNONetConfig, PatchEmbeddingConfig, GraphCastConfig)
+from model.model_arguments import (AFNONetConfig, PatchEmbeddingConfig, GraphCastConfig)
 
 def build_parser():
     parser = ArgumentParser(description='Arguments', allow_abbrev=False, add_help=True)
@@ -251,7 +251,7 @@ def get_train_args(args):
         mode  = args.Train.mode,
         batch_size  = args.batch_size,
         valid_batch_size  = args.valid_batch_size,
-        epochs  = args.epochs,
+        epochs  = args.Train.epochs,
         seed  = args.Train.seed,
         accumulation_steps  = args.accumulation_steps,
         skip_first_valid  = args.skip_first_valid,
@@ -325,7 +325,7 @@ def _add_loss_args(parser):
     return parser
 def _structure_loss_args(args):
     criterion_params = argparse.Namespace(
-        criterion= args.criterion,
+        criterion= args.Loss.criterion,
     )
     return criterion_params
 
@@ -378,14 +378,14 @@ def _add_optimizer_args(parser):
     return parser
 def get_optim_args(args):
     optimizer_params = argparse.Namespace(
-        epochs=args.epochs,
-        opt=args.opt,
+        epochs=args.Train.epochs,
+        opt=args.Optimizer.opt,
         opt_eps=args.opt_eps,
         opt_betas=args.opt_betas,
         clip_grad=args.clip_grad,
         momentum=args.momentum,
         weight_decay=args.weight_decay,
-        lr=args.lr,
+        lr=args.Optimizer.lr,
     )
     return optimizer_params
 
@@ -410,8 +410,8 @@ def _add_scheduler_args(parser):
     return parser
 def get_scheduler_args(args):
     optimizer_params = argparse.Namespace(
-        lr=args.lr,
-        sched = args.sched,
+        lr=args.Optimizer.lr,
+        sched = args.Scheduler.sched,
         lr_noise = args.lr_noise,
         lr_noise_pct = args.lr_noise_pct,
         lr_noise_std = args.lr_noise_std,

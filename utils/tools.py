@@ -54,6 +54,7 @@ def find_free_port():
     s.bind(('', 0))            # Bind to a free port provided by the host.
     return s.getsockname()[1]  # Return the port number assigned.
 
+
 def getModelSize(model):
     param_size = 0
     param_sum = 0
@@ -70,8 +71,7 @@ def getModelSize(model):
     all_size = (param_size + buffer_size) / 1024 / 1024
     return param_sum, buffer_sum, all_size
 
-
-def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=None, only_model=False, loc='cuda:0', strict=True):
+def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=None, only_model=False, strict=True):
 
     start_epoch, start_step = 0, 0
     min_loss = np.inf
@@ -145,7 +145,6 @@ def load_model(model, optimizer=None, lr_scheduler=None, loss_scaler=None, path=
         print("dont find path, please check, we pass........")
     return start_epoch, start_step, min_loss
 
-
 def save_state(epoch=0, step=0, performance=None, 
                model = None, optimizer=None, lr_scheduler=None, 
                loss_scaler=None, min_loss=np.inf, 
@@ -192,7 +191,6 @@ def get_patch_location_index(center,img_shape,patch_range):
     pos = np.stack(pos).transpose(0,2,1)
     return pos
 
-
 def get_center_around_indexes(patch_range,img_shape, h_range=None, w_range=None):
     #assert isinstance(patch_range,(tuple,list))
     patch_range = patch_range if isinstance(patch_range,(list,tuple)) else (patch_range,patch_range)
@@ -204,7 +202,6 @@ def get_center_around_indexes(patch_range,img_shape, h_range=None, w_range=None)
     indexes = indexes.reshape(len(wlist),len(hlist),2,*patch_range).transpose(1,0,2,3,4)
     coor    = coor.reshape(len(wlist),len(hlist),2).transpose(2,1,0)
     return coor, indexes
-
 
 def get_patch_location_index_3D(center,img_shape,patch_range):
         #assert isinstance(patch_range,(tuple,list))
@@ -308,7 +305,7 @@ def update_experiment_info(experiment_hub_path, epoch, args):
         path = str(args.SAVE_PATH)
         if path not in experiment_hub:
             experiment_hub[path] = {"id": len(
-                experiment_hub), 'epoch_tot': args.epochs, "start_time": time.strftime("%m_%d_%H_%M_%S")}
+                experiment_hub), 'epoch_tot': args.Train.epochs, "start_time": time.strftime("%m_%d_%H_%M_%S")}
         experiment_hub[path]['epoch'] = epoch
         experiment_hub[path]['endtime'] = time.strftime("%m_%d_%H_%M_%S")
         with open(experiment_hub_path, 'w') as f:

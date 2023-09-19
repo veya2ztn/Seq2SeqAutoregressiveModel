@@ -12,7 +12,7 @@ from accelerate.utils import ProjectConfiguration, set_seed
 from accelerate import DistributedDataParallelKwargs
 from configs.utils import get_ckpt_path
 from utils.loggingsystem import create_logsys
-from model.get_resource import build_model_and_optimizer
+from model.get_resource import build_training_resource
 from dataset.get_resource import get_test_dataset, get_train_and_valid_dataset
 #########################################
 ############# main script ###############
@@ -52,7 +52,7 @@ def update_and_save_training_status(args, epoch, loss_information, training_stat
         ####### save best valid model #########
         if now_loss < best_loss or best_loss is None:
             loss_information[loss_type]['best'] = best_loss = now_loss
-            if epoch > args.epochs//10:
+            if epoch > args.Train.epochs//10:
                 logsys.info(f"saving best model for {loss_type}....",show=False)
                 performance = dict([(name, val['best']) for name, val in loss_information])
                 save_state(epoch=epoch, path=save_path, only_model=True, performance=performance, **training_state)
@@ -69,7 +69,7 @@ def update_and_save_training_status(args, epoch, loss_information, training_stat
     save_path = loss_information[loss_type]['save_path']
     loss_information[loss_type]['best'] = loss_information[loss_type]['now']
     save_path = loss_information[loss_type]['save_path']
-    if ((epoch>=args.save_warm_up) and (epoch%args.save_every_epoch==0)) or (epoch==args.epochs-1) or (epoch in args.epoch_save_list):
+    if ((epoch>=args.save_warm_up) and (epoch%args.save_every_epoch==0)) or (epoch==args.Train.epochs-1) or (epoch in args.epoch_save_list):
         logsys.info(f"saving latest model ....", show=False)
         save_state(epoch=epoch, step=0, path=save_path, only_model=False, performance=performance, **training_state)
         logsys.info(f"done ....",show=False)
@@ -90,19 +90,18 @@ def distributed_runtime(args):
 
 
 def build_accelerator(args):
-
-    project_config = ProjectConfiguration(
-        project_dir=str(args.SAVE_PATH),
-        automatic_checkpoint_naming=True,
-        total_limit=args.num_max_checkpoints,
-    )
-    log_with = ['tensorboard']
-    if args.Monitor.use_wandb:
-        log_with.append("wandb")
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=args.Train.find_unused_parameters)
-    accelerator = Accelerator(dispatch_batches=not args.data.dispatch_in_gpu, project_config=project_config,
-                              log_with=log_with, kwargs_handlers=[ddp_kwargs]
-                              )
+    accelerator = None
+    if args.Pengine.engine.name == 'accelerate':
+        project_config = ProjectConfiguration(
+            project_dir=str(args.SAVE_PATH),
+            automatic_checkpoint_naming=True,
+            total_limit=args.num_max_checkpoints,
+        )
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=args.Train.find_unused_parameters)
+        accelerator = Accelerator(dispatch_batches=not args.Pengine.engine.dataset_distributed,
+                                  project_config=project_config,
+                                  log_with=[], kwargs_handlers=[ddp_kwargs]
+                                )
     return accelerator
 
 
@@ -125,19 +124,21 @@ def main_worker(local_rank, ngpus_per_node, args,
     args.logsys = logsys
     #########################################
 
-    model, optimizer, lr_scheduler, criterion, loss_scaler = build_model_and_optimizer(args)
+    # model, optimizer, lr_scheduler, criterion, loss_scaler = build_training_resource(args)
 
-    logsys.info(f"entering {args.Train.mode} training in {next(model.parameters()).device}")
-    if args.Train.mode=='fourcast':
-        test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
-        run_fourcast(args, model,logsys,test_dataloader)
-        return logsys.close()
-    elif args.Train.mode=='fourcast_for_snap_nodal_loss':
-        test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
-        run_nodalosssnap(args, model,logsys,test_dataloader)
-        return logsys.close()
+    # logsys.info(f"entering {args.Train.mode} training in {next(model.parameters()).device}")
+    # if args.Train.mode=='fourcast':
+    #     test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
+    #     run_fourcast(args, model,logsys,test_dataloader)
+    #     return logsys.close()
+    # elif args.Train.mode=='fourcast_for_snap_nodal_loss':
+    #     test_dataset,  test_dataloader = get_test_dataset(args,test_dataset_tensor=train_dataset_tensor,test_record_load=train_record_load)
+    #     run_nodalosssnap(args, model,logsys,test_dataloader)
+    #     return logsys.close()
     
-    args.accelerator = build_accelerator(args)
+    # args.accelerator = build_accelerator(args)
+
+    
     ####### Training Stage #########
     
     train_dataset, val_dataset, train_dataloader,val_dataloader = get_train_and_valid_dataset(args,
@@ -154,12 +155,12 @@ def main_worker(local_rank, ngpus_per_node, args,
     start_step             = args.start_step
 
     logsys.info(f"use dataset ==> {train_dataset.__class__.__name__}")
-    logsys.info(f"Start training for {args.epochs} epochs")
+    logsys.info(f"Start training for {args.Train.epochs} epochs")
     
-    master_bar = logsys.create_master_bar(np.arange(-1, args.epochs))
+    master_bar = logsys.create_master_bar(np.arange(-1, args.Train.epochs))
     accu_list = ['valid_loss']
     metric_dict = logsys.initial_metric_dict(accu_list)
-    banner = logsys.banner_initial(args.epochs, args.SAVE_PATH)
+    banner = logsys.banner_initial(args.Train.epochs, args.SAVE_PATH)
     logsys.banner_show(0, args.SAVE_PATH)
     loss_information = {'train_loss': {'now':None,'best':np.inf, 'save_path':os.path.join(args.SAVE_PATH,'pretrain_latest.pt')},
                         'test_loss' : {'now': None, 'best': np.inf, 'save_path': os.path.join(args.SAVE_PATH, 'fourcast.best.pt')},
@@ -170,7 +171,7 @@ def main_worker(local_rank, ngpus_per_node, args,
 
         ## skip fisrt training, and the epoch should be -1
         if epoch >=0: ###### main training loop #########
-            fast_set_model_epoch(model, criterion, train_dataloader, optimizer, loss_scaler,epoch, args, epoch_total=args.epochs, eval_mode=False)
+            fast_set_model_epoch(model, criterion, train_dataloader, optimizer, loss_scaler,epoch, args, epoch_total=args.Train.epochs, eval_mode=False)
             train_loss = run_one_epoch(epoch, start_step, model, criterion, train_dataloader, optimizer, loss_scaler,logsys,'train')
             logsys.record('train', train_loss, epoch, epoch_flag='epoch')
             loss_information['train_loss']['now'] = train_loss
@@ -181,12 +182,12 @@ def main_worker(local_rank, ngpus_per_node, args,
 
         
         if args.fourcast_during_train and (epoch % args.fourcast_during_train == 0 or (epoch == -1 and args.force_do_first_fourcast) or (epoch == args.epoch - 1)):
-            fast_set_model_epoch(model,criterion, val_dataloader, optimizer, loss_scaler,epoch, args, epoch_total=args.epochs,eval_mode=True)
+            fast_set_model_epoch(model,criterion, val_dataloader, optimizer, loss_scaler,epoch, args, epoch_total=args.Train.epochs,eval_mode=True)
             test_loss, test_dataloader = run_fourcast_during_training(args, epoch, logsys, model, test_dataloader)  # will
             logsys.record('test', test_loss, epoch, epoch_flag='epoch') 
             
         if args.valid_every_epoch and (epoch % args.valid_every_epoch == 0 or (epoch == -1 and not args.skip_first_valid) or (epoch == args.epoch - 1)):
-            fast_set_model_epoch(model,criterion, val_dataloader, optimizer, loss_scaler,epoch, args, epoch_total=args.epochs,eval_mode=True)
+            fast_set_model_epoch(model,criterion, val_dataloader, optimizer, loss_scaler,epoch, args, epoch_total=args.Train.epochs,eval_mode=True)
             val_loss   = run_one_epoch(epoch, start_step, model, criterion, val_dataloader, optimizer, loss_scaler,logsys,'valid')
             logsys.record('valid', val_loss, epoch, epoch_flag='epoch')
 

@@ -62,7 +62,7 @@ args= parse_default_args(args)
 #SAVE_PATH = get_ckpt_path(args)
 #SAVE_PATH = "debug"
 #args.SAVE_PATH = str(SAVE_PATH)
-#args.pretrain_weight = os.path.join(args.SAVE_PATH,'pretrain_latest.pt')
+#args.Checkpoint.pretrain_weight = os.path.join(args.SAVE_PATH,'pretrain_latest.pt')
 ########## inital log ###################
 logsys = create_logsys(args,False)
 
@@ -84,23 +84,23 @@ loss_scaler     = torch.cuda.amp.GradScaler(enabled=True)
 logsys.info(f'use lr_scheduler:{lr_scheduler}')
 
 pretrain_path = os.path.join(ckpt_path,"pretrain_latest.pt")
-args.pretrain_weight = pretrain_path
+args.Checkpoint.pretrain_weight = pretrain_path
 
-logsys.info(f"loading weight from {args.pretrain_weight}")
-start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.pretrain_weight, 
+logsys.info(f"loading weight from {args.Checkpoint.pretrain_weight}")
+start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.Checkpoint.pretrain_weight, 
                     only_model= (args.Train.mode=='fourcast') or (args.Train.mode=='finetune' and not args.Train.mode == 'continue_train') ,loc = 'cuda:{}'.format(args.gpu))
 if args.more_epoch_train:
-    assert args.pretrain_weight
-    print(f"detect more epoch training, we will do a copy processing for {args.pretrain_weight}")
-    os.system(f'cp {args.pretrain_weight} {args.pretrain_weight}-epoch{start_epoch}')
+    assert args.Checkpoint.pretrain_weight
+    print(f"detect more epoch training, we will do a copy processing for {args.Checkpoint.pretrain_weight}")
+    os.system(f'cp {args.Checkpoint.pretrain_weight} {args.Checkpoint.pretrain_weight}-epoch{start_epoch}')
 logsys.info("done!")
 
 train_dataset, val_dataset, train_dataloader,val_dataloader = get_train_and_valid_dataset(args,
                train_dataset_tensor=None,train_record_load=None,
                valid_dataset_tensor=None,valid_record_load=None)
 logsys.info(f"use dataset ==> {train_dataset.__class__.__name__}")
-logsys.info(f"Start training for {args.epochs} epochs")
-master_bar = logsys.create_master_bar(args.epochs)
+logsys.info(f"Start training for {args.Train.epochs} epochs")
+master_bar = logsys.create_master_bar(args.Train.epochs)
 accu_list = ['valid_loss']
 metric_dict = logsys.initial_metric_dict(accu_list)
 

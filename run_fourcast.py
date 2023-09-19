@@ -34,7 +34,7 @@ def run_fourcast(ckpt_path):
         return 
     if 'rmse_table_unit' in os.listdir(ckpt_path):
         return 
-    args.pretrain_weight = best_path
+    args.Checkpoint.pretrain_weight = best_path
     if 'config.json' in os.listdir(ckpt_path):
         with open(os.path.join(ckpt_path,'config.json'),'r') as f:
             old_args = json.load(f)

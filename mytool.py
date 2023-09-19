@@ -157,7 +157,7 @@ def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,wei
             print("   no {weight_chose}, pass!")
             return
     #best_path = os.path.join(ckpt_path,'pretrain_latest.pt')
-    args.pretrain_weight = best_path
+    args.Checkpoint.pretrain_weight = best_path
     args.Dataset.time_step = step
     #args.data_root = "datasets/weatherbench"
     args.force_fourcast = force_fourcast
@@ -193,7 +193,7 @@ def run_snap_nodal(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,w
             print("   no {weight_chose}, pass!")
             return
     #best_path = os.path.join(ckpt_path,'pretrain_latest.pt')
-    args.pretrain_weight = best_path
+    args.Checkpoint.pretrain_weight = best_path
     args.Dataset.time_step = step
     #args.data_root = "datasets/weatherbench"
     args.force_fourcast = force_fourcast

@@ -2,11 +2,13 @@ import argparse
 import json
 from dataclasses import dataclass
 from simple_parsing import ArgumentParser, subgroups, field
-from model.model_arguements import (
-    ModelConfig, AFNONetConfig, GraphCastConfig, PatchEmbeddingConfig)
+from model.model_arguments import (ModelConfig, AFNONetConfig, GraphCastConfig)
+from dataset.dataset_arguments import (DatasetConfig, WeatherBenchConfig)
+from .parallel_engine_config import (EngineConfig, NaiveDistributed, AccelerateEngine)
 from typing import Optional, List, Tuple, Union
 from .base import Config
 import yaml
+import simple_parsing
 
 def flatten_args(namespace, level=0):
     namespace = vars(namespace) if isinstance(
@@ -34,8 +36,6 @@ def save_args(args, path):
 def build_parser():
     parser = ArgumentParser(description='Arguments', allow_abbrev=False, add_help=True,add_config_path_arg=True)
     parser.add_argument('--debug', action='store_true', default=False)
-    parser.add_argument('--distributed', action='store_true', default=False)
-    
     parser.add_arguments(Global_Model_Config      ,dest = "Model")
     parser.add_arguments(Global_Train_Config      ,dest = "Train")
     parser.add_arguments(Global_Loss_Config       ,dest = "Loss")
@@ -46,6 +46,7 @@ def build_parser():
     parser.add_arguments(Global_Scheduler_Config  ,dest = "Scheduler")
     parser.add_arguments(Global_Dataset_Config    ,dest = "Dataset")
     parser.add_arguments(Global_Forecast_Config   ,dest = "Forecast")
+    parser.add_arguments(Global_Parallel_Config   ,dest = "Pengine")
     
     return parser
 
@@ -65,9 +66,20 @@ def get_args(config_path=None):
         args = ['--config_path', 'test.yaml']+_sys.argv[1:]
     else:
         args = None
-    parser = build_parser()
-    return parser.parse_args(args=args)
 
+    args = simple_parsing.parse(
+        config_class=Global_Config, args=args, add_config_path_arg=True)
+    return args
+    #parser = build_parser()
+    #return parser.parse_args(args=args)
+
+
+@dataclass
+class Global_Parallel_Config(Config):
+    engine: EngineConfig = subgroups(
+        {"simple": NaiveDistributed, "accelerate": AccelerateEngine},
+        default="simple"
+    )
 
 @dataclass
 class Global_Model_Config(Config):
@@ -77,10 +89,6 @@ class Global_Model_Config(Config):
         {"afnonet": AFNONetConfig, "graphcast": GraphCastConfig}
     )
 
-    patch_embedding: PatchEmbeddingConfig = subgroups(
-        {"simple": PatchEmbeddingConfig},
-        default = 'simple'
-    )
 
 
 @dataclass
@@ -126,7 +134,7 @@ class Global_Train_Config(Config):
     do_final_fourcast     :bool = field(default=False) 
     do_fourcast_anyway    :bool = field(default=False) 
     train_not_shuffle     :bool = field(default=False) 
-    load_model_lossy      :bool = field(default=False) 
+    
     find_unused_parameters:bool = field(default=False) 
     input_noise_std: float = field(default=0.0)
     compute_graph_set: str = field(default=None)
@@ -135,7 +143,7 @@ class Global_Forecast_Config(Config):
     forecast_every_epoch  :int=field(default=0,help='forecast_every_epoch')
     fourcast_randn_repeat :int=field(default=False, help='add random noise when do forecast, now disable')
     force_fourcast        :bool=field(default=False) 
-    pretrain_weight       :Optional[str]=field(default=None, help='pretrain_weight')
+    
     snap_index            :Optional[str]=field(default=None)
     wandb_id              :Optional[str]=field(default=None)
 
@@ -168,7 +176,8 @@ class Global_Checkpoint_Config(Config):
     epoch_save_list   :Optional[List[int]] = field(default=None)   
     save_every_epoch  :int = field(default = 1)    
     save_warm_up      :int = field(default = 5)
-
+    pretrain_weight   :Optional[str]=field(default=None, help='pretrain_weight')
+    load_model_lossy  :bool = field(default=False) 
 @dataclass
 class Global_Optimizer_Config(Config):
     opt:str=field(default='adamw', help='Optimizer (default: "adamw"')
@@ -198,45 +207,38 @@ class Global_Scheduler_Config(Config):
 
 @dataclass
 class Global_Dataset_Config(Config):
-    root:str=field(default='datasets/WeatherBench/weatherbench32x64_1hour/')
-    time_unit:int=field(default=1)
-    dataset_patch_range:Optional[List[int]]=field(default=None)
-    constant_channel_pick: Optional[List[int]] = field(default=None)
-    channel_name_list:str=field(default="configs/datasets/WeatherBench/2D70.channel_list.json")
-    timestamps_list:int=field(default=None)
-    time_step:int=field(default=2)
-    time_intervel:int=field(default=1)
-    normlized_flag:str=field(default='N')
-    time_reverse_flag:str=field(default='only_forward')
-    use_time_feature:bool=field(default=False)
-    add_LunaSolarDirectly:bool=field(default=False)
-    offline_data_is_already_normed:bool=field(default=False)
-    cross_sample:bool=field(default=False)
-    make_data_physical_reasonable_mode:str=field(default=None)
-    share_memory:bool=field(default=False,help='share_memory_flag')
-    random_dataset:bool=field(default=False,help='activaterandomlizeddataset')
-    num_workers:int=field(default=0,help='numworkerisbetterset0')
-    use_offline_data:bool=field(default=False)
-    chunk_size:int=field(default=1024)
-    picked_inputoutput_property:str=field(default=None)
-    random_time_step:bool=field(default=None)
+    dataset: DatasetConfig = subgroups(
+        {"weatherbench": WeatherBenchConfig},
+        default="weatherbench"
+    )
 
 
 @dataclass
 class Global_Config(Config):
+    
+    Train: Global_Train_Config
+    Criterion: Global_Loss_Config
+    Valid: Global_Valid_Config
+    Monitor: Global_Monitor_Config
+    Checkpoint: Global_Checkpoint_Config
+    Optimizer: Global_Optimizer_Config
+    Scheduler: Global_Scheduler_Config
+    Forecast: Global_Forecast_Config
 
-    train: Global_Train_Config
-    criterion: Global_Loss_Config
-    valid: Global_Valid_Config
-    monitor: Global_Monitor_Config
-    checkpoint: Global_Checkpoint_Config
-    optimizer: Global_Optimizer_Config
-    scheduler: Global_Scheduler_Config
-    dataset: Global_Dataset_Config
-    forecast: Global_Forecast_Config
-    model:  ModelConfig = subgroups(
-        {"afnonet": AFNONetConfig, "graphcast": GraphCastConfig}, default="afnonet"
+    Dataset: DatasetConfig = subgroups(
+        {"weatherbench": WeatherBenchConfig},
+        #default="weatherbench"
     )
+    
+    Engine: EngineConfig = subgroups(
+        {"simple": NaiveDistributed, "accelerate": AccelerateEngine},
+        #default="simple"
+    )
+    Model:  ModelConfig = subgroups(
+        {"afnonet": AFNONetConfig, "graphcast": GraphCastConfig},
+        #default="afnonet"
+    )
+    debug: bool = field(default=False)
 
 if __name__ == '__main__':
     args = get_args()

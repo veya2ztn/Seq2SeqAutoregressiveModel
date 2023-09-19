@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 
 class BaseModel(nn.Module):
-
+    
     def __init__(self, config):
         super().__init__()
         #### common model config
@@ -20,14 +20,8 @@ class BaseModel(nn.Module):
         self.out_chans = config.out_chans
         self.embed_dim = config.embed_dim
         self.depth = config.depth
-        self.debug_mode = config.debug_mode
-
-        self.patch_size = [self.patch_size]*len(self.img_size) if isinstance(self.patch_size, int) else self.patch_size
-
-        if self.history_length > 1:
-            self.img_size = (self.history_length,*self.img_size)
-            self.patch_size = (1,*self.patch_size)
-
+        self.img_size, self.patch_size = self.correct_imgsize_and_patchsize(
+            self.img_size, self.patch_size, self.history_length)
         # print(f"""
         # ============model:DownAndUp================
         #         img_size:{img_size}
@@ -36,6 +30,17 @@ class BaseModel(nn.Module):
         #         out_chans:{out_chans}
         # ========================================
         # """)
+
+    @staticmethod
+    def correct_imgsize_and_patchsize(img_size, patch_size, history_length):
+        patch_size = [patch_size]*len(img_size) if isinstance(patch_size, int) else patch_size
+
+        if history_length > 1:
+            img_size = (history_length,*img_size)
+            patch_size = (1,*patch_size)
+
+        return img_size, patch_size
+        
     def set_epoch(self,**kargs):
         pass
     
