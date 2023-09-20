@@ -20,21 +20,20 @@ class FieldsSequence:
         self.P           = config.get('channel_num')
         self.L           = config.get('sequence_length')
         self.image_shape = config.get('image_shape')
-        
-        self.input_lens  = config.get('input_lens')
-        self.target_lens = config.get('pred_lens')
-        self.inputs_sequence = [None]*self.input_lens
+        self.input_len  = config.get('input_lens')
+        self.pred_len = config.get('pred_lens')
+        self.inputs_sequence = [None]*self.input_len
         self.target_sequence = []
     
-    def initial_unnormilized_inputs_field(self, inputs_sequence, target_sequence):
-        assert len(inputs_sequence) == self.input_lens
+    def initial_unnormilized_inputs_field(self, inputs_sequence):
+        assert len(inputs_sequence) == self.input_len
         _=[self._stamp_check(t) for t in inputs_sequence]
         self.inputs_sequence = inputs_sequence
         
     
     def _stamp_check(self, stamp):
         assert isinstance(stamp,dict), "each stamp should be dict {'field':Field, 'stamp_status':stamp_status]}"
-        assert stamp['field'].shape == (self.B, self.P, *self.image_shape)
+        assert stamp['field'].shape[1:] == (self.P, *self.image_shape)
     
 
 
@@ -49,23 +48,26 @@ class FieldsSequence:
         if target_sequence is None:
             self.target_sequence = None
             self.key_for_one_stamp = {'field'}
-        assert len(target_sequence) == self.target_lens
+        assert len(target_sequence) == self.pred_len
         _=[self._stamp_check(t) for t in target_sequence]
         self.target_sequence += target_sequence
         self.key_for_one_stamp = set(target_sequence[0].keys())
 
-    def push_a_normlized_field(self, preded_normlized_fields:dict):
+    def push_a_normlized_field(self, preded_normlized_fields:torch.Tensor):
         """
         Input is only a dict {'field': Preded_Field (B, P, L=1, W, H)} 
         """
-
-        preded_normlized_fields = self.unnormalized_a_field(preded_normlized_fields['field'])
-        pred_lens = preded_normlized_fields.shape[2]
-        preded_normlized_fields = preded_normlized_fields.split(pred_lens,dim=2)
-        _=[self._stamp_check(t) for t in preded_normlized_fields]
+        preded_normlized_fields = self.unnormalized_a_field(preded_normlized_fields)
+        if preded_normlized_fields.shape[1:] == (self.P, self.pred_len, *self.image_shape):  
+            pred_lens = preded_normlized_fields.shape[2]
+            preded_normlized_fields = preded_normlized_fields.split(pred_lens,dim=2)
+        elif preded_normlized_fields.shape[1:] == ( self.P, *self.image_shape):  
+            preded_normlized_fields = [preded_normlized_fields]
+            pred_lens = 1
+        #_=[self._stamp_check(t) for t in preded_normlized_fields]
         
         new_candidate = [{}]*pred_lens
-        for key in self.key_for_one_stamp:
+        for key in self.key_for_one_stamp: # <-- only update the field
             if key == 'field':
                 for i in range(pred_lens):new_candidate[i]['field'] = preded_normlized_fields[i]
             else:
@@ -83,7 +85,7 @@ class FieldsSequence:
                 if key not in inputs_dict:inputs_dict[key] = []
                 inputs_dict[key].append(self.normalize_a_field(val))
         for key in inputs_dict.keys():
-            inputs_dict[key] = torch.stack(inputs_dict[key], 2)  # --> (B,P,L,W,H)
+            inputs_dict[key] = torch.stack(inputs_dict[key], 2)  if len(inputs_dict[key])>1 else inputs_dict[key][0]# --> (B,P,L,W,H)
         return inputs_dict
 
     @property
@@ -97,7 +99,7 @@ class FieldsSequence:
                 if key not in inputs_dict:inputs_dict[key] = []
                 inputs_dict[key].append(self.normalize_a_field(val))
         for key in inputs_dict.keys():
-            inputs_dict[key] = torch.stack(inputs_dict[key], 2)  # --> (B,P,L,W,H)
+            inputs_dict[key] = torch.stack(inputs_dict[key], 2)  if len(inputs_dict[key])>1 else inputs_dict[key][0] # --> (B,P,L,W,H)
         return inputs_dict
 
     def get_inputs_and_target(self):
@@ -124,6 +126,7 @@ class FieldsSequenceWithChannelShifting(FieldsSequence):
         return _inputs, _target
     
     def push_a_normlized_field(self, preded_normlized_fields):
+        
         preded_normlized_fields = self.unnormalized_a_field(preded_normlized_fields['field'])
         pred_lens = preded_normlized_fields.shape[2]
         preded_normlized_fields = preded_normlized_fields.split(pred_lens,dim=2)

@@ -138,7 +138,7 @@ def run_fourcast(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,wei
     #args.use_wandb = 'off'
     args.use_offline_data = 2 if args.use_offline_data else 0
     args.SAVE_PATH = ckpt_path
-    #args.batch_size=args.valid_batch_size= 4 
+    #args.Train.batch_size=args.Valid.valid_batch_size= 4 
     if wandb_id is not None:args.wandb_id = wandb_id
     if weight_chose is None:
         if 'backbone.best.pt' in os.listdir(ckpt_path):
@@ -174,7 +174,7 @@ def run_snap_nodal(ckpt_path,step = 4*24//6,force_fourcast=False,wandb_id=None,w
     args.fourcast  = True
     args.recorder_list = []
     #args.use_wandb = 'wandb_runtime'
-    #args.batch_size=args.valid_batch_size= 4 
+    #args.Train.batch_size=args.Valid.valid_batch_size= 4 
     if wandb_id is not None:args.wandb_id = wandb_id
     if weight_chose is None:
         if 'backbone.best.pt' in os.listdir(ckpt_path):
@@ -245,7 +245,7 @@ def create_fourcast_table(ckpt_path,force_fourcast=False):
     args= parse_default_args(args)
     args.SAVE_PATH = ckpt_path
     ########## inital log ###################
-    args.distributed = False 
+    args.Pengine.engine.distributed = False 
     test_dataset,   test_dataloader = get_test_dataset(args)
     #args.SAVE_PATH = './debug'
     #args.use_wandb = 'wandb_runtime'
@@ -279,7 +279,7 @@ def create_nodalsnap_table(ckpt_path):
     args= parse_default_args(args)
     args.SAVE_PATH = ckpt_path
     ########## inital log ###################
-    args.distributed = False
+    args.Pengine.engine.distributed = False
     test_dataset,   test_dataloader = get_test_dataset(args)
     #args.SAVE_PATH = './debug'
     args.use_wandb = 'wandb_runtime'
@@ -311,7 +311,7 @@ def create_multi_fourcast_table(ckpt_path,force=False):
     args= parse_default_args(args)
     args.SAVE_PATH = ckpt_path
     ########## inital log ###################
-    args.distributed = False 
+    args.Pengine.engine.distributed = False 
     test_dataset,   test_dataloader = get_test_dataset(args)
     logsys = create_logsys(args,False)
     result_path_list = [os.path.join(ckpt_path,result_path) for result_path in os.listdir(ckpt_path) if "result_of_epoch" in result_path]

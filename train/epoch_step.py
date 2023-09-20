@@ -10,9 +10,8 @@ from .sequence2sequence_manager import FieldsSequence
 from criterions.high_order_loss_coef import calculate_coef, normlized_coef_type2, normlized_coef_type3, normlized_coef_type0, normlized_coef_type_bonded
 
 def get_fetcher(status,data_loader):
-    if (status =='train' and \
-        data_loader.dataset.use_offline_data and \
-        data_loader.dataset.split=='train' and \
+    if (status =='train' and 
+        data_loader.dataset.split=='train' and 
         'Patch' in data_loader.dataset.__class__.__name__):
       return RandomSelectPatchFetcher
     elif (status =='train' and 'Multibranch' in data_loader.dataset.__class__.__name__):
@@ -21,8 +20,8 @@ def get_fetcher(status,data_loader):
     else:
         return Datafetcher
 
-def run_one_epoch(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status):
-    return run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, optimizer, loss_scaler,logsys,status)
+def run_one_epoch(status, epoch, start_step,  data_loader, forward_system, logsys, accelerator, plugins=[]):
+    return run_one_epoch_normal(status, epoch, start_step,  data_loader, forward_system, logsys, accelerator, plugins=plugins)
 
 def apply_model_step(model,*args,**kargs):
     unwrapper_model = model
@@ -32,11 +31,11 @@ def apply_model_step(model,*args,**kargs):
     if hasattr(model, 'set_step'):model.set_step(*args,**kargs)
 
 class TimeUsagePlugin:
-    def __init__(self, time_cost_list):
+    def __init__(self):
         self.time_cost_list = []
     def record(self, now):
         self.time_cost_list.append(time.time() - now)
-        return now
+        return time.time()
     def get(self):
         average_cost = np.mean(self.time_cost_list)
         self.time_cost_list = []
@@ -140,18 +139,23 @@ class LongTermEstimatePlugin:
             #raise
 
 
-def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader, 
-                         optimizer, logsys, status, accelerator, plugins=[]):
-    
+def run_one_epoch_normal(status, epoch, start_step,  data_loader, forward_system, logsys, accelerator, plugins=[]):
+    model       = forward_system['model']
+    criterion   = forward_system.get('criterion',None)
+    optimizer   = forward_system.get('optimizer',None)
+    loss_scaler = forward_system.get('loss_scaler',None)
+    use_amp     = forward_system.get('use_amp',False)
+    accumulation_steps     = forward_system.get('accumulation_steps',1)
+
     if status == 'train':
         model.train()
         logsys.train()
-    elif status == 'valid':
+    else:# status == 'valid':
         model.eval()
         logsys.eval()
-    else:
-        raise NotImplementedError
-    
+    if optimizer is not None:optimizer.zero_grad() 
+
+
     Fethcher   = get_fetcher(status,data_loader)
     device     = next(model.parameters()).device
     prefetcher = Fethcher(data_loader,device)
@@ -164,40 +168,63 @@ def run_one_epoch_normal(epoch, start_step, model, criterion, data_loader,
     batches    = len(data_loader)
     
     intervel = batches//logsys.log_trace_times + 1
-    inter_b.lwrite(f"load everything, start_{status}ing......", end="\r")
+    
 
     total_diff,total_num  = torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
-    sequence_manager      = FieldsSequence({'batch_size': data_loader})
+    sequence_manager      = FieldsSequence({'batch_size': data_loader.batch_size,
+                                            "channel_num": len(data_loader.dataset.vnames),
+                                            "sequence_length": 2,
+                                            "image_shape": data_loader.dataset.img_size,
+                                            "input_lens": 1,
+                                            "pred_lens": 1
+                                            })
     last_record_time = time.time()
     inter_b    = logsys.create_progress_bar(batches,unit=' img',unit_scale=data_loader.batch_size)
+    inter_b.lwrite(f"load everything, start_{status}ing......", end="\r")
+
+    
     while inter_b.update_step():
-        #if inter_b.now>10:break
         step = inter_b.now
         batch = prefetcher.next()
         #if step < start_step:continue ###, so far will not allowed model checkpoint instep.
         last_record_time = data_cost.record(last_record_time)
         apply_model_step(model,step=step, epoch=epoch, step_total=batches, status=status)
+        
+        # ====================================================================
         if status == 'train':
-            with accelerator.accumulate(model): # this cost will not allowed model checkpoint instep. if start_step == 0:optimizer.zero_grad() 
-                optimizer.zero_grad()
-                loss, abs_loss, iter_info_pool, _ , _  = run_one_iter(model,batch, criterion, status, sequence_manager, plugins)
-                accelerator.backward(loss)
-                optimizer.step()
+
+            if accelerator is not None:
+                with accelerator.accumulate(model):
+                    optimizer.zero_grad()
+                    loss, iter_info_pool, _ , _  = run_one_iter(model,batch, criterion, status, sequence_manager, plugins)
+                    accelerator.backward(loss)
+                    optimizer.step()
+            else:
+                with torch.cuda.amp.autocast(enabled=use_amp):
+                    loss, iter_info_pool, _, _  =run_one_iter(model,batch, criterion, status, sequence_manager, plugins)
+                loss_scaler.scale(loss/accumulation_steps).backward()    
+                if (step+1) % accumulation_steps == 0:
+                    loss_scaler.step(optimizer)
+                    loss_scaler.update()   
+                    optimizer.zero_grad()
         else:
             with torch.no_grad():
-                loss, abs_loss, iter_info_pool, _, _ = run_one_iter(model,batch, criterion, status, sequence_manager, plugins)
+                loss, iter_info_pool, _, _ = run_one_iter(model,batch, criterion, status, sequence_manager, plugins)
         last_record_time = train_cost.record(last_record_time)
         for plugin in plugins:plugin.run_in_epoch(model, status)
         last_record_time = rest_cost.record(last_record_time)
 
-        total_diff  += abs_loss.item()
+        total_diff  += loss.item()
         total_num   += 1 
         
+        
+        
+        # ====================================================================
         if (step) % intervel==0:
             for key, val in iter_info_pool.items():
                 logsys.record(key, val, epoch*batches + step, epoch_flag='iter')
         if (step) % intervel==0 or step<30:
-            outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [TIME LEN]:{len(batch)} abs_loss:{abs_loss.item():.4f} loss:{loss.item():.4f} cost:[Date]:{data_cost.get():.1e} [Train]:{train_cost.get():.1e} ")
+            outstring=(f"epoch:{epoch:03d} iter:[{step:5d}]/[{len(data_loader)}] [TIME LEN]:{len(batch)}  loss:{loss.item():.4f} cost:[Date]:{data_cost.get():.1e} [Train]:{train_cost.get():.1e} ")
             inter_b.lwrite(outstring, end="\r")
 
     if hasattr(model,'module') and status == 'valid':

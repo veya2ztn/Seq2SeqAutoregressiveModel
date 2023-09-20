@@ -25,7 +25,7 @@ def run_fourcast(ckpt_path):
     args.Train_set = "physics_small"
     args.fourcast  = True
     args.Train.mode = 'fourcast'
-    args.batch_size= 64
+    args.Train.batch_size= 64
     if 'backbone.best.pt' in os.listdir(ckpt_path):
         best_path = os.path.join(ckpt_path,'backbone.best.pt')
     elif 'pretrain_latest.pt' in os.listdir(ckpt_path):

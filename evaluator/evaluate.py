@@ -982,14 +982,14 @@ def run_fourcast(args, model,logsys,test_dataloader=None,do_table=True,get_value
 
     
     if do_table:
-        if not args.distributed:
+        if not args.Pengine.engine.distributed:
             create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
         else:
             dist.barrier()
             if dist.get_rank() == 0:
                 create_fourcast_metric_table(fourcastresult, logsys,test_dataset)
     if get_value:
-        if not args.distributed:
+        if not args.Pengine.engine.distributed:
             return create_fourcast_metric_table(fourcastresult, logsys,test_dataset,return_value = ['Z500'])
         else:
             dist.barrier()

@@ -294,6 +294,9 @@ def get_tensor_norm(tensor, dim):  # <--use mse way
     #return (torch.sum(tensor**2,dim=dim)).sqrt()#(N,B)
     return (torch.mean(tensor**2, dim=dim))  # (N,B)
 
+def dprint(*args, **kwargs):
+    if get_local_rank():return
+    print(*args, **kwargs)
 
 def update_experiment_info(experiment_hub_path, epoch, args):
     try:

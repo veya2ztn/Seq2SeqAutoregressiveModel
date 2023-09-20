@@ -6,11 +6,11 @@ import torch
 def create_memory_templete(args):
     train_dataset_tensor = valid_dataset_tensor = train_record_load = valid_record_load = None
     if args.use_inmemory_dataset:
-        assert args.dataset_type
+        assert args.Dataset.dataset.dataset_type
         print("======== loading data as shared memory==========")
         if not ('fourcast' in args.Train.mode):
             print(f"create training dataset template, .....")
-            train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='train' if not args.debug else 'test',
+            train_dataset_tensor, train_record_load = eval(args.Dataset.dataset.dataset_type).create_offline_dataset_templete(split='train' if not args.debug else 'test',
                                                                                                               root=args.data_root, use_offline_data=args.use_offline_data, dataset_flag=args.dataset_flag)
             train_dataset_tensor = train_dataset_tensor.share_memory_()
             train_record_load = train_record_load.share_memory_()
@@ -18,7 +18,7 @@ def create_memory_templete(args):
                 f"done! -> train template shape={train_dataset_tensor.shape}")
 
             print(f"create validing dataset template, .....")
-            valid_dataset_tensor, valid_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='valid' if not args.debug else 'test',
+            valid_dataset_tensor, valid_record_load = eval(args.Dataset.dataset.dataset_type).create_offline_dataset_templete(split='valid' if not args.debug else 'test',
                                                                                                               root=args.data_root, use_offline_data=args.use_offline_data, dataset_flag=args.dataset_flag)
             valid_dataset_tensor = valid_dataset_tensor.share_memory_()
             valid_record_load = valid_record_load.share_memory_()
@@ -26,7 +26,7 @@ def create_memory_templete(args):
                 f"done! -> train template shape={valid_dataset_tensor.shape}")
         else:
             print(f"create testing dataset template, .....")
-            train_dataset_tensor, train_record_load = eval(args.dataset_type).create_offline_dataset_templete(split='test',
+            train_dataset_tensor, train_record_load = eval(args.Dataset.dataset.dataset_type).create_offline_dataset_templete(split='test',
                                                                                                               root=args.data_root, use_offline_data=args.use_offline_data, dataset_flag=args.dataset_flag)
             train_dataset_tensor = train_dataset_tensor.share_memory_()
             train_record_load = train_record_load.share_memory_()

@@ -14,33 +14,33 @@ cudnn.benchmark = False  # will search a best CNN realized way at beginning
 cudnn.deterministic = True  # the key for continue training.
 
 def build_combination_model(args):
-    args.Model.model_kargs['history_length'] = 1
-    assert args.Model.model_type1
-    assert args.Model.model_type2
-    args.Model.model_kargs['in_chans']   = eval(args.wrapper_model).default_input_channel1
-    args.Model.model_kargs['out_chans']  = eval(args.wrapper_model).default_output_channel1
-    backbone1                      = eval(args.Model.model_type1)(**args.Model.model_kargs)
+    args.Model.model.model_kargs['history_length'] = 1
+    assert args.Model.model.model_type1
+    assert args.Model.model.model_type2
+    args.Model.model.model_kargs['in_chans']   = eval(args.wrapper_model).default_input_channel1
+    args.Model.model.model_kargs['out_chans']  = eval(args.wrapper_model).default_output_channel1
+    backbone1                      = eval(args.Model.model.model_type1)(**args.Model.model.model_kargs)
         
     
-    args.Model.model_kargs['in_chans']  = eval(args.wrapper_model).default_input_channel2
-    args.Model.model_kargs['out_chans'] = eval(args.wrapper_model).default_output_channel2
+    args.Model.model.model_kargs['in_chans']  = eval(args.wrapper_model).default_input_channel2
+    args.Model.model.model_kargs['out_chans'] = eval(args.wrapper_model).default_output_channel2
 
-    if args.Model.model_type2 == 'AFNONet':
+    if args.Model.model.model_type2 == 'AFNONet':
         pass
-    elif args.Model.model_type2 == 'smallAFNONet':
-        args.Model.model_kargs['depth'] = 6
-        args.Model.model_type2 = 'AFNONet'
-    elif args.Model.model_type2 == 'tinyAFNONet':
-        args.Model.model_kargs['embed_dim'] = 384
-        args.Model.model_kargs['depth'] = 6
-        args.Model.model_type2 = 'AFNONet'
+    elif args.Model.model.model_type2 == 'smallAFNONet':
+        args.Model.model.model_kargs['depth'] = 6
+        args.Model.model.model_type2 = 'AFNONet'
+    elif args.Model.model.model_type2 == 'tinyAFNONet':
+        args.Model.model.model_kargs['embed_dim'] = 384
+        args.Model.model.model_kargs['depth'] = 6
+        args.Model.model.model_type2 = 'AFNONet'
     else:
         raise NotImplementedError
 
-    backbone2 = eval(args.Model.model_type2)(**args.Model.model_kargs)
-    args.Model.model_kargs['in_chans'] = args.input_channel
-    args.Model.model_kargs['out_chans'] = args.output_channel
-    args.Model.model_kargs['history_length'] = 1
+    backbone2 = eval(args.Model.model.model_type2)(**args.Model.model.model_kargs)
+    args.Model.model.model_kargs['in_chans'] = args.input_channel
+    args.Model.model.model_kargs['out_chans'] = args.output_channel
+    args.Model.model.model_kargs['history_length'] = 1
     model = eval(args.wrapper_model)(args, backbone1, backbone2, args.backbone1_ckpt_path, args.backbone2_ckpt_path)
     return model
     
@@ -64,7 +64,7 @@ def prepare_model(model ,optimizer, lr_scheduler, criterion, loss_scaler, args):
     if (args.Checkpoint.pretrain_weight is None or not args.Checkpoint.pretrain_weight) and args.Train.mode == 'finetune':
         raise NotImplementedError(f"Error: you are using finetune mode, but you dont have a pretrain weight, please check your config file")
     
-    start_epoch, start_step = 0, 0
+    start_epoch, start_step = -1, 0
     min_loss = np.inf
 
     if args.Pengine.engine.name == 'naive_distributed':
@@ -115,6 +115,7 @@ def prepare_model(model ,optimizer, lr_scheduler, criterion, loss_scaler, args):
             min_loss = accelerator.state.min_loss
 
     args.start_step = start_step
+    args.start_epoch= start_epoch
     args.min_loss   = min_loss
     logsys.info(f"======> start from epoch:{start_epoch:3d}/{args.Train.epochs:3d} with loss {min_loss:.4f} <======")
     return model ,optimizer, lr_scheduler, criterion, loss_scaler, args
@@ -286,7 +287,7 @@ def build_training_resource(args):
     #     model.c1 = model.c2 = model.c3 = 1
     # model.skip_constant_2D70N = args.skip_constant_2D70N
     # if 'UVT' in args.wrapper_model:
-    #     print(f"notice we are in property_pick mode, be careful. Current dataset is {args.dataset_type}")
+    #     print(f"notice we are in property_pick mode, be careful. Current dataset is {args.Dataset.dataset.dataset_type}")
     #     #assert "55" in args.dataset_flag
     # if not hasattr(model, 'pred_channel_for_next_stamp') and args.input_channel != args.output_channel and args.output_channel == 68:
     #     model.pred_channel_for_next_stamp = list(range(0, 14*4-1)) + list(range(14*4, 69))

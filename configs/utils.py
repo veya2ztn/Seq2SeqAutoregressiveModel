@@ -49,16 +49,16 @@ def get_model_name(args):
     # if "FED" in args.Model.model.model_type:
     #     mode_name =args.modes.replace(",","-")
     #     return f"{args.Model.model.model_type}.{args.mode_select}_select.M{mode_name}_P{args.pred_len}L{args.label_len}"
-    # if "AFN" in args.Model.model.model_type and hasattr(args,'model_depth') and args.Model.model_depth == 6:
+    # if "AFN" in args.Model.model.model_type and hasattr(args,'model_depth') and args.Model.model.model_depth == 6:
     #     model_name = "small_" + model_name
     # model_name = f"ViT_in_bulk-{model_name}" if len(args.img_size)>2 else model_name
     # model_name = f"{args.wrapper_model}-{model_name}" if args.wrapper_model else model_name
-    # model_name = f"{model_name}_Patch_{tuple2str(args.patch_range)}" if (args.patch_range and 'Patch' in args.dataset_type) else model_name
+    # model_name = f"{model_name}_Patch_{tuple2str(args.patch_range)}" if (args.patch_range and 'Patch' in args.Dataset.dataset.dataset_type) else model_name
     return model_name
 
 def get_datasetname(args):
     datasetname = "test"
-    # if not args.dataset_type and args.Train_set in train_set:
+    # if not args.Dataset.dataset.dataset_type and args.Train_set in train_set:
     #     datasetname = train_set[args.Train_set][4].__name__
     # if not datasetname:
     #     raise NotImplementedError("please use right dataset type")
@@ -109,7 +109,8 @@ def deal_with_tuple_string(patch_size,defult=None,dtype=int):
 import random, os
 def get_ckpt_path(args):
     if args.debug:return './debug'
-    TIME_NOW  = time.strftime("%m_%d_%H_%M")+f"_{args.port}" if args.distributed else time.strftime("%m_%d_%H_%M_%S")
+    #TIME_NOW  = time.strftime("%m_%d_%H_%M")+f"_{args.port}" if args.Pengine.engine.distributed else time.strftime("%m_%d_%H_%M_%S")
+    TIME_NOW = time.strftime("%m_%d_%H_%M")
     if args.Train.seed == -1:args.Train.seed = 42;#random.randint(1, 100000)
     if args.Train.seed == -2:args.Train.seed = random.randint(1, 100000)
     TIME_NOW  = f"{TIME_NOW}-seed_{args.Train.seed}"
@@ -122,21 +123,21 @@ def get_ckpt_path(args):
         SAVE_PATH = os.path.dirname(args.Checkpoint.pretrain_weight)
     else:
         SAVE_PATH = f'./checkpoints/{datasetname}/{model_name}/{project_name}/{TIME_NOW}'
-        SAVE_PATH.mkdir(parents=True, exist_ok=True)
+        os.makedirs(SAVE_PATH, exist_ok=True)
     return SAVE_PATH
 
 def parse_default_args(args):
     if args.Train.seed == -1:args.Train.seed = 42
     if args.Train.seed == -2:args.Train.seed = random.randint(1, 100000)
     args.half_model = half_model
-    args.batch_size = bs_for_mode[args.Train.mode] if args.batch_size == -1 else args.batch_size
-    args.valid_batch_size = args.batch_size*8 if args.valid_batch_size == -1 else args.valid_batch_size
+    args.Train.batch_size = bs_for_mode[args.Train.mode] if args.Train.batch_size == -1 else args.Train.batch_size
+    args.Valid.valid_batch_size = args.Train.batch_size*8 if args.Valid.valid_batch_size == -1 else args.Valid.valid_batch_size
     args.Train.epochs     = ep_for_mode[args.Train.mode] if args.Train.epochs == -1 else args.Train.epochs
     args.Optimizer.lr         = lr_for_mode[args.Train.mode] if args.Optimizer.lr == -1 else args.Optimizer.lr
     args.Dataset.time_step = ts_for_mode[args.Train.mode] if args.Dataset.time_step == -1 else args.Dataset.time_step
 
-    if not hasattr(args,'epoch_save_list'):args.epoch_save_list = [99]
-    if isinstance(args.epoch_save_list,str):args.epoch_save_list = [int(p) for p in args.epoch_save_list.split(',')]
+    if not hasattr(args,'epoch_save_list'):args.Checkpoint.epoch_save_list = [99]
+    if isinstance(args.Checkpoint.epoch_save_list,str):args.Checkpoint.epoch_save_list = [int(p) for p in args.Checkpoint.epoch_save_list.split(',')]
     # input size
     img_size = patch_size = x_c = y_c =  dataset_type = None
 
@@ -149,7 +150,7 @@ def parse_default_args(args):
         assert args.patch_size
         assert args.input_channel
         assert args.output_channel
-        assert args.dataset_type
+        assert args.Dataset.dataset.dataset_type
         dataset_kargs={}
 
 
@@ -171,8 +172,8 @@ def parse_default_args(args):
     args.unique_up_sample_channel = args.unique_up_sample_channel
     
 
-    args.dataset_type = dataset_type if not args.dataset_type else args.dataset_type
-    args.dataset_type = args.dataset_type.__name__ if not isinstance(args.dataset_type,str) else args.dataset_type
+    args.Dataset.dataset.dataset_type = dataset_type if not args.Dataset.dataset.dataset_type else args.Dataset.dataset.dataset_type
+    args.Dataset.dataset.dataset_type = args.Dataset.dataset.dataset_type.__name__ if not isinstance(args.Dataset.dataset.dataset_type,str) else args.Dataset.dataset.dataset_type
     x_c        = args.input_channel = x_c if not args.input_channel else args.input_channel
     y_c        = args.output_channel= y_c if not args.output_channel else args.output_channel
     patch_size = args.patch_size = deal_with_tuple_string(args.patch_size,patch_size)
@@ -180,7 +181,7 @@ def parse_default_args(args):
     patch_range= args.patch_range= deal_with_tuple_string(args.patch_range,None)
     multibranch_select = args.multibranch_select= deal_with_tuple_string(args.multibranch_select,None)
     #print(args.multibranch_select)
-    if "Patch" in args.dataset_type:
+    if "Patch" in args.Dataset.dataset.dataset_type:
         dataset_patch_range = args.dataset_patch_range = deal_with_tuple_string(args.dataset_patch_range,None)
     else:
         dataset_patch_range = args.dataset_patch_range = None
@@ -214,7 +215,7 @@ def parse_default_args(args):
         "out_chans": args.output_channel,
         "fno_blocks": args.fno_blocks,
         "embed_dim": args.embed_dim if not args.debug else 16*6, 
-        "depth": args.Model.model_depth if not args.debug else 1,
+        "depth": args.Model.model.model_depth if not args.debug else 1,
         "debug_mode":args.debug,
         "double_skip":args.double_skip, 
         "fno_bias": args.fno_bias, 
@@ -236,7 +237,7 @@ def parse_default_args(args):
         "use_pos_embed":args.use_pos_embed,
         "agg_way":args.agg_way
     }
-    args.Model.model_kargs = model_kargs
+    args.Model.model.model_kargs = model_kargs
 
 
     args.snap_index = [[0,40,80,12], [t for t in [38,49,13,27] if t < args.output_channel]      # property  Z500 and T850 and v2m and u2m and 
@@ -248,7 +249,7 @@ def parse_default_args(args):
                                 [15,31,45,15,31,45,15,31,45]])
     if args.output_channel<=13:args.snap_index=None
     if not hasattr(args,'ngpus_per_node'):args.ngpus_per_node=1
-    args.real_batch_size = args.batch_size * args.accumulation_steps * args.ngpus_per_node 
+    args.real_batch_size = args.Train.batch_size * args.accumulation_steps * args.ngpus_per_node 
     args.compute_graph = parser_compute_graph(args.compute_graph_set)
     args.torch_compile = (torch.__version__[0]=="2" and args.torch_compile)
     return args

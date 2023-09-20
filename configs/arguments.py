@@ -67,11 +67,13 @@ def get_args(config_path=None):
     else:
         args = None
 
-    args = simple_parsing.parse(
-        config_class=Global_Config, args=args, add_config_path_arg=True)
+    # args = simple_parsing.parse(
+    #     config_class=Global_Config, args=args, add_config_path_arg=True)
+    # return args
+    parser = build_parser()
+    args = parser.parse_args(args=args)
+    args.Dataset.dataset.img_size = args.Model.model.img_size
     return args
-    #parser = build_parser()
-    #return parser.parse_args(args=args)
 
 
 @dataclass
@@ -135,7 +137,7 @@ class Global_Train_Config(Config):
     do_fourcast_anyway    :bool = field(default=False) 
     train_not_shuffle     :bool = field(default=False) 
     
-    find_unused_parameters:bool = field(default=False) 
+    
     input_noise_std: float = field(default=0.0)
     compute_graph_set: str = field(default=None)
 @dataclass
@@ -143,7 +145,8 @@ class Global_Forecast_Config(Config):
     forecast_every_epoch  :int=field(default=0,help='forecast_every_epoch')
     fourcast_randn_repeat :int=field(default=False, help='add random noise when do forecast, now disable')
     force_fourcast        :bool=field(default=False) 
-    
+    forecast_dataset_split:str =field(default='test')
+    forecast_future_stamps:Optional[int]=field(default=None)
     snap_index            :Optional[str]=field(default=None)
     wandb_id              :Optional[str]=field(default=None)
 
@@ -173,7 +176,7 @@ class Global_Monitor_Config(Config):
 
 @dataclass
 class Global_Checkpoint_Config(Config):
-    epoch_save_list   :Optional[List[int]] = field(default=None)   
+    epoch_save_list   :Optional[List[int]] = field(default_factory=lambda: [])   
     save_every_epoch  :int = field(default = 1)    
     save_warm_up      :int = field(default = 5)
     pretrain_weight   :Optional[str]=field(default=None, help='pretrain_weight')
@@ -217,7 +220,7 @@ class Global_Dataset_Config(Config):
 class Global_Config(Config):
     
     Train: Global_Train_Config
-    Criterion: Global_Loss_Config
+    Loss: Global_Loss_Config
     Valid: Global_Valid_Config
     Monitor: Global_Monitor_Config
     Checkpoint: Global_Checkpoint_Config

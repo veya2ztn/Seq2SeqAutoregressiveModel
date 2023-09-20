@@ -98,7 +98,7 @@ def train_weather_forecast_colo():
     atom_args= parse_default_args(atom_args)
     logsys = create_logsys(atom_args)
     atom_args.distributed = True 
-    train_dataset, val_dataset, train_dataloader, test_dataloader = get_train_and_valid_dataset(atom_args)
+    train_dataset, valid_dataset, train_dataloader, test_dataloader = get_train_and_valid_dataset(atom_args)
     
     logger.info('Build model', ranks=[0])
     atom_args.distributed = False 
@@ -241,7 +241,7 @@ def train_weather_forecast():
     # use synthetic dataset
     # we train for 10 steps and eval for 5 steps per epoch
     atom_args.distributed = False
-    #train_dataset, val_dataset, train_dataloader, test_dataloader = get_train_and_valid_dataset(atom_args)
+    #train_dataset, valid_dataset, train_dataloader, test_dataloader = get_train_and_valid_dataset(atom_args)
     train_dataloader = DummyDataloader(
         length=10, batch_size=gpc.config.BATCH_SIZE)
     test_dataloader = DummyDataloader(

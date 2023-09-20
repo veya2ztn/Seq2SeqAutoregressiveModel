@@ -23,11 +23,11 @@ for key,val in old_args.items():
         setattr(args,key,val)
 args.GDMod_type = sys.argv[1]#'NGmod_absolute'
 args.accumulation_steps = int(sys.argv[2])#1
-args.batch_size = int(sys.argv[3])#4
+args.Train.batch_size = int(sys.argv[3])#4
 log_name = sys.argv[4]#'GPU1.A1.B16.NGmod_absolute'
 print(args.GDMod_type)
 print(args.accumulation_steps)
-print(args.batch_size)
+print(args.Train.batch_size)
 print(log_name)
 
 args.use_wandb = 'wandb_runtime'

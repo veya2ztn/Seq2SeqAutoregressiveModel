@@ -29,8 +29,7 @@ class BaseDataset:
 
     def inv_normlize_data(self, batch):
         raise NotImplementedError("Not use anymore")
-
-        
+  
     def load_numpy_from_url(self, url):
         if "s3://" in url:
             if self.client is None:
@@ -91,3 +90,5 @@ class BaseDataset:
         #         print(self.error_path)
         #         traceback.print_exc()
         #         raise NotImplementedError("too many error happened, check the errer path")
+
+

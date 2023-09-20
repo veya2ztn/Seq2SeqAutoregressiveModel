@@ -691,7 +691,7 @@ def run_nodalosssnap(args, model,logsys,test_dataloader=None,property_select=[38
         logsys.info(f"load fourcastresult at {fourcastresult_path}")
         fourcastresult = torch.load(fourcastresult_path)
 
-    if not args.distributed:
+    if not args.Pengine.engine.distributed:
         create_nodal_loss_snap_metric_table(fourcastresult, logsys,test_dataset)
     
     return 1

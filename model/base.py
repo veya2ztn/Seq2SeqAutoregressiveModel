@@ -88,13 +88,18 @@ class BaseModel(nn.Module):
             return F.pad(x.flatten(0, 1), (0, 0, pad, pad), mode='replicate').reshape(*shape[:-2], -1, shape[-1]), pad
         return x, pad
 
-    def collect_correct_input(self, _input: List[Dict]):
+    def collect_correct_input(self, _input: Union[List[Dict[str, torch.Tensor]], Dict[str, torch.Tensor]]):
         assert len(_input) == self.history_length
-        if self.history_length == 1:
-            x = _input[0]['field']
+        if isinstance(_input, list):
+            if self.history_length == 1:
+                x = _input[0]['field']
+            else:
+                # [(B,P,H,W),(B,P,H,W)] -> (B,P,L,H,W)
+                x = torch.stack([_inp['field'] for _inp in _input], 2)
         else:
-            # [(B,P,H,W),(B,P,H,W)] -> (B,P,L,H,W)
-            x = torch.stack([_inp['field'] for _inp in _input], 2)
+            x = _input['field']
+            if self.history_length == 1:
+                x = x.squeeze(2)
         # <--- in case the height is smaller than the img_size
         x, pad = self.get_w_resolution_pad(x)
         self.pad = pad

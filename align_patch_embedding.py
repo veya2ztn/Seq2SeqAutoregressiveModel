@@ -4,7 +4,7 @@ from model.align_model import PatchAlign_64_to_128
 
 
 def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
-    dataset_type   = eval(args.dataset_type) if isinstance(args.dataset_type,str) else args.dataset_type
+    dataset_type   = eval(args.Dataset.dataset.dataset_type) if isinstance(args.Dataset.dataset.dataset_type,str) else args.Dataset.dataset.dataset_type
     # we don't use valid processing
     # on the other hand, lets inject both shared tensor into dataset.
     train_dataset  = dataset_type(split="subtrain" if not args.debug else 'test',
@@ -12,11 +12,11 @@ def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load
                      dataset_tensor_2=valid_dataset_tensor,record_load_tensor_2=valid_record_load,
                      **args.dataset_kargs)
     
-    train_datasampler = DistributedSampler(train_dataset, shuffle=args.do_train_shuffle) if args.distributed else None
+    train_datasampler = DistributedSampler(train_dataset, shuffle=not args.Train.train_not_shuffle) if args.Pengine.engine.distributed else None
     g = torch.Generator()
     g.manual_seed(args.Train.seed)
-    train_dataloader  = DataLoader(train_dataset, args.batch_size, sampler=train_datasampler, num_workers=args.num_workers, pin_memory=True,
-                                   drop_last=True,worker_init_fn=seed_worker,generator=g,shuffle=True if ((not args.distributed) and args.do_train_shuffle) else False)
+    train_dataloader  = DataLoader(train_dataset, args.Train.batch_size, sampler=train_datasampler, num_workers=args.Dataset.dataset.num_workers, pin_memory=True,
+                                   drop_last=True,worker_init_fn=seed_worker,generator=g,shuffle=True if ((not args.Pengine.engine.distributed) and not args.Train.train_not_shuffle) else False)
     
     return   train_dataset,   None, train_dataloader, None
 
@@ -162,47 +162,47 @@ def build_model(args):
     logsys = args.logsys
     logsys.info(f"model args: img_size= {args.img_size}")
     logsys.info(f"model args: patch_size= {args.patch_size}")
-    args.Model.model_kargs['unique_up_sample_channel'] = 0
+    args.Model.model.model_kargs['unique_up_sample_channel'] = 0
     # ==============> Initial Model <=============
     if args.wrapper_model and 'Comb' in args.wrapper_model:
-        args.Model.model_kargs['history_length'] = 1
-        assert args.Model.model_type1
-        assert args.Model.model_type2
-        args.Model.model_kargs['in_chans'] = eval(
+        args.Model.model.model_kargs['history_length'] = 1
+        assert args.Model.model.model_type1
+        assert args.Model.model.model_type2
+        args.Model.model.model_kargs['in_chans'] = eval(
             args.wrapper_model).default_input_channel1
-        args.Model.model_kargs['out_chans'] = eval(
+        args.Model.model.model_kargs['out_chans'] = eval(
             args.wrapper_model).default_output_channel1
-        # if args.Model.model_type1 == 'AFNONet':
+        # if args.Model.model.model_type1 == 'AFNONet':
         #     pass
         # else:
         #     print("the ")
         #     #raise NotImplementedError
-        backbone1 = eval(args.Model.model_type1)(**args.Model.model_kargs)
-        args.Model.model_kargs['in_chans'] = eval(
+        backbone1 = eval(args.Model.model.model_type1)(**args.Model.model.model_kargs)
+        args.Model.model.model_kargs['in_chans'] = eval(
             args.wrapper_model).default_input_channel2
-        args.Model.model_kargs['out_chans'] = eval(
+        args.Model.model.model_kargs['out_chans'] = eval(
             args.wrapper_model).default_output_channel2
 
-        if args.Model.model_type2 == 'AFNONet':
+        if args.Model.model.model_type2 == 'AFNONet':
             pass
-        elif args.Model.model_type2 == 'smallAFNONet':
-            args.Model.model_kargs['depth'] = 6
-            args.Model.model_type2 = 'AFNONet'
-        elif args.Model.model_type2 == 'tinyAFNONet':
-            args.Model.model_kargs['embed_dim'] = 384
-            args.Model.model_kargs['depth'] = 6
-            args.Model.model_type2 = 'AFNONet'
+        elif args.Model.model.model_type2 == 'smallAFNONet':
+            args.Model.model.model_kargs['depth'] = 6
+            args.Model.model.model_type2 = 'AFNONet'
+        elif args.Model.model.model_type2 == 'tinyAFNONet':
+            args.Model.model.model_kargs['embed_dim'] = 384
+            args.Model.model.model_kargs['depth'] = 6
+            args.Model.model.model_type2 = 'AFNONet'
         else:
             raise NotImplementedError
 
-        backbone2 = eval(args.Model.model_type2)(**args.Model.model_kargs)
-        args.Model.model_kargs['in_chans'] = args.input_channel
-        args.Model.model_kargs['out_chans'] = args.output_channel
-        args.Model.model_kargs['history_length'] = 1
+        backbone2 = eval(args.Model.model.model_type2)(**args.Model.model.model_kargs)
+        args.Model.model.model_kargs['in_chans'] = args.input_channel
+        args.Model.model.model_kargs['out_chans'] = args.output_channel
+        args.Model.model.model_kargs['history_length'] = 1
         model = eval(args.wrapper_model)(args, backbone1, backbone2,
                                          args.backbone1_ckpt_path, args.backbone2_ckpt_path)
     else:
-        model = eval(args.Model.model.model_type)(**args.Model.model_kargs)
+        model = eval(args.Model.model.model_type)(**args.Model.model.model_kargs)
         if args.wrapper_model:
 
             if args.subweight:
@@ -230,7 +230,7 @@ def build_model(args):
         print(f"Now in torch 2.0, we use torch.compile")
         torch.set_float32_matmul_precision('high')
         model = torch.compile(model)
-    if args.distributed:
+    if args.Pengine.engine.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
         # should always set the single device scope, otherwise,
         # DistributedDataParallel will use all available devices.
@@ -278,7 +278,7 @@ def build_model(args):
     model.skip_constant_2D70N = args.skip_constant_2D70N
     if 'UVT' in args.wrapper_model:
         print(
-            f"notice we are in property_pick mode, be careful. Current dataset is {args.dataset_type}")
+            f"notice we are in property_pick mode, be careful. Current dataset is {args.Dataset.dataset.dataset_type}")
         # assert "55" in args.dataset_flag
     if not hasattr(model, 'pred_channel_for_next_stamp') and args.input_channel != args.output_channel and args.output_channel == 68:
         model.pred_channel_for_next_stamp = list(
@@ -297,7 +297,7 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
     ########## inital log ###################
     logsys = create_logsys(args)
 
-    if args.distributed:
+    if args.Pengine.engine.distributed:
         if args.dist_url == "env://" and args.rank == -1:
             args.rank = int(os.environ["RANK"])
         if args.multiprocessing_distributed:
@@ -322,7 +322,7 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
         start_epoch, start_step, min_loss = 0, 0, 0
         print(f"remind in torch compile mode, any pretrain model should be load before torch.compile and DistributedDataParallel")
     else:
-        start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.Checkpoint.pretrain_weight,
+        start_epoch, start_step, min_loss = load_model(model.module if args.Pengine.engine.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.Checkpoint.pretrain_weight,
                                                        only_model=('fourcast' in args.Train.mode) or (args.Train.mode == 'finetune' and not args.Train.mode == 'continue_train'), loc='cuda:{}'.format(args.gpu), strict=bool(args.Checkpoint.load_model_strict))
     start_epoch = start_epoch if args.Train.mode == 'continue_train' else 0
     logsys.info(f"======> start from epoch:{start_epoch:3d}/{args.Train.epochs:3d}")
@@ -344,7 +344,7 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
     train_loss = -1
     Z500_now = Z500_best = -1
 
-    train_dataset, val_dataset, train_dataloader, val_dataloader = get_train_and_valid_dataset(args,
+    train_dataset, valid_dataset, train_dataloader, valid_dataloader = get_train_and_valid_dataset(args,
                                                                                                train_dataset_tensor=train_dataset_tensor, train_record_load=train_record_load,
                                                                                                valid_dataset_tensor=valid_dataset_tensor, valid_record_load=valid_record_load)
     logsys.info(f"use dataset ==> {train_dataset.__class__.__name__}")
@@ -375,7 +375,7 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
 
         logsys.metric_dict.update({'valid_loss': val_loss}, epoch)
         logsys.banner_show(epoch, args.SAVE_PATH, train_losses=[train_loss])
-        if (not args.distributed) or (args.rank == 0 and local_rank == 0):
+        if (not args.Pengine.engine.distributed) or (args.rank == 0 and local_rank == 0):
             logsys.info(
                 f"Epoch {epoch} | Train loss: {train_loss:.6f}, Val loss: {val_loss:.6f}", show=False)
             logsys.record('train', train_loss, epoch, epoch_flag='epoch')
@@ -390,15 +390,15 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
                 logsys.info(f"The best accu is {val_loss}", show=False)
             logsys.record('best_loss', min_loss, epoch, epoch_flag='epoch')
             update_experiment_info(experiment_hub_path, epoch, args)
-            if ((epoch >= args.save_warm_up) and (epoch % args.save_every_epoch == 0)) or (epoch == args.Train.epochs-1) or (epoch in args.epoch_save_list):
+            if ((epoch >= args.Checkpoint.save_warm_up) and (epoch % args.Checkpoint.save_every_epoch == 0)) or (epoch == args.Train.epochs-1) or (epoch in args.Checkpoint.epoch_save_list):
                 
                 logsys.info(f"saving latest model ....", show=False)
                 save_model(model, epoch=epoch+1, step=0, optimizer=optimizer, lr_scheduler=lr_scheduler,loss_scaler=loss_scaler, min_loss=min_loss, path=latest_ckpt_p)
                 logsys.info(f"done ....", show=False)
-                if epoch in args.epoch_save_list:
+                if epoch in args.Checkpoint.epoch_save_list:
                     save_model(model, path=f'{latest_ckpt_p}-epoch{epoch}', only_model=True)
                     # os.system(f'cp {latest_ckpt_p} {latest_ckpt_p}-epoch{epoch}')
-    # and not args.distributed:
+    # and not args.Pengine.engine.distributed:
     if os.path.exists(now_best_path) and args.do_final_fourcast:
         if not isinstance(args.do_final_fourcast, str):
             args.do_final_fourcast = 'backbone.best.pt'
@@ -407,7 +407,7 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
         logsys.info(
             f"we finish training, then start test on the best checkpoint {now_best_path}")
         start_epoch, start_step, min_loss = load_model(
-            model.module if args.distributed else model, path=now_best_path, only_model=True, loc='cuda:{}'.format(args.gpu))
+            model.module if args.Pengine.engine.distributed else model, path=now_best_path, only_model=True, loc='cuda:{}'.format(args.gpu))
         run_fourcast(args, model, logsys)
     if result_tensor is not None and local_rank == 0:
         result_tensor[local_rank] = min_loss

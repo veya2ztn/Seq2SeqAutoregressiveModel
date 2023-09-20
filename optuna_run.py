@@ -51,7 +51,7 @@ def optuna_high_level_main():
     train_dataset_tensor,valid_dataset_tensor,train_record_load,valid_record_load = create_memory_templete(gargs)
     def objective(trial):
         args = copy.deepcopy(gargs)
-        #args.distributed= False
+        #args.Pengine.engine.distributed= False
         #args.rank=0
         #random_seed= args.Train.seed
         #args.Train.seed  = random_seed= random.randint(1, 100000)
@@ -62,8 +62,8 @@ def optuna_high_level_main():
         if args.optuna_args.grad_clip_list:set_select_optuna_list(trial, args,optuna_args.grad_clip_list,'grad_clip')
         if args.optuna_args.patchsize_list:set_select_optuna_list(trial, args,optuna_args.patchsize_list,'patch_size')
         if  args.optuna_args.dropout_list:set_select_optuna_list(trial, args,optuna_args.dropout_list,'dropout_rate')
-        args.batch_size = int(args.batch_size)
-        #args.valid_batch_size = args.valid_batch_size
+        args.Train.batch_size = int(args.Train.batch_size)
+        #args.Valid.valid_batch_size = args.Valid.valid_batch_size
         
         # if not gargs.input_noise_std:
         #     args.input_noise_std = args.hparam_dict['input_noise_std'] = trial.suggest_categorical("input_noise_std", input_noise_std_list)
@@ -101,8 +101,8 @@ def optuna_high_level_main():
     model_name, datasetname, project_name = get_projectname(gargs)
     
     DB_NAME   = f"{datasetname}-{model_name}-{project_name}-{gargs.opt}"
-    if gargs.batch_size==-1:
-        DB_NAME += f"-{gargs.batch_size}"
+    if gargs.Train.batch_size==-1:
+        DB_NAME += f"-{gargs.Train.batch_size}"
     TASK_NAME = 'task1'
     study = optuna.create_study(study_name=TASK_NAME, storage=f'sqlite:///optuna_database/{DB_NAME}.db',
                                     load_if_exists=True,

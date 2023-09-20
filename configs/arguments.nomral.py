@@ -60,7 +60,7 @@ def get_args(config_path=None):
         with open(config_path, 'r') as f:defaults = json.load(f)
         
         if 'model_config' in defaults:
-            args.Model.model_config = defaults['model_config']
+            args.Model.model.model_config = defaults['model_config']
             print("given config has model config, overwrite other model_config")
         if 'train_config' in defaults:
             args.Train_config = defaults['train_config']
@@ -76,8 +76,8 @@ def get_args(config_path=None):
                 new_pool[key] = val
         parser.set_defaults(**flatten_dict(new_pool))
 
-    if args.Model.model_config:
-        with open(args.Model.model_config, 'r') as f:defaults = json.load(f)
+    if args.Model.model.model_config:
+        with open(args.Model.model.model_config, 'r') as f:defaults = json.load(f)
         parser.set_defaults(**flatten_dict(defaults))
 
     if args.Train_config:
@@ -89,7 +89,7 @@ def get_args(config_path=None):
     config.config_file = args.conf_file
     config = structure_args(config)
 
-    if args.Model.model_config:config.model_config = args.Model.model_config
+    if args.Model.model.model_config:config.model_config = args.Model.model.model_config
     if args.Train_config:config.train_config = args.Train_config
     return config
 
@@ -249,12 +249,12 @@ def get_train_args(args):
     training_params=argparse.Namespace(
         debug  = args.debug,
         mode  = args.Train.mode,
-        batch_size  = args.batch_size,
-        valid_batch_size  = args.valid_batch_size,
+        batch_size  = args.Train.batch_size,
+        valid_batch_size  = args.Valid.valid_batch_size,
         epochs  = args.Train.epochs,
         seed  = args.Train.seed,
         accumulation_steps  = args.accumulation_steps,
-        skip_first_valid  = args.skip_first_valid,
+        skip_first_valid  = args.Valid.skip_first_valid,
         do_first_fourcast  = args.do_first_fourcast,
         do_final_fourcast  = args.do_final_fourcast,
         do_fourcast_anyway  = args.do_fourcast_anyway,
@@ -281,9 +281,9 @@ def _add_valid_args(parser):
 
 def get_valid_args(args):
     validation_params=argparse.Namespace(
-        valid_batch_size= args.valid_batch_size,
-        valid_every_epoch=args.valid_every_epoch,
-        forecast_every_epoch=args.forecast_every_epoch,
+        valid_batch_size= args.Valid.valid_batch_size,
+        valid_every_epoch=args.Valid.valid_every_epoch,
+        forecast_every_epoch=args.Forecast.forecast_every_epoch,
         evaluate_every_epoch=args.evaluate_every_epoch,
         sampling_rate=args.sampling_rate,
         evaluate_branch=args.evaluate_branch
@@ -307,9 +307,9 @@ def _add_valid_args(parser):
     return parser
 def get_valid_args(args):
     validation_params=argparse.Namespace(
-        valid_batch_size= args.valid_batch_size,
-        valid_every_epoch=args.valid_every_epoch,
-        forecast_every_epoch=args.forecast_every_epoch,
+        valid_batch_size= args.Valid.valid_batch_size,
+        valid_every_epoch=args.Valid.valid_every_epoch,
+        forecast_every_epoch=args.Forecast.forecast_every_epoch,
         evaluate_every_epoch=args.evaluate_every_epoch,
         sampling_rate=args.sampling_rate,
         evaluate_branch=args.evaluate_branch

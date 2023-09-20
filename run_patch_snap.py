@@ -67,7 +67,7 @@ args= parse_default_args(args)
 logsys = create_logsys(args,False)
 
 
-if args.distributed:
+if args.Pengine.engine.distributed:
     if args.dist_url == "env://" and args.rank == -1:
         args.rank = int(os.environ["RANK"])
     if args.multiprocessing_distributed:
@@ -87,7 +87,7 @@ pretrain_path = os.path.join(ckpt_path,"pretrain_latest.pt")
 args.Checkpoint.pretrain_weight = pretrain_path
 
 logsys.info(f"loading weight from {args.Checkpoint.pretrain_weight}")
-start_epoch, start_step, min_loss = load_model(model.module if args.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.Checkpoint.pretrain_weight, 
+start_epoch, start_step, min_loss = load_model(model.module if args.Pengine.engine.distributed else model, optimizer, lr_scheduler, loss_scaler, path=args.Checkpoint.pretrain_weight, 
                     only_model= (args.Train.mode=='fourcast') or (args.Train.mode=='finetune' and not args.Train.mode == 'continue_train') ,loc = 'cuda:{}'.format(args.gpu))
 if args.more_epoch_train:
     assert args.Checkpoint.pretrain_weight
@@ -95,7 +95,7 @@ if args.more_epoch_train:
     os.system(f'cp {args.Checkpoint.pretrain_weight} {args.Checkpoint.pretrain_weight}-epoch{start_epoch}')
 logsys.info("done!")
 
-train_dataset, val_dataset, train_dataloader,val_dataloader = get_train_and_valid_dataset(args,
+train_dataset, valid_dataset, train_dataloader,valid_dataloader = get_train_and_valid_dataset(args,
                train_dataset_tensor=None,train_record_load=None,
                valid_dataset_tensor=None,valid_record_load=None)
 logsys.info(f"use dataset ==> {train_dataset.__class__.__name__}")
@@ -105,10 +105,10 @@ accu_list = ['valid_loss']
 metric_dict = logsys.initial_metric_dict(accu_list)
 
 train_dataset.cross_sample  =1 
-train_dataloader = torch.utils.data.DataLoader(train_dataset,args.valid_batch_size)
-val_dataset.cross_sample  =1 
-val_dataloader = torch.utils.data.DataLoader(val_dataset,args.valid_batch_size)
-for data_loader, datasetflag in zip([train_dataloader,val_dataloader],['train','valid']):
+train_dataloader = torch.utils.data.DataLoader(train_dataset,args.Valid.valid_batch_size)
+valid_dataset.cross_sample  =1 
+valid_dataloader = torch.utils.data.DataLoader(valid_dataset,args.Valid.valid_batch_size)
+for data_loader, datasetflag in zip([train_dataloader,valid_dataloader],['train','valid']):
     epoch = 0
     start_step = 0
     status = 'valid'

@@ -26,7 +26,11 @@ There are two main iteration here
   use the `activate_stamps` to assign the computing path.
 """
 
-
+def config_of(model):
+    unwrapper_model = model
+    while hasattr(unwrapper_model, 'module'):
+        unwrapper_model = unwrapper_model.module
+    return unwrapper_model.config
 
 
 
@@ -133,7 +137,8 @@ class Consistancy_Plugin:
 
 
 def run_one_iter(model, batch, criterion, status, sequence_manager, plugins):
-    activate_stamps = getattr(model.config,'activate_stamps', None)
+    model_config  = config_of(model)
+    activate_stamps = getattr(model_config, 'activate_stamps', None)
     if activate_stamps:
         return run_one_iter_highlevel_fast(model, batch, criterion, status, sequence_manager, plugins)
     else:
@@ -142,7 +147,7 @@ def run_one_iter(model, batch, criterion, status, sequence_manager, plugins):
 def run_one_iter_normal(model, batch, criterion, status, sequence_manager, plugins):
     """
     One iter will forward the model N times.
-    N depend on the length of totally sequence, and model.config.pred_len
+    N depend on the length of totally sequence, and model_config.pred_len
     
     batch is the entire sequence 
     [
@@ -152,33 +157,38 @@ def run_one_iter_normal(model, batch, criterion, status, sequence_manager, plugi
       timestamp_n:{'Field':Field, 'stamp_status':stamp_status]}
     ]
     """
-    if model.config.history_length > len(batch):
-        print.info(f"you want to use history={model.config.history_length}")
+    model_config  = config_of(model)
+    
+    if model_config.history_length > len(batch):
+        print.info(f"you want to use history={model_config.history_length}")
         print.info(f"but your input batch(timesteps) only has len(batch)={len(batch)}")
         raise
     
     
-    total_forward_times = (len(batch) - model.config.history_length)//model.config.pred_len
-    assert (len(batch) - model.config.history_length)%model.config.pred_len==0, f"""
-    you must provide correct sequence, based on your assignment, you will use L={model.config.history_length} stamps as inputs and L={model.config.pred_len} as the output.
+    total_forward_times = (len(batch) - model_config.history_length)//model_config.pred_len
+    assert (len(batch) - model_config.history_length)%model_config.pred_len==0, f"""
+    you must provide correct sequence, based on your assignment, you will use L={model_config.history_length} stamps as inputs and L={model_config.pred_len} as the output.
     However, the data you provide is a sequence L= {len(batch)}
     """
     
-    sequence_manager.initial_unnormilized_inputs_field(batch[0:model.config.history_length])
+    sequence_manager.initial_unnormilized_inputs_field(batch[0:model_config.history_length])
     #plugin  = Consistancy_Plugin()
     _ = [plugin.initilize() for plugin in plugins]
 
     iter_info_pool = {}
-    loss = accu = pred_step = 0
-    for i in range(model.config.history_length,len(batch), model.config.pred_len):# i now is the target index
+    loss = pred_step = 0
+    for i in range(model_config.history_length,len(batch), model_config.pred_len):# i now is the target index
         criterion_now = criterion[pred_step] if isinstance(criterion,(dict,list)) else criterion 
-        sequence_manager.push_unnormilized_target_field(batch[i:i+model.config.pred_len])
+        sequence_manager.push_unnormilized_target_field(batch[i:i+model_config.pred_len])
 
         
         prediction, normlized_target, sequence_manager = once_forward(model, i, sequence_manager)
-        prediction_loss = criterion_now(prediction['field'], normlized_target)
+
+        prediction_loss = criterion_now(prediction['field'], normlized_target['field'])
         loss  += prediction_loss 
         iter_info_pool[f'{status}/timestep{i}/prediction_loss'] = prediction_loss.item()
+        
+        
         if 'structure_loss' in prediction:
             structure_loss = prediction['structure_loss']
             loss  += structure_loss
@@ -192,8 +202,7 @@ def run_one_iter_normal(model, batch, criterion, status, sequence_manager, plugi
                 iter_info_pool[f'{status}/timestep{i}/{plugin}/{loss_name}'] = structure_loss.item()
             
         pred_step += 1
-        if model.config.random_time_step_train and i > np.random.randint(0, total_forward_times):
-            break
+        #if model_config.random_time_step_train and i > np.random.randint(0, total_forward_times):break
 
                 
     
@@ -209,10 +218,9 @@ def run_one_iter_normal(model, batch, criterion, status, sequence_manager, plugi
                 iter_info_pool[f'{status}/timestep{i}/{plugin}/{loss_name}'] = structure_loss.item()
     
     # loss = loss/(len(batch) - 1)
-    # accu = accu/(len(batch) - 1)
+    
     loss = loss/pred_step
-    accu = accu/pred_step
-    return loss, accu, iter_info_pool, prediction['field'], normlized_target
+    return loss, iter_info_pool, prediction['field'], normlized_target
 
 def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_record, iter_info_pool):
     if 'during_valid' in mode:
@@ -227,8 +235,8 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
                     error = torch.mean((tensor1-tensor2)**2,dim=(1,2,3)).detach()
                 else:
                     error = torch.mean((tensor1-tensor2)**2).detach()
-                if (level_1,level_2,stamp) not in model.config.err_record:model.config.err_record[level_1,level_2,stamp] = []
-                model.config.err_record[level_1,level_2,stamp].append(error)
+                if (level_1,level_2,stamp) not in model_config.err_record:model_config.err_record[level_1,level_2,stamp] = []
+                model_config.err_record[level_1,level_2,stamp].append(error)
 
             # we would initialize err_reocrd and generate c1,c2,c2 out of the function
         else:
@@ -240,7 +248,7 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
                 tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
                 tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
                 error = torch.mean((tensor1-tensor2)**2).detach()
-                model.config.err_record[level_1,level_2,stamp] = error
+                model_config.err_record[level_1,level_2,stamp] = error
 
             # we would initialize err_reocrd and generate c1,c2,c2 out of the function
         else:
@@ -248,7 +256,7 @@ def lets_calculate_the_coef(model, mode, status, all_level_batch, all_level_reco
     else:
         raise # then we directly goes into train mode
 
-    c1,  c2,  c3 = model.config.c1, model.config.c2, model.config.c3
+    c1,  c2,  c3 = model_config.c1, model_config.c2, model_config.c3
     
     
     
@@ -322,10 +330,10 @@ def esitimate_longterm_error(a0,a1, n =10):
 
 
 def run_one_iter_highlevel_fast(model, batch, criterion, status, sequence_manager, plugins):
-    assert model.config.history_length == 1
-    assert model.config.pred_len == 1
+    assert model_config.history_length == 1
+    assert model_config.pred_len == 1
     assert len(batch)>1
-    assert len(batch) <= len(model.config.activate_stamps) + 1
+    assert len(batch) <= len(model_config.activate_stamps) + 1
     iter_info_pool={}
 
 
@@ -361,8 +369,8 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, sequence_manage
     # so we need a flag 
     ####################################################
     train_channel_from_this_stamp,train_channel_from_next_stamp,pred_channel_for_next_stamp = feature_pick_check(model)
-    activate_stamps = model.config.activate_stamps
-    if model.config.directly_esitimate_longterm_error and 'during_valid' in model.config.directly_esitimate_longterm_error and status == 'valid':
+    activate_stamps = model_config.activate_stamps
+    if model_config.directly_esitimate_longterm_error and 'during_valid' in model_config.directly_esitimate_longterm_error and status == 'valid':
         activate_stamps = [[1,2,3],[2],[3]]
     
     
@@ -406,10 +414,10 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, sequence_manage
     iter_info_pool={}
     loss = 0
     accu = 0
-    loss_count = diff_count = len(model.config.activate_error_coef)
+    loss_count = diff_count = len(model_config.activate_error_coef)
 
-    if not model.config.directly_esitimate_longterm_error:
-        for (level_1, level_2, stamp, coef,_type) in model.config.activate_error_coef:
+    if not model_config.directly_esitimate_longterm_error:
+        for (level_1, level_2, stamp, coef,_type) in model_config.activate_error_coef:
             tensor1 = all_level_batch[level_1][:,all_level_record[level_1].index(stamp)]
             tensor2 = all_level_batch[level_2][:,all_level_record[level_2].index(stamp)]
             if 'quantity' in _type:
@@ -450,14 +458,14 @@ def run_one_iter_highlevel_fast(model, batch, criterion, status, sequence_manage
             
     else:
         loss, accu, iter_info_pool = lets_calculate_the_coef(
-            model, model.config.directly_esitimate_longterm_error, status, all_level_batch, all_level_record, iter_info_pool)
+            model, model_config.directly_esitimate_longterm_error, status, all_level_batch, all_level_record, iter_info_pool)
         # level_1, level_2, stamp, coef, _type
         # a1 = torch.nn.MSELoss()(all_level_batch[3][:,all_level_record[3].index(3)] , all_level_batch[1][:,all_level_record[1].index(3)])\
         #    /torch.nn.MSELoss()(all_level_batch[2][:,all_level_record[2].index(2)] , all_level_batch[0][:,all_level_record[0].index(2)])
         # a0 = torch.nn.MSELoss()(all_level_batch[2][:,all_level_record[2].index(2)] , all_level_batch[1][:,all_level_record[1].index(2)])\
         #    /torch.nn.MSELoss()(all_level_batch[1][:,all_level_record[1].index(1)] , all_level_batch[0][:,all_level_record[0].index(1)])
-        # error = esitimate_longterm_error(a0, a1, model.config.directly_esitimate_longterm_error)
-        # iter_info_pool[f"{status}_error_longterm_error_{model.config.directly_esitimate_longterm_error}"] = error.item()
+        # error = esitimate_longterm_error(a0, a1, model_config.directly_esitimate_longterm_error)
+        # iter_info_pool[f"{status}_error_longterm_error_{model_config.directly_esitimate_longterm_error}"] = error.item()
         # loss += error
 
     return loss, accu, iter_info_pool, None, None

@@ -241,13 +241,14 @@ def once_forward_normal(model, i, sequence_manager, *args):
 
     normlized_fields, normlized_target = sequence_manager.get_inputs_and_target()  # always use normlized target
     
-    if model.training and model.input_noise_std and i == 1:
-        normlized_fields['field'] += torch.randn_like(normlized_fields['field']) * model.input_noise_std
+    # if model.training and model.config.input_noise_std and i == 1:
+    #     normlized_fields['field'] += torch.randn_like(normlized_fields['field']) * model.config.input_noise_std
+
 
     prediction = model(normlized_fields) # --> prediction is also a dict 
     
     # update sequence, update the input sequence and remove the target sequence
-    sequence_manager.push_a_normlized_field(prediction['field'])
+    sequence_manager.push_a_normlized_field(prediction['field']) # <-- only the field is needed to update
 
     return prediction, normlized_target, sequence_manager
 
@@ -259,7 +260,7 @@ def once_forward_multibranch(model, i, start, end, dataset, time_step_1_mode):
     normlized_Field, control_flag = start[0]
     target = end[0]
     #print(normlized_Field.shape,torch.std_mean(normlized_Field))
-
+    
     out = model(normlized_Field, control_flag)
 
     extra_loss = 0
@@ -595,24 +596,25 @@ def once_forward_error_evaluation(model, now_level_batch, snap_mode=False):
         error_information['snap_index_p'] = snap_index_p
     return ltmv_preds, ltmv_trues, error_information
 
-def once_forward(model, i, start, end, dataset, time_step_1_mode):
-    if 'Patch' in dataset.__class__.__name__:
-        if model.pred_len > 1:
-            return once_forward_patch_N2M(model, i, start, end, dataset, time_step_1_mode)
-        else:
-            return once_forward_patch(model, i, start, end, dataset, time_step_1_mode)
-    elif 'SolarLunaMask' in dataset.__class__.__name__:
-        return once_forward_with_timeconstant(model, i, start, end, dataset, time_step_1_mode)
-    elif hasattr(dataset, 'use_time_stamp') and dataset.use_time_stamp:
-        return once_forward_with_timestamp(model, i, start, end, dataset, time_step_1_mode)
-    elif 'Delta' in dataset.__class__.__name__:
-        return once_forward_deltaMode(model, i, start, end, dataset, time_step_1_mode)
-    elif 'Multibranch' in dataset.__class__.__name__:
-        return once_forward_multibranch(model, i, start, end, dataset, time_step_1_mode)
-    elif dataset.__class__.__name__ == "WeathBench7066Self":
-        return once_forward_self_relation(model, i, start, end, dataset, time_step_1_mode)
-    elif hasattr(model, 'flag_this_is_shift_model') or (hasattr(model, 'module') and hasattr(model.module, 'flag_this_is_shift_model')):
-        return once_forward_shift(model, i, start, end, dataset, time_step_1_mode)
+def once_forward(model, i, sequence_manager, *args):
+    return once_forward_normal(model, i, sequence_manager, *args)
+    # if 'Patch' in dataset.__class__.__name__:
+    #     if model.pred_len > 1:
+    #         return once_forward_patch_N2M(model, i, start, end, dataset, time_step_1_mode)
+    #     else:
+    #         return once_forward_patch(model, i, start, end, dataset, time_step_1_mode)
+    # elif 'SolarLunaMask' in dataset.__class__.__name__:
+    #     return once_forward_with_timeconstant(model, i, start, end, dataset, time_step_1_mode)
+    # elif hasattr(dataset, 'use_time_stamp') and dataset.use_time_stamp:
+    #     return once_forward_with_timestamp(model, i, start, end, dataset, time_step_1_mode)
+    # elif 'Delta' in dataset.__class__.__name__:
+    #     return once_forward_deltaMode(model, i, start, end, dataset, time_step_1_mode)
+    # elif 'Multibranch' in dataset.__class__.__name__:
+    #     return once_forward_multibranch(model, i, start, end, dataset, time_step_1_mode)
+    # elif dataset.__class__.__name__ == "WeathBench7066Self":
+    #     return once_forward_self_relation(model, i, start, end, dataset, time_step_1_mode)
+    # elif hasattr(model, 'flag_this_is_shift_model') or (hasattr(model, 'module') and hasattr(model.module, 'flag_this_is_shift_model')):
+    #     return once_forward_shift(model, i, start, end, dataset, time_step_1_mode)
 
-    else:
-       return once_forward_normal(model, i, start, end, dataset, time_step_1_mode)
+    # else:
+    #    return once_forward_normal(model, i, start, end, dataset, time_step_1_mode)
