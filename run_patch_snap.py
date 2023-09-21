@@ -56,7 +56,7 @@ ckpt_path = sys.argv[1]
 args=get_args(os.path.join(ckpt_path,"config.json"))
 
 args.use_wandb=0
-args.gpu = args.local_rank = gpu  = local_rank = 0
+args.gpu = args.Pengine.engine.local_rank = gpu  = local_rank = 0
 ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
 args= parse_default_args(args)
 #SAVE_PATH = get_ckpt_path(args)
@@ -68,14 +68,14 @@ logsys = create_logsys(args,False)
 
 
 if args.Pengine.engine.distributed:
-    if args.dist_url == "env://" and args.rank == -1:
-        args.rank = int(os.environ["RANK"])
-    if args.multiprocessing_distributed:
+    if args.Pengine.engine.dist_url == "env://" and args.Pengine.engine.rank == -1:
+        args.Pengine.engine.rank = int(os.environ["RANK"])
+    if args.Pengine.engine.multiprocessing_distributed:
         # For multiprocessing distributed training, rank needs to be the
         # global rank among all the processes
-        args.rank = args.rank * ngpus_per_node + local_rank
-    logsys.info(f"start init_process_group,backend={args.dist_backend}, init_method={args.dist_url},world_size={args.world_size}, rank={args.rank}")
-    dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,world_size=args.world_size, rank=args.rank)
+        args.Pengine.engine.rank = args.Pengine.engine.rank * ngpus_per_node + local_rank
+    logsys.info(f"start init_process_group,backend={args.Pengine.engine.dist_backend}, init_method={args.Pengine.engine.dist_url},world_size={args.Pengine.engine.world_size}, rank={args.Pengine.engine.rank}")
+    dist.init_process_group(backend=args.Pengine.engine.dist_backend, init_method=args.Pengine.engine.dist_url,world_size=args.Pengine.engine.world_size, rank=args.Pengine.engine.rank)
 
 model           = build_model(args)
 #param_groups    = timm.optim.optim_factory.add_weight_decay(model, args.weight_decay)

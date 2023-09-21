@@ -88,7 +88,7 @@ def prepare_model(model ,optimizer, lr_scheduler, criterion, loss_scaler, args):
             # DistributedDataParallel will use all available devices.
             torch.cuda.set_device(args.gpu)
             model.cuda(args.gpu)
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=("FED" in args.Model.model.model_type) or args.find_unused_parameters)
+            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=args.Pengine.engine.find_unused_parameters)
         else:
             model = model.cuda()
 

@@ -239,7 +239,7 @@ def create_fourcast_table(ckpt_path,force_fourcast=False):
     args = get_the_args(ckpt_path)
     
     args.Train.mode = 'fourcast'
-    args.gpu = args.local_rank = gpu  = local_rank = 0
+    args.gpu = args.Pengine.engine.local_rank = gpu  = local_rank = 0
     #args.data_root = "datasets/weatherbench"
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
     args= parse_default_args(args)
@@ -273,7 +273,7 @@ def create_nodalsnap_table(ckpt_path):
     #     return
     args = get_the_args(ckpt_path)
     args.Train.mode = 'fourcast_for_snap_nodal_loss'
-    args.gpu = args.local_rank = gpu  = local_rank = 0
+    args.gpu = args.Pengine.engine.local_rank = gpu  = local_rank = 0
     #args.data_root = "datasets/weatherbench"
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
     args= parse_default_args(args)
@@ -305,7 +305,7 @@ def create_multi_fourcast_table(ckpt_path,force=False):
         return 
     args = get_the_args(ckpt_path)
     args.Train.mode = 'fourcast'
-    args.gpu = args.local_rank = gpu  = local_rank = 0
+    args.gpu = args.Pengine.engine.local_rank = gpu  = local_rank = 0
     #args.data_root = "datasets/weatherbench"
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
     args= parse_default_args(args)

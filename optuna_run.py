@@ -52,7 +52,7 @@ def optuna_high_level_main():
     def objective(trial):
         args = copy.deepcopy(gargs)
         #args.Pengine.engine.distributed= False
-        #args.rank=0
+        #args.Pengine.engine.rank=0
         #random_seed= args.Train.seed
         #args.Train.seed  = random_seed= random.randint(1, 100000)
         args.Train.seed  = random_seed = 2022
@@ -75,15 +75,15 @@ def optuna_high_level_main():
         args = distributed_initial(args)
         
         result_tensor = torch.zeros(1).share_memory_()
-        if args.multiprocessing_distributed:
+        if args.Pengine.engine.multiprocessing_distributed:
             print("======== entering  multiprocessing train ==========")
-            args.world_size = args.ngpus_per_node * args.world_size
-            torch.multiprocessing.spawn(main_worker, nprocs=args.ngpus_per_node, args=(args.ngpus_per_node, args,result_tensor,
+            args.Pengine.engine.world_size = args.Pengine.engine.ngpus_per_node * args.Pengine.engine.world_size
+            torch.multiprocessing.spawn(main_worker, nprocs=args.Pengine.engine.ngpus_per_node, args=(args.Pengine.engine.ngpus_per_node, args,result_tensor,
                                         train_dataset_tensor,train_record_load,
                                         valid_dataset_tensor,valid_record_load))
         else:
             print("======== entering  single gpu train ==========")
-            main_worker(0, args.ngpus_per_node, args,result_tensor,
+            main_worker(0, args.Pengine.engine.ngpus_per_node, args,result_tensor,
             train_dataset_tensor,train_record_load,valid_dataset_tensor,valid_record_load)
         
         result = {'valid_loss':result_tensor.mean().item()}

@@ -214,12 +214,12 @@ def build_model(args):
             model = eval(args.wrapper_model)(args, model)
 
     logsys.info(f"use model ==> {model.__class__.__name__}")
-    local_rank = args.local_rank
-    rank = args.rank
+    local_rank = args.Pengine.engine.local_rank
+    rank = args.Pengine.engine.rank
     if local_rank == 0:
         param_sum, buffer_sum, all_size = getModelSize(model)
         logsys.info(
-            f"Rank: {args.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
+            f"Rank: {args.Pengine.engine.rank}, Local_rank: {local_rank} | Number of Parameters: {param_sum}, Number of Buffers: {buffer_sum}, Size of Model: {all_size:.4f} MB\n")
     if args.Checkpoint.pretrain_weight and args.torch_compile and not args.Train.mode == 'continue_train':
         only_model = ('fourcast' in args.Train.mode) or (
             args.Train.mode == 'finetune' and not args.Train.mode == 'continue_train')
@@ -289,7 +289,7 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
     if local_rank == 0:
         print(f"we are at mode={args.Train.mode}")
     ##### locate the checkpoint dir ###########
-    args.gpu = args.local_rank = gpu = local_rank
+    args.gpu = args.Pengine.engine.local_rank = gpu = local_rank
     ##### parse args: dataset_kargs / model_kargs / train_kargs  ###########
     args = parse_default_args(args)
     SAVE_PATH = get_ckpt_path(args)
@@ -298,16 +298,16 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
     logsys = create_logsys(args)
 
     if args.Pengine.engine.distributed:
-        if args.dist_url == "env://" and args.rank == -1:
-            args.rank = int(os.environ["RANK"])
-        if args.multiprocessing_distributed:
+        if args.Pengine.engine.dist_url == "env://" and args.Pengine.engine.rank == -1:
+            args.Pengine.engine.rank = int(os.environ["RANK"])
+        if args.Pengine.engine.multiprocessing_distributed:
             # For multiprocessing distributed training, rank needs to be the
             # global rank among all the processes
-            args.rank = args.rank * ngpus_per_node + local_rank
+            args.Pengine.engine.rank = args.Pengine.engine.rank * ngpus_per_node + local_rank
         logsys.info(
-            f"start init_process_group,backend={args.dist_backend}, init_method={args.dist_url},world_size={args.world_size}, rank={args.rank}")
+            f"start init_process_group,backend={args.Pengine.engine.dist_backend}, init_method={args.Pengine.engine.dist_url},world_size={args.Pengine.engine.world_size}, rank={args.Pengine.engine.rank}")
         dist.init_process_group(
-            backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank)
+            backend=args.Pengine.engine.dist_backend, init_method=args.Pengine.engine.dist_url, world_size=args.Pengine.engine.world_size, rank=args.Pengine.engine.rank)
 
     model = build_model(args)
     # param_groups    = timm.optim.optim_factory.add_weight_decay(model, args.weight_decay)
@@ -375,7 +375,7 @@ def main_worker(local_rank, ngpus_per_node, args, result_tensor=None,
 
         logsys.metric_dict.update({'valid_loss': val_loss}, epoch)
         logsys.banner_show(epoch, args.SAVE_PATH, train_losses=[train_loss])
-        if (not args.Pengine.engine.distributed) or (args.rank == 0 and local_rank == 0):
+        if (not args.Pengine.engine.distributed) or (args.Pengine.engine.rank == 0 and local_rank == 0):
             logsys.info(
                 f"Epoch {epoch} | Train loss: {train_loss:.6f}, Val loss: {val_loss:.6f}", show=False)
             logsys.record('train', train_loss, epoch, epoch_flag='epoch')
@@ -421,15 +421,15 @@ def main(args=None):
     train_dataset_tensor, valid_dataset_tensor, train_record_load, valid_record_load = create_memory_templete(
         args)
     result_tensor = torch.zeros(1).share_memory_()
-    if args.multiprocessing_distributed:
+    if args.Pengine.engine.multiprocessing_distributed:
         print("======== entering  multiprocessing train ==========")
-        args.world_size = args.ngpus_per_node * args.world_size
-        torch.multiprocessing.spawn(main_worker, nprocs=args.ngpus_per_node, args=(args.ngpus_per_node, args, result_tensor,
+        args.Pengine.engine.world_size = args.Pengine.engine.ngpus_per_node * args.Pengine.engine.world_size
+        torch.multiprocessing.spawn(main_worker, nprocs=args.Pengine.engine.ngpus_per_node, args=(args.Pengine.engine.ngpus_per_node, args, result_tensor,
                                     train_dataset_tensor, train_record_load,
                                     valid_dataset_tensor, valid_record_load))
     else:
         print("======== entering  single gpu train ==========")
-        main_worker(0, args.ngpus_per_node, args, result_tensor,
+        main_worker(0, args.Pengine.engine.ngpus_per_node, args, result_tensor,
                     train_dataset_tensor, train_record_load, valid_dataset_tensor, valid_record_load)
     return result_tensor
 

@@ -124,7 +124,7 @@ def prepare_dataloader(args, train_dataset=None, valid_dataset=None, test_datase
 
 def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     dataset_type = args.Dataset.dataset.dataset_type
-    if get_local_rank() and args.Pengine.engine.name == 'accelerate' and not args.Pengine.engine.data_parallel_dispatch:
+    if get_local_rank(args) and args.Pengine.engine.name == 'accelerate' and not args.Pengine.engine.data_parallel_dispatch:
         dataset_type = 'Fake'+dataset_type
     dataset_type  = eval(dataset_type)
     train_dataset = dataset_type(split="train" if not args.debug else 'test', shared_dataset_tensor_buffer=(train_dataset_tensor, train_record_load), config= args.Dataset.dataset)
@@ -156,3 +156,40 @@ def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
     
     return   test_dataset,   test_dataloader
 
+
+def create_memory_templete(args):
+    train_dataset_tensor = valid_dataset_tensor = train_record_load = valid_record_load = None
+    if args.Dataset.dataset.share_memory:
+        assert args.Dataset.dataset.dataset_type
+        print("======== loading data as shared memory==========")
+        if args.Train.mode not in ['fourcast']:
+            # ===============================================================================
+            print(f"create training dataset template, .....")
+            train_dataset_tensor, train_record_load = eval(args.Dataset.dataset.dataset_type
+                ).create_offline_dataset_templete(split='train' if not args.debug else 'test',
+                                                  create_buffer=True, fully_loaded=False, config=args.Dataset.dataset)
+            train_dataset_tensor = train_dataset_tensor.share_memory_()
+            train_record_load = train_record_load.share_memory_()
+            print(f"done! -> train template shape={train_dataset_tensor.shape}")
+            # ===============================================================================
+            print(f"create validing dataset template, .....")
+            valid_dataset_tensor, valid_record_load = eval(args.Dataset.dataset.dataset_type
+                ).create_offline_dataset_templete(split='valid' if not args.debug else 'test',
+                                                  create_buffer=True, fully_loaded=False, config=args.Dataset.dataset)
+            valid_dataset_tensor = valid_dataset_tensor.share_memory_()
+            valid_record_load = valid_record_load.share_memory_()
+            print(f"done! -> train template shape={valid_dataset_tensor.shape}")
+            # ===============================================================================
+        else:
+            # ===============================================================================
+            print(f"create testing dataset template, .....")
+            train_dataset_tensor, train_record_load = eval(args.Dataset.dataset.dataset_type
+                ).create_offline_dataset_templete(split='test',
+                                                  create_buffer=True, fully_loaded=False, config=args.Dataset.dataset)
+            train_dataset_tensor = train_dataset_tensor.share_memory_()
+            train_record_load = train_record_load.share_memory_()
+            print(f"done! -> test template shape={train_dataset_tensor.shape}")
+            valid_dataset_tensor = valid_record_load = None
+            # ===============================================================================
+        print("========      done        ==========")
+    return train_dataset_tensor, valid_dataset_tensor, train_record_load, valid_record_load

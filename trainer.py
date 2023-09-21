@@ -36,7 +36,7 @@ def step_the_scheduler(lr_scheduler, now_lr, epoch, args):
     if args.Train.mode not in ['more_epoch_train'] and (lr_scheduler is not None) and not freeze_learning_rate:lr_scheduler.step(epoch)
 
 def update_and_save_training_status(args, epoch, loss_information, training_state):
-    if get_local_rank():return 
+    if get_local_rank(args):return 
     ### loss_information:
     ## {'train_loss': {'now':0, 'best':0, 'save_path':.....},
     ##  'valid_loss': {'now':0, 'best':0, 'save_path':.....},
@@ -80,16 +80,20 @@ def update_and_save_training_status(args, epoch, loss_information, training_stat
             save_state(epoch=epoch, path=f'{save_path}-epoch{epoch}', only_model=True, performance=performance, **training_state)
     return loss_information
     
-def distributed_runtime(args):
-    if args.multiprocess_distributed:
-        if args.dist_url == "env://" and args.rank == -1:
-            args.rank = int(os.environ["RANK"])
-        if args.multiprocessing_distributed:
+
+def distributed_runtime(config, local_rank):
+    if config.name != 'naive_distributed':return 
+    config.local_rank = local_rank
+    if config.distributed:
+        if config.dist_url == "env://" and config.rank == -1:
+            config.rank = int(os.environ["RANK"])
+        if config.multiprocessing_distributed:
             # For multiprocessing distributed training, rank needs to be the
             # global rank among all the processes
-            args.rank = args.rank * args.ngpus_per_node + args.local_rank
-        print(f"start init_process_group,backend={args.dist_backend}, init_method={args.dist_url},world_size={args.world_size}, rank={args.rank}")
-        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,world_size=args.world_size, rank=args.rank)
+            config.rank = config.rank * config.ngpus_per_node + config.local_rank
+        print(f"start init_process_group,backend={config.dist_backend}, init_method={config.dist_url},world_size={config.world_size}, rank={config.rank}")
+        dist.init_process_group(backend=config.dist_backend, init_method=config.dist_url,world_size=config.world_size, rank=config.rank)
+
 
 
 def build_accelerator(args):
@@ -116,10 +120,9 @@ def main_worker(local_rank, ngpus_per_node, args,
     """
     xxxx_dataset_tensor used for shared-in-memory dataset among DDP
     """
-    local_rank = get_local_rank()
+    distributed_runtime(args.Pengine.engine, local_rank)
+    args.gpu = get_local_rank(args)
     ##### locate the checkpoint dir ###########
-    args.gpu            = args.local_rank = gpu  = local_rank
-    args.ngpus_per_node = ngpus_per_node
     #--- parse args: dataset_kargs / model_kargs / train_kargs  #---
     #args      = parse_default_args(args)
     args.SAVE_PATH = get_ckpt_path(args)
@@ -187,29 +190,31 @@ def main_worker(local_rank, ngpus_per_node, args,
             step_the_scheduler(lr_scheduler, optimizer.param_groups[0]['lr'], epoch, args)  # make sure the scheduler is load from state
 
         
-        if args.Forecast.forecast_every_epoch and (
-            (epoch % args.Forecast.forecast_every_epoch == 0) or 
+        if (args.Forecast.forecast_every_epoch and 
+            ((epoch % args.Forecast.forecast_every_epoch == 0) or 
             (epoch == -1 and args.force_do_first_fourcast) or 
-            (epoch == args.Train.epoch - 1)
-            ):
+            (epoch == args.Train.epoch - 1))):
             
             fast_set_model_epoch(model,criterion, valid_dataloader, optimizer, loss_scaler,epoch, args, epoch_total=args.Train.epochs,eval_mode=True)
             test_loss, test_dataloader = run_fourcast_during_training(args, epoch, logsys, model, test_dataloader)  # will
             loss_information['test_loss']['now'] = test_loss
             logsys.record('test', test_loss, epoch, epoch_flag='epoch') 
             
-        if args.Valid.valid_every_epoch and (
-            (epoch % args.Valid.valid_every_epoch == 0) or 
+        if (args.Valid.valid_every_epoch and 
+            ((epoch % args.Valid.valid_every_epoch == 0) or 
             (epoch == -1 and not args.Valid.skip_first_valid) or 
-            (epoch == args.Train.epoch - 1)):
+            (epoch == args.Train.epoch - 1))):
+            
             fast_set_model_epoch(model,criterion, valid_dataloader, optimizer, loss_scaler,epoch, args, epoch_total=args.Train.epochs,eval_mode=True)
             validation_system = {'model':model, 'criterion':criterion}
             val_loss   = run_one_epoch('valid', epoch, None,  valid_dataloader,  validation_system, args.logsys, args.accelerator, plugins=[])
             loss_information['valid_loss']['now'] = val_loss
             logsys.record('valid', val_loss, epoch, epoch_flag='epoch')
-        loss_information = update_and_save_training_status(args, epoch, loss_information, {'model':model, 'criterion':criterion, 
-                                                                                           'optimizer':optimizer,'loss_scaler':loss_scaler})
+        
+        update_and_save_training_status(args, epoch, loss_information, {'model':model, 'criterion':criterion, 
+                                                                        'optimizer':optimizer,'loss_scaler':loss_scaler})
         logsys.info(f"Epoch {epoch} | Train loss: {train_loss:.6f}, Val loss: {val_loss:.6f}", show=False)
+    
         
     best_valid_ckpt_path = loss_information['valid_loss']['save_path']
     if os.path.exists(best_valid_ckpt_path) and args.do_final_fourcast:

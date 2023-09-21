@@ -91,4 +91,7 @@ class BaseDataset:
         #         traceback.print_exc()
         #         raise NotImplementedError("too many error happened, check the errer path")
 
+    @staticmethod
+    def create_offline_dataset_templete(split='test', create_buffer=False, fully_loaded=False, config={}):
+        raise NotImplementedError("You must implement it")
 

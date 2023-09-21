@@ -3,49 +3,7 @@ import torch
 import os
 import math
 
-def distributed_initial(args):
-    import os
-    ngpus = ngpus_per_node = torch.cuda.device_count()
-    args.world_size = -1
-    args.dist_file  = None
-    args.rank       = 0
-    args.dist_backend = "nccl"
-    
-    args.ngpus_per_node = ngpus_per_node
-    if not hasattr(args,'train_set'):args.Train_set='large'
-    ip = os.environ.get("MASTER_ADDR", "127.0.0.1")
-    port = find_free_port()#os.environ.get("MASTER_PORT", f"{find_free_port()}" )
-    args.port = port
-    hosts = int(os.environ.get("WORLD_SIZE", "1"))  # number of nodes
-    rank = int(os.environ.get("RANK", "0"))  # node id
-    gpus = torch.cuda.device_count()  # gpus per node
-    args.dist_url = f"tcp://{ip}:{port}"
-    if args.world_size == -1 and "SLURM_NPROCS" in os.environ:
-        args.world_size = int(os.environ["SLURM_NPROCS"])
-        args.rank       = int(os.environ["SLURM_PROCID"])
-        jobid           = os.environ["SLURM_JOBID"]
 
-        hostfile        = "dist_url." + jobid  + ".txt"
-        if args.dist_file is not None:
-            args.dist_url = "file://{}.{}".format(os.path.realpath(args.dist_file), jobid)
-        elif args.rank == 0:
-            import socket
-            ip = socket.gethostbyname(socket.gethostname())
-            port = find_free_port()
-            args.dist_url = "tcp://{}:{}".format(ip, port)
-            #with open(hostfile, "w") as f:f.write(args.dist_url)
-        else:
-            import os
-            import time
-            while not os.path.exists(hostfile):
-                time.sleep(1)
-            with open(hostfile, "r") as f:
-                args.dist_url = f.read()
-        print("dist-url:{} at PROCID {} / {}".format(args.dist_url, args.rank, args.world_size))
-    else:
-        args.world_size = 1
-    args.multiprocessing_distributed = args.world_size > 1
-    return args
 
 
 def find_free_port():
@@ -286,8 +244,10 @@ def get_sub_sun_point(time):
     #print( "sun Lon:",sun_lon, "Lat:",sun_lat)
     return sun_lon,sun_lat    
 
-def get_local_rank():
-    return int(os.environ["LOCAL_RANK"]) if "LOCAL_RANK" in os.environ else 0
+def get_local_rank(args=None):
+    if args is None or args.Pengine.engine.name != 'naive_distributed':return int(os.environ["LOCAL_RANK"]) if "LOCAL_RANK" in os.environ else 0
+    return args.Pengine.engine.local_rank
+
 
 
 def get_tensor_norm(tensor, dim):  # <--use mse way
