@@ -34,7 +34,8 @@ class ConvPatchEmbed(nn.Module):
 
     def forward(self, x):
         B, C, = x.shape[:2]
-        inp_size = x.shape[2:]
+        #print(x.shape)
+        inp_size = tuple(x.shape[2:])
         assert tuple(inp_size) == self.img_size, f"Input image size ({inp_size}) doesn't match model set size ({self.img_size})."
         x = self.proj(x)
         return x

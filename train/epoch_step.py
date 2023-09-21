@@ -5,11 +5,12 @@ import time
 import torch.distributed as dist
 import numpy as np
 from .iter_step import run_one_iter
-from .sequence2sequence_manager import FieldsSequence
+
 
 from criterions.high_order_loss_coef import calculate_coef, normlized_coef_type2, normlized_coef_type3, normlized_coef_type0, normlized_coef_type_bonded
 
 def get_fetcher(status,data_loader):
+    return Datafetcher
     if (status =='train' and 
         data_loader.dataset.split=='train' and 
         'Patch' in data_loader.dataset.__class__.__name__):
@@ -20,8 +21,8 @@ def get_fetcher(status,data_loader):
     else:
         return Datafetcher
 
-def run_one_epoch(status, epoch, start_step,  data_loader, forward_system, logsys, accelerator, plugins=[]):
-    return run_one_epoch_normal(status, epoch, start_step,  data_loader, forward_system, logsys, accelerator, plugins=plugins)
+def run_one_epoch(status, epoch, start_step,  data_loader, forward_system, sequence_manager, logsys, accelerator, plugins=[]):
+    return run_one_epoch_normal(status, epoch, start_step,  data_loader, forward_system, sequence_manager, logsys, accelerator, plugins=plugins)
 
 def apply_model_step(model,*args,**kargs):
     unwrapper_model = model
@@ -139,7 +140,7 @@ class LongTermEstimatePlugin:
             #raise
 
 
-def run_one_epoch_normal(status, epoch, start_step,  data_loader, forward_system, logsys, accelerator, plugins=[]):
+def run_one_epoch_normal(status, epoch, start_step,  data_loader, forward_system, sequence_manager, logsys, accelerator, plugins=[]):
     model       = forward_system['model']
     criterion   = forward_system.get('criterion',None)
     optimizer   = forward_system.get('optimizer',None)
@@ -171,13 +172,7 @@ def run_one_epoch_normal(status, epoch, start_step,  data_loader, forward_system
     
 
     total_diff,total_num  = torch.Tensor([0]).to(device), torch.Tensor([0]).to(device)
-    sequence_manager      = FieldsSequence({'batch_size': data_loader.batch_size,
-                                            "channel_num": len(data_loader.dataset.vnames),
-                                            "sequence_length": 2,
-                                            "image_shape": data_loader.dataset.img_size,
-                                            "input_lens": 1,
-                                            "pred_lens": 1
-                                            })
+    
     last_record_time = time.time()
     inter_b    = logsys.create_progress_bar(batches,unit=' img',unit_scale=data_loader.batch_size)
     inter_b.lwrite(f"load everything, start_{status}ing......", end="\r")

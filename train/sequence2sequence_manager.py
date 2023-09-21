@@ -1,6 +1,6 @@
 import numpy 
 import torch
-
+from typing import List, Dict
 class FieldsSequence:
     """
     sequence is a list of metadata
@@ -10,18 +10,16 @@ class FieldsSequence:
     #     ...............................................
     #   timestamp_n:{'Field':Field, 'stamp_status':stamp_status]}
     # ]
-
-
     """
+    input_channel_num = None
+    target_channel_num = None
 
-
-    def __init__(self, config):
-        self.B           = config.get('batch_size')
-        self.P           = config.get('channel_num')
-        self.L           = config.get('sequence_length')
-        self.image_shape = config.get('image_shape')
-        self.input_len  = config.get('input_lens')
-        self.pred_len = config.get('pred_lens')
+    def __init__(self, args):
+        self.B           = args.Train.batch_size,
+        self.image_shape = args.Model.model.img_size
+        self.input_len   = args.Model.model.history_length
+        self.pred_len    = args.Model.model.pred_len
+        
         self.inputs_sequence = [None]*self.input_len
         self.target_sequence = []
     
@@ -33,8 +31,7 @@ class FieldsSequence:
     
     def _stamp_check(self, stamp):
         assert isinstance(stamp,dict), "each stamp should be dict {'field':Field, 'stamp_status':stamp_status]}"
-        assert stamp['field'].shape[1:] == (self.P, *self.image_shape)
-    
+        #assert stamp['field'].shape[2:] == (*self.image_shape, ), f"stamp['field'].shape[2:]={stamp['field'].shape[2:]} != self.image_shape={self.image_shape}"
 
 
     def normalize_a_field(self, unnormlized_field):
@@ -58,12 +55,14 @@ class FieldsSequence:
         Input is only a dict {'field': Preded_Field (B, P, L=1, W, H)} 
         """
         preded_normlized_fields = self.unnormalized_a_field(preded_normlized_fields)
-        if preded_normlized_fields.shape[1:] == (self.P, self.pred_len, *self.image_shape):  
+        if len(preded_normlized_fields.shape) == len(self.image_shape) + 1 + 1 + 1:   # (B, P, L, H, W)
             pred_lens = preded_normlized_fields.shape[2]
-            preded_normlized_fields = preded_normlized_fields.split(pred_lens,dim=2)
-        elif preded_normlized_fields.shape[1:] == ( self.P, *self.image_shape):  
+            preded_normlized_fields = preded_normlized_fields.split(pred_lens,dim=2) # (B, P, H, W)
+        elif len(preded_normlized_fields.shape) == len(self.image_shape) + 1 + 1 :  
             preded_normlized_fields = [preded_normlized_fields]
             pred_lens = 1
+        else:
+            raise ValueError(f"preded_normlized_fields.shape[2:]={preded_normlized_fields.shape[2:]} != (self.pred_len,*self.image_shape)={self.pred_len,*self.image_shape}")
         #_=[self._stamp_check(t) for t in preded_normlized_fields]
         
         new_candidate = [{}]*pred_lens
@@ -76,35 +75,33 @@ class FieldsSequence:
         self.inputs_sequence = self.inputs_sequence[-self.pred_len:] + new_candidate
         self.target_sequence = self.target_sequence[self.pred_len:]
 
+
+    def concat_dict(self, sequence: List[Dict]):
+        inputs_dict = {}
+        for stamp in sequence:
+            for key, val in stamp.items():
+                if key not in inputs_dict:inputs_dict[key] = []
+                inputs_dict[key].append(self.normalize_a_field(val))
+        for key in inputs_dict.keys():
+            inputs_dict[key] = torch.stack(inputs_dict[key], 2) # --> (B,P,L,W,H)
+        return inputs_dict
+    
     @property
     def inputs(self):
         ## concat along the time dimension
-        inputs_dict = {}
-        for stamp in self.inputs_sequence:
-            for key, val in stamp.items():
-                if key not in inputs_dict:inputs_dict[key] = []
-                inputs_dict[key].append(self.normalize_a_field(val))
-        for key in inputs_dict.keys():
-            inputs_dict[key] = torch.stack(inputs_dict[key], 2)  if len(inputs_dict[key])>1 else inputs_dict[key][0]# --> (B,P,L,W,H)
-        return inputs_dict
+        if len(self.inputs_sequence) == 1:return self.inputs_sequence[0]
+        return self.concat_dict(self.inputs_sequence)
 
     @property
     def target(self):
-        ## concat along the time dimension
-        if self.target_sequence is None: return None
-        assert len(self.target_sequence)>0, "you must initialized a target first"
-        inputs_dict = {}
-        for stamp in self.target_sequence:
-            for key, val in stamp.items():
-                if key not in inputs_dict:inputs_dict[key] = []
-                inputs_dict[key].append(self.normalize_a_field(val))
-        for key in inputs_dict.keys():
-            inputs_dict[key] = torch.stack(inputs_dict[key], 2)  if len(inputs_dict[key])>1 else inputs_dict[key][0] # --> (B,P,L,W,H)
-        return inputs_dict
+        if len(self.target_sequence) == 1:return self.target_sequence[0]
+        return self.concat_dict(self.target_sequence)
 
     def get_inputs_and_target(self):
         return self.inputs, self.target
     
+
+
 class FieldsSequenceWithChannelShifting(FieldsSequence):
     def __init__(self, config):
         super().__init__(config)

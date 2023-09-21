@@ -2,8 +2,9 @@ import argparse
 import json
 from dataclasses import dataclass
 from simple_parsing import ArgumentParser, subgroups, field
-from model.model_arguments import (ModelConfig, AFNONetConfig, GraphCastConfig)
-from dataset.dataset_arguments import (DatasetConfig, WeatherBenchConfig)
+from model.model_arguments import (
+    ModelConfig, AFNONetConfig, GraphCastConfig, AFNONetPatchConfig)
+from dataset.dataset_arguments import (DatasetConfig, WeatherBenchConfig,WeatherBenchPatchConfig)
 from .parallel_engine_config import (EngineConfig, NaiveDistributed, AccelerateEngine)
 from typing import Optional, List, Tuple, Union
 from .base import Config
@@ -73,6 +74,9 @@ def get_args(config_path=None):
     parser = build_parser()
     args = parser.parse_args(args=args)
     args.Dataset.dataset.img_size = args.Model.model.img_size
+    if args.Dataset.dataset.data_patch_range is not None:
+        if args.Model.model.patch_range is None:
+            args.Model.model.patch_range = args.Dataset.dataset.data_patch_range
     return args
 
 
@@ -88,7 +92,9 @@ class Global_Model_Config(Config):
 
     # Which model to use
     model: ModelConfig = subgroups(
-        {"afnonet": AFNONetConfig, "graphcast": GraphCastConfig}
+        {"afnonet": AFNONetConfig, "graphcast": GraphCastConfig,
+            "afnonetpatch": AFNONetPatchConfig},
+
     )
 
 
@@ -211,7 +217,7 @@ class Global_Scheduler_Config(Config):
 @dataclass
 class Global_Dataset_Config(Config):
     dataset: DatasetConfig = subgroups(
-        {"weatherbench": WeatherBenchConfig},
+        {"weatherbench": WeatherBenchConfig, 'wbpatch': WeatherBenchPatchConfig},
         default="weatherbench"
     )
 
@@ -238,7 +244,7 @@ class Global_Config(Config):
         #default="simple"
     )
     Model:  ModelConfig = subgroups(
-        {"afnonet": AFNONetConfig, "graphcast": GraphCastConfig},
+        {"afnonet": AFNONetConfig, "graphcast": GraphCastConfig, "afnonetpatch": AFNONetPatchConfig},
         #default="afnonet"
     )
     debug: bool = field(default=False)

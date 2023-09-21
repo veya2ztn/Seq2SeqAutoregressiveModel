@@ -26,12 +26,7 @@ There are two main iteration here
   use the `activate_stamps` to assign the computing path.
 """
 
-def config_of(model):
-    unwrapper_model = model
-    while hasattr(unwrapper_model, 'module'):
-        unwrapper_model = unwrapper_model.module
-    return unwrapper_model.config
-
+from .utils import config_of
 
 
 class RuntimeRMSE_Pligin:

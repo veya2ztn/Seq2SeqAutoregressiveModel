@@ -1,5 +1,10 @@
 import torch
 import torch.distributed as dist
+def config_of(model):
+    unwrapper_model = model
+    while hasattr(unwrapper_model, 'module'):
+        unwrapper_model = unwrapper_model.module
+    return unwrapper_model.config
 
 class NanDetect:
     def __init__(self, logsys, use_amp):

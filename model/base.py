@@ -15,13 +15,14 @@ class BaseModel(nn.Module):
         self.config = config
         self.img_size = config.img_size
         self.history_length = config.history_length
-        self.patch_size = config.patch_size
         self.in_chans = config.in_chans
         self.out_chans = config.out_chans
         self.embed_dim = config.embed_dim
         self.depth = config.depth
-        self.img_size, self.patch_size = self.correct_imgsize_and_patchsize(
-            self.img_size, self.patch_size, self.history_length)
+
+        # self.patch_size = config.patch_size
+        # self.img_size, self.patch_size = self.correct_imgsize_and_patchsize(
+        #     self.img_size, self.patch_size, self.history_length)
         # print(f"""
         # ============model:DownAndUp================
         #         img_size:{img_size}
@@ -31,16 +32,10 @@ class BaseModel(nn.Module):
         # ========================================
         # """)
 
-    @staticmethod
-    def correct_imgsize_and_patchsize(img_size, patch_size, history_length):
-        patch_size = [patch_size]*len(img_size) if isinstance(patch_size, int) else patch_size
+    
 
-        if history_length > 1:
-            img_size = (history_length,*img_size)
-            patch_size = (1,*patch_size)
+    
 
-        return img_size, patch_size
-        
     def set_epoch(self,**kargs):
         pass
     
@@ -89,8 +84,9 @@ class BaseModel(nn.Module):
         return x, pad
 
     def collect_correct_input(self, _input: Union[List[Dict[str, torch.Tensor]], Dict[str, torch.Tensor]]):
-        assert len(_input) == self.history_length
+        
         if isinstance(_input, list):
+            assert len(_input) == self.history_length
             if self.history_length == 1:
                 x = _input[0]['field']
             else:
@@ -98,17 +94,17 @@ class BaseModel(nn.Module):
                 x = torch.stack([_inp['field'] for _inp in _input], 2)
         else:
             x = _input['field']
-            if self.history_length == 1:
-                x = x.squeeze(2)
+            #if self.history_length == 1:x = x.squeeze(2)
         # <--- in case the height is smaller than the img_size
-        x, pad = self.get_w_resolution_pad(x)
-        self.pad = pad
+        
+        #x, pad = self.get_w_resolution_pad(x)
+        #self.pad = pad
         return x
 
     def collect_correct_output(self, x: torch.Tensor):
-        pad = self.pad
-        if pad is not None:
-            x = x[..., pad:-pad, :]
+        #pad = self.pad
+        #if pad is not None:
+        #    x = x[..., pad:-pad, :]
         return x
     
 class DownAndUpModel(BaseModel):

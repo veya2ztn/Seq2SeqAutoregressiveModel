@@ -2,6 +2,11 @@ import torch
 from utils.tools import get_tensor_norm
 import torch
 import numpy as np
+
+
+from .utils import config_of
+
+
 #########################################
 ########## normal forward step ##########
 #########################################
@@ -214,7 +219,7 @@ def once_forward_with_Advection(model, i, start, end, dataset, time_step_1_mode)
         target = target[:, pred_channel_for_next_stamp]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
-def once_forward_normal(model, i, sequence_manager, *args):
+def once_forward_normal(model, i, sequence_manager):
     """
     forward function only map X_{t+i} to X_{t+i+1}
         model
@@ -238,15 +243,11 @@ def once_forward_normal(model, i, sequence_manager, *args):
     #   timestamp_n:{'Field':Field}
     # ]
     """
-
+    model_config  = config_of(model)
     normlized_fields, normlized_target = sequence_manager.get_inputs_and_target()  # always use normlized target
-    
-    # if model.training and model.config.input_noise_std and i == 1:
-    #     normlized_fields['field'] += torch.randn_like(normlized_fields['field']) * model.config.input_noise_std
-
-
+    if model.training and model_config.input_noise_std and i == 1:
+        normlized_fields['field'] += torch.randn_like(normlized_fields['field']) * model_config.input_noise_std
     prediction = model(normlized_fields) # --> prediction is also a dict 
-    
     # update sequence, update the input sequence and remove the target sequence
     sequence_manager.push_a_normlized_field(prediction['field']) # <-- only the field is needed to update
 
@@ -276,7 +277,7 @@ def once_forward_multibranch(model, i, start, end, dataset, time_step_1_mode):
 
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
-def once_forward_shift(model, i, start, end, dataset, time_step_1_mode):
+def once_forward_shift(model, i, sequence_manager):
     Field = Advection = None
     assert len(start) == 2
     #assert model.shift_feature_index
@@ -327,7 +328,11 @@ def once_forward_shift(model, i, start, end, dataset, time_step_1_mode):
     return ltmv_pred[:, new_picked], target, extra_loss, extra_info_from_model_list, start
 
 
-def once_forward_patch(model, i, start, end, dataset, time_step_1_mode):
+def once_forward_patch(model, i, sequence_manager):
+    ### there are two mode
+    # - Train mode
+    # -- the input  is a (B, P, Z, H, W) tensor  
+    # -- the output is a (B, P, Z, H, W) tensor  
     time_stamp = None
     pos = None
     assert len(start) == 1
@@ -339,10 +344,8 @@ def once_forward_patch(model, i, start, end, dataset, time_step_1_mode):
         start_tensor = [tensor]
 
     Field = start_tensor[-1]
-    normlized_Field_list = dataset.do_normlize_data(
-        [start_tensor])[0]  # always use normlized input
-    normlized_Field = normlized_Field_list[0] if len(
-        normlized_Field_list) == 1 else torch.stack(normlized_Field_list, 2)
+    normlized_Field_list = dataset.do_normlize_data([start_tensor])[0]  # always use normlized input
+    normlized_Field = normlized_Field_list[0] if len(normlized_Field_list) == 1 else torch.stack(normlized_Field_list, 2)
 
     if time_stamp is not None or pos is not None:
         target = dataset.do_normlize_data(
@@ -455,7 +458,6 @@ def once_forward_patch_N2M(model, i, start, end, dataset, time_step_1_mode):
 
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
-
 def once_forward_deltaMode(model, i, start, end, dataset, time_step_1_mode):
     assert len(start) == 1
     base1, delta1 = start[0]
@@ -476,7 +478,6 @@ def once_forward_deltaMode(model, i, start, end, dataset, time_step_1_mode):
                           (delta1*dataset.delta_std_tensor + dataset.delta_mean_tensor), ltmv_pred]]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
 
-
 def once_forward_self_relation(model, i, start, end, dataset, time_step_1_mode=None):
     assert len(start) == 1
     input_feature = start[0]
@@ -492,7 +493,6 @@ def once_forward_self_relation(model, i, start, end, dataset, time_step_1_mode=N
     target = output_feature
     start = start[1:] + [None]
     return ltmv_pred, target, extra_loss, extra_info_from_model_list, start
-
 
 def once_forward_error_evaluation(model, now_level_batch, snap_mode=False):
     target_level_batch = now_level_batch[:, 1:]

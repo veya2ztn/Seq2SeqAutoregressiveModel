@@ -8,7 +8,6 @@ import numpy as np
 from timm.scheduler import create_scheduler
 import torch.nn as nn
 
-from .AFNONET.afnonet import AFNONet
 
 cudnn.benchmark = False  # will search a best CNN realized way at beginning
 cudnn.deterministic = True  # the key for continue training.
@@ -45,7 +44,14 @@ def build_combination_model(args):
     return model
     
 def build_wrapper_model(args):
-    model = eval(args.Model.model.model_type)(args.Model.model)
+    if args.Model.model.model_type in ['AFNONet']:
+        from .AFNONET.afnonet import AFNONet as model_type
+    elif args.Model.model.model_type in ['GraphCast']:
+        from .GraphCast.GraphCast import GraphCast as model_type
+    elif args.Model.model.model_type in ['AFNONetPatch']:
+        from .PatchWiseModel.patch_afnonet import AFNONetPatch as model_type
+    model = model_type(args.Model.model)
+    
     
     # if args.wrapper_model:
     #     if args.subweight:

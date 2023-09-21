@@ -3,7 +3,7 @@ import numpy as np
 import random
 import torch
 import copy, os
-from dataset.WeatherBenchDataset import WeatherBench, FakeWeatherBench
+from dataset.WeatherBenchDataset import WeatherBench, FakeWeatherBench, WeatherBenchPatch
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader
 from utils.tools import get_local_rank
@@ -77,13 +77,10 @@ class RandomSelectMultiBranchFetcher:
         return batch 
 
 
-
-
 def seed_worker(worker_id):# Multiprocessing randomnes for multiGPU train #https://pytorch.org/docs/stable/notes/randomness.html
     worker_seed = torch.initial_seed() % 2**32
     np.random.seed(worker_seed)
     random.seed(worker_seed)
-
 
 def prepare_dataloader(args, train_dataset=None, valid_dataset=None, test_dataset=None):
     train_dataloader = valid_dataloader = test_dataloader = None
@@ -93,14 +90,16 @@ def prepare_dataloader(args, train_dataset=None, valid_dataset=None, test_datase
             
             g = torch.Generator()
             g.manual_seed(args.Train.seed)
+            collate_fn = getattr(train_dataset,'collate_fn',None)
             train_dataloader  = DataLoader(train_dataset, args.Train.batch_size, sampler=train_datasampler, 
                                            num_workers=args.Dataset.dataset.num_workers, pin_memory=True,
                                         drop_last=True,worker_init_fn=seed_worker,
-                                        generator=g,
+                                        generator=g,collate_fn=collate_fn,
                                         shuffle=True if ((not args.Pengine.engine.distributed) and not args.Train.train_not_shuffle) else False)
         if valid_dataset is not None:
+            collate_fn = getattr(valid_dataset, 'collate_fn', None)
             valid_datasampler = DistributedSampler(valid_dataset,   shuffle=False) if args.Pengine.engine.distributed else None
-            valid_dataloader  = DataLoader(valid_dataset  , args.Valid.valid_batch_size, sampler=valid_datasampler,   
+            valid_dataloader  = DataLoader(valid_dataset  , args.Valid.valid_batch_size, sampler=valid_datasampler,collate_fn=collate_fn,
                                            num_workers=args.Dataset.dataset.num_workers, pin_memory=True, drop_last=False)
         
     elif args.Pengine.engine.name == 'accelerate':
@@ -108,35 +107,36 @@ def prepare_dataloader(args, train_dataset=None, valid_dataset=None, test_datase
         accelerator = args.accelerator
         num_workers = args.Dataset.dataset.num_workers if args.Pengine.engine.data_parallel_dispatch or local_rank == 0 else 0
         if train_dataset is not None:
+            collate_fn = getattr(train_dataset,'collate_fn',None)
             train_dataloader = DataLoader(train_dataset, batch_size=args.Train.batch_size,
-                                    shuffle=True, num_workers=num_workers, 
+                                    shuffle=True, num_workers=num_workers, collate_fn=collate_fn,
                                     pin_memory=True, drop_last=True,)
         if valid_dataset is not None:
+            collate_fn = getattr(valid_dataloader,'collate_fn',None)
             valid_dataloader = DataLoader(valid_dataset, batch_size=args.Train.batch_size,
-                                    shuffle=False, num_workers=num_workers,
+                                    shuffle=False, num_workers=num_workers,collate_fn=collate_fn,
                                     pin_memory=True, drop_last=True,)
         if test_dataset is not None:
+            collate_fn = getattr(test_dataloader, 'collate_fn', None)
             test_dataloader = DataLoader(test_dataset, batch_size=args.Train.batch_size,
-                                    shuffle=False, num_workers=num_workers,
+                                    shuffle=False, num_workers=num_workers,collate_fn=collate_fn,
                                     pin_memory=True, drop_last=True,)
         train_dataloader, valid_dataloader, test_dataloader = accelerator.prepare(train_dataloader, valid_dataloader, test_dataloader)
     return   train_dataloader,   valid_dataloader, test_dataloader 
 
 def get_train_and_valid_dataset(args,train_dataset_tensor=None,train_record_load=None,valid_dataset_tensor=None,valid_record_load=None):
     dataset_type = args.Dataset.dataset.dataset_type
+
     if get_local_rank(args) and args.Pengine.engine.name == 'accelerate' and not args.Pengine.engine.data_parallel_dispatch:
         dataset_type = 'Fake'+dataset_type
     dataset_type  = eval(dataset_type)
+    
     train_dataset = dataset_type(split="train" if not args.debug else 'test', shared_dataset_tensor_buffer=(train_dataset_tensor, train_record_load), config= args.Dataset.dataset)
     valid_dataset = dataset_type(split="valid" if not args.debug else 'test', shared_dataset_tensor_buffer=(valid_dataset_tensor, valid_record_load), config= args.Dataset.dataset)
     
     train_dataloader,   valid_dataloader, _ = prepare_dataloader(args, train_dataset=train_dataset, valid_dataset=valid_dataset, test_dataset=None)
 
     return train_dataset, valid_dataset, train_dataloader, valid_dataloader
-
-fourcast_default_step ={
-    1:20,6: 20, 12: 10, 24:10
-}
 
 def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
     configs = copy.deepcopy(args.Dataset.dataset)
@@ -155,7 +155,6 @@ def get_test_dataset(args,test_dataset_tensor=None,test_record_load=None):
     _, _, test_dataloader = prepare_dataloader(args, train_dataset=None, valid_dataset=None, test_dataset=test_dataset)
     
     return   test_dataset,   test_dataloader
-
 
 def create_memory_templete(args):
     train_dataset_tensor = valid_dataset_tensor = train_record_load = valid_record_load = None

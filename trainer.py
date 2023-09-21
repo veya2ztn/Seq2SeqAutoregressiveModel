@@ -14,6 +14,7 @@ from configs.utils import get_ckpt_path
 from utils.loggingsystem import create_logsys
 from model.get_resource import build_training_resource
 from dataset.get_resource import get_test_dataset, get_train_and_valid_dataset
+from train.sequence2sequence_manager import FieldsSequence
 #########################################
 ############# main script ###############
 #########################################
@@ -132,6 +133,7 @@ def main_worker(local_rank, ngpus_per_node, args,
     #########################################
     args.accelerator = build_accelerator(args)
 
+    ####### Initialize Training Resource #########
     model, optimizer, lr_scheduler, criterion, loss_scaler = build_training_resource(args)
 
     logsys.info(f"entering {args.Train.mode} training in {next(model.parameters()).device}")
@@ -144,17 +146,17 @@ def main_worker(local_rank, ngpus_per_node, args,
         run_nodalosssnap(args, model,logsys,test_dataloader)
         return logsys.close()
     
-    
-
-    
-    ####### Training Stage #########
+    ####### Initialize Dataset #########
     
     train_dataset, valid_dataset, train_dataloader,valid_dataloader = get_train_and_valid_dataset(args,
                     train_dataset_tensor=train_dataset_tensor,train_record_load=train_record_load,
                     valid_dataset_tensor=valid_dataset_tensor,valid_record_load=valid_record_load)
     test_dataloader = None 
 
-    
+    ####### Initialize Sequence Controller #########
+
+    sequence_manager      = FieldsSequence(args)
+
     start_step  = args.start_step
     start_epoch = args.start_epoch
 
@@ -182,7 +184,7 @@ def main_worker(local_rank, ngpus_per_node, args,
             training_system = {'model':model, 'criterion':criterion, 'optimizer':optimizer, 'loss_scaler':loss_scaler,
                                'use_amp': (args.Pengine.engine.name == 'naive_distributed' and args.Pengine.engine.use_amp), 
                                'accumulation_steps': args.Train.accumulation_steps}
-            train_loss = run_one_epoch('train', epoch, start_step,  train_dataloader,  training_system, args.logsys, args.accelerator, plugins=[])
+            train_loss = run_one_epoch('train', epoch, start_step,  train_dataloader,  training_system, sequence_manager, args.logsys, args.accelerator, plugins=[])
             logsys.record('train', train_loss, epoch, epoch_flag='epoch')
             loss_information['train_loss']['now'] = train_loss
             learning_rate = optimizer.param_groups[0]['lr']
@@ -207,7 +209,7 @@ def main_worker(local_rank, ngpus_per_node, args,
             
             fast_set_model_epoch(model,criterion, valid_dataloader, optimizer, loss_scaler,epoch, args, epoch_total=args.Train.epochs,eval_mode=True)
             validation_system = {'model':model, 'criterion':criterion}
-            val_loss   = run_one_epoch('valid', epoch, None,  valid_dataloader,  validation_system, args.logsys, args.accelerator, plugins=[])
+            val_loss   = run_one_epoch('valid', epoch, None,  valid_dataloader,  validation_system, sequence_manager, args.logsys, args.accelerator, plugins=[])
             loss_information['valid_loss']['now'] = val_loss
             logsys.record('valid', val_loss, epoch, epoch_flag='epoch')
         

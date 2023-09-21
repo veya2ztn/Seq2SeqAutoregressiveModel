@@ -8,6 +8,8 @@ from ..utils import transposeconv_engines
 from ..base import DownAndUpModel,BaseModel
 from ..model_arguments import AFNONetConfig
 
+
+
 class AFNONet(DownAndUpModel):
     def __init__(self, config: AFNONetConfig):
         super().__init__(config)
@@ -52,7 +54,9 @@ class AFNONet(DownAndUpModel):
         in_chans       = config.in_chans
         embed_dim      = config.embed_dim
 
-        img_size, patch_size = BaseModel.correct_imgsize_and_patchsize(img_size, patch_size, history_length)
+        patch_size = [patch_size] * len(img_size) if isinstance(patch_size, int) else patch_size
+        img_size   = (history_length, *img_size) if history_length > 1 else img_size
+        patch_size = (1, *patch_size) if history_length > 1 else patch_size
         return PatchEmbed(img_size=img_size, patch_size=patch_size,
                           in_chans=in_chans, embed_dim=embed_dim)
 
@@ -70,12 +74,11 @@ class AFNONet(DownAndUpModel):
         depth          = config.depth
         embed_dim      = config.embed_dim
         history_length = config.history_length
-        patch_size     = config.patch_size
+
         img_size       = config.img_size
-        img_size, patch_size = BaseModel.correct_imgsize_and_patchsize(
-            img_size, patch_size, history_length)
+        img_size = (history_length, *img_size) if history_length > 1 else img_size
         
-        dpr = [drop_path_rate]*len(depth) if uniform_drop else np.linspace(0, drop_path_rate, depth)  # stochastic depth decay rule
+        dpr = [drop_path_rate]*depth if uniform_drop else np.linspace(0, drop_path_rate, depth)  # stochastic depth decay rule
         norm_layer = partial(nn.LayerNorm, eps=1e-6)
 
         blocks = [Block(dim=embed_dim,
@@ -102,8 +105,9 @@ class AFNONet(DownAndUpModel):
         embed_dim      = config.embed_dim
         out_chans      = config.out_chans
 
-        img_size, patch_size = BaseModel.correct_imgsize_and_patchsize(img_size, patch_size, history_length)
-
+        patch_size = [patch_size] * len(img_size) if isinstance(patch_size, int) else patch_size
+        img_size   = (history_length, *img_size) if history_length > 1 else img_size
+        patch_size = (1, *patch_size) if history_length > 1 else patch_size
         unique_up_sample_channel = config.get('unique_up_sample_channel')
         if unique_up_sample_channel is None:
             unique_up_sample_channel = config.out_chans
@@ -168,3 +172,5 @@ class AFNONet(DownAndUpModel):
             nn.ReLU(),
             last_Linear_layer
         )
+
+
