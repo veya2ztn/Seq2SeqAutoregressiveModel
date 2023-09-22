@@ -31,6 +31,7 @@ This framework supports efficient data loading for large datasets through:
 ### 3. Efficient Autoregressive Forward Mode
 
 - High-order autoregressive computing. (Tested)
+
   $$
   \begin{align}
   	\left(
