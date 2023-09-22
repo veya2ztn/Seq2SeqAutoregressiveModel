@@ -32,7 +32,7 @@ This framework supports efficient data loading for large datasets through:
 
 - High-order autoregressive computing. (Tested)
   $$
-  \begin{equation}
+  \begin{align}
   	\left(
   	\begin{array}{cccccc}
   			X_{t}^O & X_{t+1}^I & X_{t+2}^{\text{II}} & X_{t+3}^{\text{III}} & X_{t+4}^{\text{IV}} & X_{t+5}^V            \\
@@ -43,7 +43,7 @@ This framework supports efficient data loading for large datasets through:
   			        &           &                     &                      &                     & X_{t+5}^O            \\
   		\end{array}
   	\right)
-  \end{equation}
+  \end{align}
   $$
 
 - Patch wise and overlap aggregation back.  (Tested)
