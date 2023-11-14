@@ -47,7 +47,7 @@ from utils.tools import getModelSize, load_model, save_model
 from utils.eval import single_step_evaluate
 import pandas as pd
 
-from mltool.dataaccelerate import DataLoaderX,DataLoader,DataPrefetcher,DataSimfetcher
+from mltool.dataaccelerate import DataLoader,DataPrefetcher,DataSimfetcher
 from mltool.loggingsystem import LoggingSystem
 
 from model.GradientModifier import *
@@ -3332,10 +3332,18 @@ def parser_compute_graph(compute_graph_set):
     if compute_graph_set is None:return None,None
     if compute_graph_set =="":return None,None
     compute_graph_set_pool={
-        'fwd3_D'   :([[1],[2],[3]], [[0,1,1,0.33, "quantity"], 
-                         [0,2,2,0.33, "quantity"], 
-                         [0,3,3,0.33, "quantity"]]),
-        'fwd3_D_Rog5': ([[1], [2], [3]], [[0, 1, 1, 1.0, "quantity_real_log5"], [0, 2, 2, 1.0, "quantity_real_log5"], [0, 3, 3, 1.0, "quantity_real_log5"]]),
+        'fwd3_D'     : ([[1],[2],[3]],             [[0,1,1,1,"quantity"],[0,2,2,1,"quantity"],[0,3,3,1,"quantity"]]),
+        'fwd4_D'     : ([[1],[2],[3],[4]],         [[0,1,1,1,"quantity"],[0,2,2,1,"quantity"],[0,3,3,1,"quantity"],[0,4,4,1,"quantity"]]),
+        'fwd5_D'     : ([[1],[2],[3],[4],[5]],     [[0,1,1,1,"quantity"],[0,2,2,1,"quantity"],[0,3,3,1,"quantity"],[0,4,4,1,"quantity"],[0,5,5,1,"quantity"]]),
+        'fwd6_D'     : ([[1],[2],[3],[4],[5],[6]], [[0,1,1,1,"quantity"],[0,2,2,1,"quantity"],[0,3,3,1,"quantity"],[0,4,4,1,"quantity"],[0,5,5,1,"quantity"],[0,6,6,1,"quantity"]]),
+        'fwd3_D_Rog5': ([[1],[2],[3]],             [[0,1,1,1,"quantity_real_log5"],[0,2,2,1,"quantity_real_log5"],[0,3,3,1,"quantity_real_log5"]]),
+        'fwd4_D_Rog5': ([[1],[2],[3],[4]],         [[0,1,1,1,"quantity_real_log5"],[0,2,2,1,"quantity_real_log5"],[0,3,3,1,"quantity_real_log5"],[0,4,4,1,"quantity_real_log5"]]),
+        'fwd5_D_Rog5': ([[1],[2],[3],[4],[5]],     [[0,1,1,1,"quantity_real_log5"],[0,2,2,1,"quantity_real_log5"],[0,3,3,1,"quantity_real_log5"],[0,4,4,1,"quantity_real_log5"],[0,5,5,1,"quantity_real_log5"]]),
+        'fwd6_D_Rog5': ([[1],[2],[3],[4],[5],[6]], [[0,1,1,1,"quantity_real_log5"],[0,2,2,1,"quantity_real_log5"],[0,3,3,1,"quantity_real_log5"],[0,4,4,1,"quantity_real_log5"],[0,5,5,1,"quantity_real_log5"],[0,6,6,1,"quantity_real_log5"]]),
+        'fwd7_D'     : ([[1],[2],[3],[4],[5],[6]], [[0,1,1,1,"quantity"],[0,2,2,1,"quantity"],[0,3,3,1,"quantity"],[0,4,4,1,"quantity"],[0,5,5,1,"quantity"],[0,6,6,1,"quantity"],[0,7,7,1,"quantity"]]),
+        'fwd7_D_Rog5': ([[1],[2],[3],[4],[5],[6]], [[0,1,1,1,"quantity_real_log5"],[0,2,2,1,"quantity_real_log5"],[0,3,3,1,"quantity_real_log5"],[0,4,4,1,"quantity_real_log5"],[0,5,5,1,"quantity_real_log5"],[0,6,6,1,"quantity_real_log5"],[0,7,7,1,"quantity_real_log5"]]),
+
+
         'fwd3_D_Mog': ([[1], [2], [3]], [[0, 1, 1, 1.0, "quantity_mean_log"], [0, 2, 2, 1.0, "quantity_mean_log"], [0, 3, 3, 1.0, "quantity_mean_log"]]),
         'fwd2_TA'  :([[1,2,3],[2],[3]], [[0,1,1, 0.25, "quantity"], 
                                          [0,2,2, 0.25, "quantity"],
